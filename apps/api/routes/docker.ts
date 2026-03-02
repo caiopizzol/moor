@@ -33,7 +33,7 @@ async function handleBuild(project: Project): Promise<Response> {
     return new Response("No GitHub URL configured", { status: 400 });
   }
 
-  const tag = `dinghy/${project.name}:latest`;
+  const tag = `moor/${project.name}:latest`;
   db.query("UPDATE projects SET status = 'building' WHERE id = ?").run(project.id);
 
   try {
@@ -63,7 +63,7 @@ async function handleStart(project: Project): Promise<Response> {
   try {
     const containerId = await createAndStartContainer(
       project.image_tag,
-      `dinghy-${project.name}`,
+      `moor-${project.name}`,
       envs,
     );
     db.query("UPDATE projects SET container_id = ?, status = 'running' WHERE id = ?").run(

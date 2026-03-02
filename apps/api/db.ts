@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { join } from "node:path";
 
-const DB_PATH = join(import.meta.dir, "..", "..", "data", "dinghy.db");
+const DB_PATH = join(import.meta.dir, "..", "..", "data", "moor.db");
 
 const db = new Database(DB_PATH, { create: true });
 

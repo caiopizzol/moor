@@ -57,4 +57,4 @@ const server = Bun.serve({
 
 startCronScheduler();
 
-console.log(`Dinghy running at http://localhost:${server.port}`);
+console.log(`Moor running at http://localhost:${server.port}`);

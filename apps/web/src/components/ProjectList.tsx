@@ -12,7 +12,7 @@ export function ProjectList({ projects, selectedId, onSelect, onCreate }: Props)
     <div className="sidebar">
       <div className="sidebar-header">
         <button type="button" className="sidebar-title" onClick={() => onSelect(null)}>
-          Dinghy
+          Moor
         </button>
         <button type="button" className="btn btn-sm" onClick={onCreate}>
           + New
