@@ -18,7 +18,8 @@ export async function buildImage(
   dockerfile: string,
   tag: string,
 ): Promise<string> {
-  const remote = `${githubUrl}#${branch}`;
+  const gitUrl = githubUrl.endsWith(".git") ? githubUrl : `${githubUrl}.git`;
+  const remote = `${gitUrl}#${branch}`;
   const params = new URLSearchParams({ remote, t: tag, dockerfile });
   const res = await dockerFetch(`/v1.44/build?${params}`, {
     method: "POST",
