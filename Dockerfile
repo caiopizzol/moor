@@ -5,7 +5,7 @@ WORKDIR /app
 COPY package.json bun.lock* ./
 COPY apps/api/package.json apps/api/
 COPY apps/web/package.json apps/web/
-RUN bun install --frozen-lockfile
+RUN bun install --frozen-lockfile --ignore-scripts
 
 # Build client
 COPY apps/web/ apps/web/
