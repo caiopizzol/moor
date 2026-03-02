@@ -1,0 +1,21 @@
+{
+  "name": "dinghy",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": ["apps/*", "packages/*"],
+  "scripts": {
+    "dev:api": "bun run --hot apps/api/index.ts",
+    "dev:web": "cd apps/web && bun run dev",
+    "build": "cd apps/web && bun run build",
+    "start": "bun run apps/api/index.ts",
+    "lint": "bunx biome check .",
+    "lint:fix": "bunx biome check --write .",
+    "format": "bunx biome format --write .",
+    "prepare": "bunx lefthook install"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.4.5",
+    "@types/bun": "latest",
+    "lefthook": "^2.1.2"
+  }
+}

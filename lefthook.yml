@@ -1,0 +1,11 @@
+pre-commit:
+  commands:
+    lint:
+      glob: "*.{ts,tsx,js,jsx,json,css}"
+      run: bunx biome check --write {staged_files} && git add {staged_files}
+    typecheck-api:
+      glob: "apps/api/**/*.ts"
+      run: bunx tsc --noEmit -p apps/api/tsconfig.json
+    typecheck-web:
+      glob: "apps/web/**/*.{ts,tsx}"
+      run: cd apps/web && bunx tsc -b

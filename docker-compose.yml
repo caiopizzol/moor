@@ -1,0 +1,12 @@
+services:
+  dinghy:
+    build: .
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - dinghy-data:/app/data
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: unless-stopped
+
+volumes:
+  dinghy-data:
