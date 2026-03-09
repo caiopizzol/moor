@@ -13,17 +13,22 @@ type Props = {
 };
 
 type Tab = "build" | "logs" | "terminal" | "env";
+type Action = null | "stopping" | "restarting" | "rebuilding" | "building";
 
 export function ProjectDetail({ project, onUpdate, onEdit, onDelete }: Props) {
-  const [actionLoading, setActionLoading] = useState(false);
+  const [action, setAction] = useState<Action>(null);
   const [tab, setTab] = useState<Tab>("build");
   const [streamingLines, setStreamingLines] = useState<string[] | undefined>(undefined);
 
   const isRunning = project.status === "running";
   const isBuilding = project.status === "building";
+  const actionLoading = action !== null;
+
+  // Display status: action overrides project.status
+  const displayStatus = action || project.status;
 
   const startStreamingRun = async (noCache = false) => {
-    setActionLoading(true);
+    setAction("building");
     setTab("build");
     setStreamingLines([]);
     try {
@@ -33,38 +38,38 @@ export function ProjectDetail({ project, onUpdate, onEdit, onDelete }: Props) {
         () => {
           setStreamingLines(undefined);
           onUpdate();
-          setActionLoading(false);
+          setAction(null);
         },
         (err) => {
           setStreamingLines((prev) => [...(prev || []), `\nError: ${err}\n`]);
           onUpdate();
-          setActionLoading(false);
+          setAction(null);
         },
         noCache,
       );
     } catch (e) {
       setStreamingLines((prev) => [...(prev || []), `\nError: ${e}\n`]);
       onUpdate();
-      setActionLoading(false);
+      setAction(null);
     }
   };
 
   const handleRun = () => startStreamingRun();
 
   const handleStop = async () => {
-    setActionLoading(true);
+    setAction("stopping");
     try {
       await api.projects.stop(project.id);
       await onUpdate();
     } catch (e) {
       alert(`Stop failed: ${e}`);
     } finally {
-      setActionLoading(false);
+      setAction(null);
     }
   };
 
   const handleRestart = async () => {
-    setActionLoading(true);
+    setAction("restarting");
     try {
       await api.projects.stop(project.id);
       await api.projects.start(project.id);
@@ -73,22 +78,21 @@ export function ProjectDetail({ project, onUpdate, onEdit, onDelete }: Props) {
       alert(`Restart failed: ${e}`);
       await onUpdate();
     } finally {
-      setActionLoading(false);
+      setAction(null);
     }
   };
 
   const handleRebuild = async () => {
+    setAction("rebuilding");
     if (isRunning) {
-      setActionLoading(true);
       try {
         await api.projects.stop(project.id);
         await onUpdate();
       } catch (e) {
         alert(`Stop failed: ${e}`);
-        setActionLoading(false);
+        setAction(null);
         return;
       }
-      setActionLoading(false);
     }
     startStreamingRun(true);
   };
@@ -127,7 +131,7 @@ export function ProjectDetail({ project, onUpdate, onEdit, onDelete }: Props) {
         </div>
         <div className="project-card-status">
           <div className="project-card-status-left">
-            <span className={`badge ${project.status}`}>{project.status}</span>
+            <span className={`badge ${displayStatus}`}>{displayStatus}</span>
           </div>
           <div className="btn-group">
             {isRunning ? (
@@ -138,7 +142,7 @@ export function ProjectDetail({ project, onUpdate, onEdit, onDelete }: Props) {
                   disabled={actionLoading}
                   onClick={handleStop}
                 >
-                  Stop
+                  {action === "stopping" ? "Stopping..." : "Stop"}
                 </button>
                 <button
                   type="button"
@@ -146,7 +150,7 @@ export function ProjectDetail({ project, onUpdate, onEdit, onDelete }: Props) {
                   disabled={actionLoading}
                   onClick={handleRestart}
                 >
-                  Restart
+                  {action === "restarting" ? "Restarting..." : "Restart"}
                 </button>
                 <button
                   type="button"
@@ -154,7 +158,7 @@ export function ProjectDetail({ project, onUpdate, onEdit, onDelete }: Props) {
                   disabled={actionLoading}
                   onClick={handleRebuild}
                 >
-                  Rebuild
+                  {action === "rebuilding" ? "Rebuilding..." : "Rebuild"}
                 </button>
               </>
             ) : (
@@ -165,7 +169,7 @@ export function ProjectDetail({ project, onUpdate, onEdit, onDelete }: Props) {
                   disabled={actionLoading || isBuilding || !project.github_url}
                   onClick={handleRun}
                 >
-                  {isBuilding ? "Building..." : "Run"}
+                  {action === "building" || isBuilding ? "Building..." : "Run"}
                 </button>
                 {project.image_tag && (
                   <button
@@ -174,7 +178,7 @@ export function ProjectDetail({ project, onUpdate, onEdit, onDelete }: Props) {
                     disabled={actionLoading || isBuilding}
                     onClick={handleRebuild}
                   >
-                    Rebuild
+                    {action === "rebuilding" ? "Rebuilding..." : "Rebuild"}
                   </button>
                 )}
               </>
