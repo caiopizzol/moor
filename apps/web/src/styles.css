@@ -474,7 +474,7 @@ code,
   transform: translateX(14px);
 }
 
-/* Badge */
+/* Badge — static (sidebar, etc) */
 .badge {
   display: inline-block;
   font-size: 11px;
@@ -501,16 +501,57 @@ code,
   background: rgba(248, 113, 113, 0.15);
   color: var(--red);
 }
-.badge.stopping {
-  background: rgba(251, 191, 36, 0.15);
-  color: var(--yellow);
+
+/* Badge — status with spinner/dot */
+.badge-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 3px 10px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
-.badge.restarting {
-  background: rgba(251, 191, 36, 0.15);
-  color: var(--yellow);
+
+.badge-status .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  flex-shrink: 0;
 }
-.badge.rebuilding {
-  background: rgba(251, 191, 36, 0.15);
+
+.badge-status .spinner {
+  width: 10px;
+  height: 10px;
+  border: 1.5px solid transparent;
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: badge-spin 0.7s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes badge-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.badge-status.running {
+  color: var(--green);
+}
+.badge-status.stopped {
+  color: var(--text-muted);
+}
+.badge-status.error {
+  color: var(--red);
+}
+.badge-status.building,
+.badge-status.stopping,
+.badge-status.restarting,
+.badge-status.rebuilding {
   color: var(--yellow);
 }
 

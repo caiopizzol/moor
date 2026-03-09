@@ -97,6 +97,19 @@ export function ProjectDetail({ project, onUpdate, onEdit, onDelete }: Props) {
     startStreamingRun(true);
   };
 
+  const isTransitional =
+    action === "stopping" ||
+    action === "restarting" ||
+    action === "rebuilding" ||
+    action === "building";
+
+  const statusLabel: Record<string, string> = {
+    stopping: "Stopping...",
+    restarting: "Restarting...",
+    rebuilding: "Rebuilding...",
+    building: "Building...",
+  };
+
   return (
     <div className="detail">
       {/* Header Card */}
@@ -131,34 +144,26 @@ export function ProjectDetail({ project, onUpdate, onEdit, onDelete }: Props) {
         </div>
         <div className="project-card-status">
           <div className="project-card-status-left">
-            <span className={`badge ${displayStatus}`}>{displayStatus}</span>
+            <span className={`badge-status ${displayStatus}`}>
+              <span className={isTransitional ? "spinner" : "dot"} />
+              {displayStatus}
+            </span>
           </div>
           <div className="btn-group">
-            {isRunning ? (
+            {actionLoading ? (
+              <button type="button" className="btn btn-sm" disabled>
+                {statusLabel[action as string] || "Working..."}
+              </button>
+            ) : isRunning ? (
               <>
-                <button
-                  type="button"
-                  className="btn btn-stop btn-sm"
-                  disabled={actionLoading}
-                  onClick={handleStop}
-                >
-                  {action === "stopping" ? "Stopping..." : "Stop"}
+                <button type="button" className="btn btn-stop btn-sm" onClick={handleStop}>
+                  Stop
                 </button>
-                <button
-                  type="button"
-                  className="btn btn-sm"
-                  disabled={actionLoading}
-                  onClick={handleRestart}
-                >
-                  {action === "restarting" ? "Restarting..." : "Restart"}
+                <button type="button" className="btn btn-sm" onClick={handleRestart}>
+                  Restart
                 </button>
-                <button
-                  type="button"
-                  className="btn btn-sm"
-                  disabled={actionLoading}
-                  onClick={handleRebuild}
-                >
-                  {action === "rebuilding" ? "Rebuilding..." : "Rebuild"}
+                <button type="button" className="btn btn-sm" onClick={handleRebuild}>
+                  Rebuild
                 </button>
               </>
             ) : (
@@ -166,19 +171,19 @@ export function ProjectDetail({ project, onUpdate, onEdit, onDelete }: Props) {
                 <button
                   type="button"
                   className="btn btn-run btn-sm"
-                  disabled={actionLoading || isBuilding || !project.github_url}
+                  disabled={isBuilding || !project.github_url}
                   onClick={handleRun}
                 >
-                  {action === "building" || isBuilding ? "Building..." : "Run"}
+                  {isBuilding ? "Building..." : "Run"}
                 </button>
                 {project.image_tag && (
                   <button
                     type="button"
                     className="btn btn-sm"
-                    disabled={actionLoading || isBuilding}
+                    disabled={isBuilding}
                     onClick={handleRebuild}
                   >
-                    {action === "rebuilding" ? "Rebuilding..." : "Rebuild"}
+                    Rebuild
                   </button>
                 )}
               </>
@@ -195,14 +200,14 @@ export function ProjectDetail({ project, onUpdate, onEdit, onDelete }: Props) {
             className={`log-tab ${tab === "build" ? "active" : ""}`}
             onClick={() => setTab("build")}
           >
-            Build Output
+            Build
           </button>
           <button
             type="button"
             className={`log-tab ${tab === "logs" ? "active" : ""}`}
             onClick={() => setTab("logs")}
           >
-            Container Logs
+            Logs
           </button>
           <button
             type="button"
@@ -216,7 +221,7 @@ export function ProjectDetail({ project, onUpdate, onEdit, onDelete }: Props) {
             className={`log-tab ${tab === "env" ? "active" : ""}`}
             onClick={() => setTab("env")}
           >
-            Env Vars
+            Env
           </button>
         </div>
 
