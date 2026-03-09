@@ -3,3 +3,4 @@ dist/
 data/
 dev/
 .DS_Store
+*.db
