@@ -5,9 +5,11 @@ export async function handleProjects(req: Request, url: URL): Promise<Response |
   if (!match) return null;
 
   const id = match[1] ? Number(match[1]) : null;
+  console.log(`[projects] ${req.method} /api/projects${id ? `/${id}` : ""}`);
 
   if (req.method === "GET" && !id) {
     const rows = db.query("SELECT * FROM projects ORDER BY name").all();
+    console.log(`[projects] listing ${(rows as unknown[]).length} projects`);
     return Response.json(rows);
   }
 
@@ -36,6 +38,9 @@ export async function handleProjects(req: Request, url: URL): Promise<Response |
 async function handleCreate(req: Request): Promise<Response> {
   const body = await req.json();
   const { name, github_url, branch, dockerfile } = body;
+  console.log(
+    `[projects] create: name=${name} github_url=${github_url} branch=${branch || "main"} dockerfile=${dockerfile || "Dockerfile"}`,
+  );
   if (!name) return new Response("name is required", { status: 400 });
 
   const result = db
@@ -44,6 +49,7 @@ async function handleCreate(req: Request): Promise<Response> {
     )
     .get(name, github_url ?? null, branch ?? "main", dockerfile ?? "Dockerfile");
 
+  console.log("[projects] created:", JSON.stringify(result));
   return Response.json(result, { status: 201 });
 }
 

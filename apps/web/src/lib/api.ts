@@ -88,6 +88,44 @@ export const api = {
       request<{ message: string }>(`/api/projects/${id}/stop`, { method: "POST" }),
     run: (id: number) =>
       request<{ message: string }>(`/api/projects/${id}/run`, { method: "POST" }),
+    runStream: async (
+      id: number,
+      onLog: (text: string) => void,
+      onDone: () => void,
+      onError: (err: string) => void,
+    ) => {
+      const res = await fetch(`/api/projects/${id}/run`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+      if (res.status === 401) {
+        window.dispatchEvent(new CustomEvent("moor:unauthorized"));
+        return;
+      }
+      if (!res.ok || !res.body) {
+        onError(await res.text());
+        return;
+      }
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const parts = buffer.split("\n\n");
+        buffer = parts.pop() || "";
+        for (const part of parts) {
+          const eventMatch = part.match(/^event: (\w+)\ndata: (.+)$/s);
+          if (!eventMatch) continue;
+          const [, event, raw] = eventMatch;
+          const data = JSON.parse(raw) as string;
+          if (event === "log") onLog(data);
+          else if (event === "done") onDone();
+          else if (event === "error") onError(data);
+        }
+      }
+    },
     logs: (id: number, tail = 100) =>
       request<{ logs: string }>(`/api/projects/${id}/logs?tail=${tail}`),
     exec: (id: number, command: string) =>

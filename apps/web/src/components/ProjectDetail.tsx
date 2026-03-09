@@ -16,23 +16,38 @@ type Tab = "build" | "logs" | "terminal";
 export function ProjectDetail({ project, onUpdate, onEdit, onDelete }: Props) {
   const [actionLoading, setActionLoading] = useState(false);
   const [tab, setTab] = useState<Tab>("build");
+  const [streamingLines, setStreamingLines] = useState<string[] | undefined>(undefined);
 
   const isRunning = project.status === "running";
   const isBuilding = project.status === "building";
 
-  const handleRun = async () => {
+  const startStreamingRun = async () => {
     setActionLoading(true);
     setTab("build");
+    setStreamingLines([]);
     try {
-      await api.projects.run(project.id);
-      await onUpdate();
+      await api.projects.runStream(
+        project.id,
+        (line) => setStreamingLines((prev) => [...(prev || []), line]),
+        () => {
+          setStreamingLines(undefined);
+          onUpdate();
+          setActionLoading(false);
+        },
+        (err) => {
+          setStreamingLines((prev) => [...(prev || []), `\nError: ${err}\n`]);
+          onUpdate();
+          setActionLoading(false);
+        },
+      );
     } catch (e) {
-      alert(`Run failed: ${e}`);
-      await onUpdate();
-    } finally {
+      setStreamingLines((prev) => [...(prev || []), `\nError: ${e}\n`]);
+      onUpdate();
       setActionLoading(false);
     }
   };
+
+  const handleRun = () => startStreamingRun();
 
   const handleStop = async () => {
     setActionLoading(true);
@@ -46,6 +61,36 @@ export function ProjectDetail({ project, onUpdate, onEdit, onDelete }: Props) {
     }
   };
 
+  const handleRestart = async () => {
+    setActionLoading(true);
+    try {
+      await api.projects.stop(project.id);
+      await api.projects.start(project.id);
+      await onUpdate();
+    } catch (e) {
+      alert(`Restart failed: ${e}`);
+      await onUpdate();
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleRebuild = async () => {
+    if (isRunning) {
+      setActionLoading(true);
+      try {
+        await api.projects.stop(project.id);
+        await onUpdate();
+      } catch (e) {
+        alert(`Stop failed: ${e}`);
+        setActionLoading(false);
+        return;
+      }
+      setActionLoading(false);
+    }
+    startStreamingRun();
+  };
+
   return (
     <div className="detail">
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
@@ -54,23 +99,53 @@ export function ProjectDetail({ project, onUpdate, onEdit, onDelete }: Props) {
             <h2>{project.name}</h2>
             <div className="btn-group">
               {isRunning ? (
-                <button
-                  type="button"
-                  className="btn btn-danger"
-                  disabled={actionLoading}
-                  onClick={handleStop}
-                >
-                  {actionLoading ? "Stopping..." : "Stop"}
-                </button>
+                <>
+                  <button
+                    type="button"
+                    className="btn btn-danger"
+                    disabled={actionLoading}
+                    onClick={handleStop}
+                  >
+                    Stop
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-sm"
+                    disabled={actionLoading}
+                    onClick={handleRestart}
+                  >
+                    Restart
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-sm"
+                    disabled={actionLoading}
+                    onClick={handleRebuild}
+                  >
+                    Rebuild
+                  </button>
+                </>
               ) : (
-                <button
-                  type="button"
-                  className="btn btn-run"
-                  disabled={actionLoading || isBuilding || !project.github_url}
-                  onClick={handleRun}
-                >
-                  {actionLoading || isBuilding ? "Running..." : "Run"}
-                </button>
+                <>
+                  <button
+                    type="button"
+                    className="btn btn-run"
+                    disabled={actionLoading || isBuilding || !project.github_url}
+                    onClick={handleRun}
+                  >
+                    {isBuilding ? "Building..." : "Run"}
+                  </button>
+                  {project.image_tag && (
+                    <button
+                      type="button"
+                      className="btn btn-sm"
+                      disabled={actionLoading || isBuilding}
+                      onClick={handleRebuild}
+                    >
+                      Rebuild
+                    </button>
+                  )}
+                </>
               )}
               <button type="button" className="btn btn-sm" onClick={onEdit}>
                 Edit
@@ -124,7 +199,7 @@ export function ProjectDetail({ project, onUpdate, onEdit, onDelete }: Props) {
           </button>
         </div>
 
-        {tab === "build" && <BuildOutput projectId={project.id} />}
+        {tab === "build" && <BuildOutput projectId={project.id} streamingLines={streamingLines} />}
         {tab === "logs" && <ContainerLogs projectId={project.id} running={isRunning} />}
         {tab === "terminal" && <Terminal projectId={project.id} running={isRunning} />}
       </div>

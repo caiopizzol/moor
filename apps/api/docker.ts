@@ -8,11 +8,27 @@ async function dockerFetch(
   opts?: RequestInit & { timeout?: number },
 ): Promise<Response> {
   const { timeout = 30000, ...init } = opts ?? {};
-  return fetch(`http://localhost${path}`, {
+  console.log(`[docker-api] ${init.method || "GET"} ${path}`);
+  const res = await fetch(`http://localhost${path}`, {
     ...init,
     unix: SOCKET,
     signal: AbortSignal.timeout(timeout),
   });
+  console.log(`[docker-api] → ${res.status} ${res.statusText}`);
+  return res;
+}
+
+/** Parse a single Docker JSON build line into clean text. Returns null if nothing to display. */
+function parseBuildLine(line: string): { text: string; error?: boolean } | null {
+  try {
+    const parsed = JSON.parse(line);
+    if (parsed.error) return { text: `ERROR: ${parsed.error}\n`, error: true };
+    if (parsed.stream) return { text: parsed.stream };
+    if (parsed.aux?.ID) return { text: `Built image: ${parsed.aux.ID.slice(0, 19)}\n` };
+  } catch {
+    return { text: `${line}\n` };
+  }
+  return null;
 }
 
 export async function buildImage(
@@ -24,6 +40,7 @@ export async function buildImage(
   const gitUrl = githubUrl.endsWith(".git") ? githubUrl : `${githubUrl}.git`;
   const remote = `${gitUrl}#${branch}`;
   const params = new URLSearchParams({ remote, t: tag, dockerfile });
+  console.log(`[buildImage] remote=${remote} tag=${tag} dockerfile=${dockerfile}`);
   const res = await dockerFetch(`/v1.44/build?${params}`, {
     method: "POST",
     timeout: 300000,
@@ -34,29 +51,89 @@ export async function buildImage(
     throw new Error(`Docker build failed: ${res.status} ${body}`);
   }
 
-  // Stream the build output
-  let output = "";
+  let rawOutput = "";
   const reader = res.body?.getReader();
   if (reader) {
     const decoder = new TextDecoder();
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
-      output += decoder.decode(value, { stream: true });
+      rawOutput += decoder.decode(value, { stream: true });
     }
   }
 
-  // Check for errors in the stream
-  if (output.includes('"error"')) {
-    const lines = output.split("\n").filter(Boolean);
-    for (const line of lines) {
-      try {
-        const parsed = JSON.parse(line);
-        if (parsed.error) throw new Error(parsed.error);
-      } catch {}
+  let buildError: string | null = null;
+  let output = "";
+  for (const line of rawOutput.split("\n").filter(Boolean)) {
+    const parsed = parseBuildLine(line);
+    if (parsed) {
+      output += parsed.text;
+      if (parsed.error) buildError = parsed.text;
     }
   }
 
+  if (buildError) throw new Error(buildError);
+  return output;
+}
+
+/** Streaming version of buildImage — calls onLine for each parsed line as it arrives. */
+export async function buildImageStreaming(
+  githubUrl: string,
+  branch: string,
+  dockerfile: string,
+  tag: string,
+  onLine: (text: string) => void,
+): Promise<string> {
+  const gitUrl = githubUrl.endsWith(".git") ? githubUrl : `${githubUrl}.git`;
+  const remote = `${gitUrl}#${branch}`;
+  const params = new URLSearchParams({ remote, t: tag, dockerfile });
+  console.log(`[buildImageStreaming] remote=${remote} tag=${tag} dockerfile=${dockerfile}`);
+  const res = await dockerFetch(`/v1.44/build?${params}`, {
+    method: "POST",
+    timeout: 300000,
+  });
+
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Docker build failed: ${res.status} ${body}`);
+  }
+
+  let buildError: string | null = null;
+  let output = "";
+  let buffer = "";
+  const reader = res.body?.getReader();
+  if (reader) {
+    const decoder = new TextDecoder();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      // Process complete lines
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || ""; // keep incomplete line in buffer
+      for (const line of lines) {
+        if (!line) continue;
+        const parsed = parseBuildLine(line);
+        if (parsed) {
+          output += parsed.text;
+          onLine(parsed.text);
+          if (parsed.error) buildError = parsed.text;
+        }
+      }
+    }
+    // Process remaining buffer
+    if (buffer) {
+      const parsed = parseBuildLine(buffer);
+      if (parsed) {
+        output += parsed.text;
+        onLine(parsed.text);
+        if (parsed.error) buildError = parsed.text;
+      }
+    }
+  }
+
+  if (buildError) throw new Error(buildError);
   return output;
 }
 
@@ -65,10 +142,14 @@ export async function createAndStartContainer(
   name: string,
   envVars: { key: string; value: string }[],
 ): Promise<string> {
+  console.log(`[createContainer] image=${imageTag} name=${name} envVars=${envVars.length}`);
   // Remove existing container with this name if it exists
   try {
+    console.log(`[createContainer] removing existing container ${name}...`);
     await dockerFetch(`/v1.44/containers/${name}?force=true`, { method: "DELETE" });
-  } catch {}
+  } catch {
+    console.log("[createContainer] no existing container to remove");
+  }
 
   const body = {
     Image: imageTag,
@@ -112,6 +193,7 @@ export async function execInContainer(
   containerId: string,
   command: string,
 ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+  console.log(`[execInContainer] container=${containerId.slice(0, 12)} cmd="${command}"`);
   // Create exec
   const createRes = await dockerFetch(`/v1.44/containers/${containerId}/exec`, {
     method: "POST",

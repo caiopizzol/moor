@@ -1,6 +1,7 @@
 import db from "../db";
 import {
   buildImage,
+  buildImageStreaming,
   createAndStartContainer,
   execInContainer,
   getContainerLogs,
@@ -24,8 +25,16 @@ export async function handleDocker(req: Request, url: URL): Promise<Response | n
 
   const id = Number(match[1]);
   const action = match[2];
+  console.log(`[docker] ${req.method} /api/projects/${id}/${action}`);
+
   const project = db.query("SELECT * FROM projects WHERE id = ?").get(id) as Project | null;
-  if (!project) return new Response("Not found", { status: 404 });
+  if (!project) {
+    console.log(`[docker] project ${id} not found`);
+    return new Response("Not found", { status: 404 });
+  }
+  console.log(
+    `[docker] project: name=${project.name} status=${project.status} image=${project.image_tag} container=${project.container_id}`,
+  );
 
   if (action === "build" && req.method === "POST") return handleBuild(project);
   if (action === "start" && req.method === "POST") return handleStart(project);
@@ -38,60 +47,103 @@ export async function handleDocker(req: Request, url: URL): Promise<Response | n
 }
 
 async function handleRun(project: Project): Promise<Response> {
-  // If github_url exists, build first then start
-  if (project.github_url) {
-    const tag = `moor/${project.name}:latest`;
-    db.query("UPDATE projects SET status = 'building' WHERE id = ?").run(project.id);
+  console.log(`[run] starting run for project ${project.name} (id=${project.id})`);
 
-    let buildOutput: string;
-    try {
-      buildOutput = await buildImage(project.github_url, project.branch, project.dockerfile, tag);
-      db.query("UPDATE projects SET image_tag = ?, status = 'stopped' WHERE id = ?").run(
-        tag,
-        project.id,
-      );
-
-      // Store build output in runs table
-      db.query(
-        `INSERT INTO runs (project_id, started_at, finished_at, exit_code, stdout, cron_id)
-         VALUES (?, datetime('now'), datetime('now'), 0, ?, NULL)`,
-      ).run(project.id, buildOutput);
-    } catch (e) {
-      const message = e instanceof Error ? e.message : "Unknown error";
-      // Store failed build output
-      db.query(
-        `INSERT INTO runs (project_id, started_at, finished_at, exit_code, stdout, cron_id)
-         VALUES (?, datetime('now'), datetime('now'), 1, ?, NULL)`,
-      ).run(project.id, message);
-      db.query("UPDATE projects SET status = 'error' WHERE id = ?").run(project.id);
-      return new Response(message, { status: 500 });
+  if (!project.github_url) {
+    if (project.image_tag) {
+      console.log("[run] no github_url, starting existing image");
+      return handleStart(project);
     }
-
-    // Now start the container
-    const envs = db
-      .query("SELECT key, value FROM env_vars WHERE project_id = ?")
-      .all(project.id) as { key: string; value: string }[];
-
-    try {
-      const containerId = await createAndStartContainer(tag, `moor-${project.name}`, envs);
-      db.query("UPDATE projects SET container_id = ?, status = 'running' WHERE id = ?").run(
-        containerId,
-        project.id,
-      );
-      return Response.json({ message: "Build complete, container started" });
-    } catch (e) {
-      db.query("UPDATE projects SET status = 'error' WHERE id = ?").run(project.id);
-      const message = e instanceof Error ? e.message : "Unknown error";
-      return new Response(message, { status: 500 });
-    }
+    console.log("[run] no github_url or image_tag — nothing to do");
+    return new Response("No GitHub URL or image configured", { status: 400 });
   }
 
-  // If image_tag exists but no github_url, just start
-  if (project.image_tag) {
-    return handleStart(project);
-  }
+  const tag = `moor/${project.name}:latest`;
+  console.log(
+    `[run] github_url=${project.github_url} branch=${project.branch} dockerfile=${project.dockerfile}`,
+  );
+  console.log(`[run] image tag will be: ${tag}`);
+  db.query("UPDATE projects SET status = 'building' WHERE id = ?").run(project.id);
 
-  return new Response("No GitHub URL or image configured", { status: 400 });
+  // Stream build output via SSE
+  const stream = new ReadableStream({
+    async start(controller) {
+      const encoder = new TextEncoder();
+      const send = (event: string, data: string) => {
+        controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
+      };
+
+      let buildOutput = "";
+      const buildStart = Date.now();
+
+      try {
+        buildOutput = await buildImageStreaming(
+          project.github_url as string,
+          project.branch,
+          project.dockerfile,
+          tag,
+          (line) => send("log", line),
+        );
+
+        const elapsed = ((Date.now() - buildStart) / 1000).toFixed(1);
+        console.log(`[run] build completed in ${elapsed}s`);
+
+        db.query("UPDATE projects SET image_tag = ?, status = 'stopped' WHERE id = ?").run(
+          tag,
+          project.id,
+        );
+        db.query(
+          `INSERT INTO runs (project_id, started_at, finished_at, exit_code, stdout, cron_id)
+           VALUES (?, datetime('now'), datetime('now'), 0, ?, NULL)`,
+        ).run(project.id, buildOutput);
+
+        send("log", `\nBuild completed in ${elapsed}s\n`);
+      } catch (e) {
+        const message = e instanceof Error ? e.message : "Unknown error";
+        console.error(`[run] BUILD FAILED: ${message}`);
+        db.query(
+          `INSERT INTO runs (project_id, started_at, finished_at, exit_code, stdout, cron_id)
+           VALUES (?, datetime('now'), datetime('now'), 1, ?, NULL)`,
+        ).run(project.id, buildOutput || message);
+        db.query("UPDATE projects SET status = 'error' WHERE id = ?").run(project.id);
+        send("error", message);
+        controller.close();
+        return;
+      }
+
+      // Start the container
+      try {
+        const envs = db
+          .query("SELECT key, value FROM env_vars WHERE project_id = ?")
+          .all(project.id) as { key: string; value: string }[];
+
+        send("log", "Starting container...\n");
+        const containerId = await createAndStartContainer(tag, `moor-${project.name}`, envs);
+        console.log(`[run] container started: ${containerId}`);
+
+        db.query("UPDATE projects SET container_id = ?, status = 'running' WHERE id = ?").run(
+          containerId,
+          project.id,
+        );
+        send("done", "Container started");
+      } catch (e) {
+        db.query("UPDATE projects SET status = 'error' WHERE id = ?").run(project.id);
+        const message = e instanceof Error ? e.message : "Unknown error";
+        console.error(`[run] CONTAINER START FAILED: ${message}`);
+        send("error", message);
+      }
+
+      controller.close();
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+    },
+  });
 }
 
 async function handleLogs(project: Project, url: URL): Promise<Response> {
@@ -109,7 +161,11 @@ async function handleLogs(project: Project, url: URL): Promise<Response> {
 }
 
 async function handleExec(req: Request, project: Project): Promise<Response> {
+  console.log(
+    `[exec] project=${project.name} container=${project.container_id} status=${project.status}`,
+  );
   if (!project.container_id || project.status !== "running") {
+    console.log("[exec] rejected — container not running");
     return new Response("Container is not running", { status: 400 });
   }
 
@@ -118,29 +174,42 @@ async function handleExec(req: Request, project: Project): Promise<Response> {
     return new Response("Missing command", { status: 400 });
   }
 
+  console.log(`[exec] command: ${body.command}`);
   try {
     const result = await execInContainer(project.container_id, body.command);
+    console.log(
+      `[exec] exitCode=${result.exitCode} stdout=${result.stdout.length}chars stderr=${result.stderr.length}chars`,
+    );
     return Response.json(result);
   } catch (e) {
     const message = e instanceof Error ? e.message : "Unknown error";
+    console.error(`[exec] FAILED: ${message}`);
     return new Response(message, { status: 500 });
   }
 }
 
 async function handleBuild(project: Project): Promise<Response> {
+  console.log(`[build] project=${project.name} github_url=${project.github_url}`);
   if (!project.github_url) {
+    console.log("[build] rejected — no github_url");
     return new Response("No GitHub URL configured", { status: 400 });
   }
 
   const tag = `moor/${project.name}:latest`;
+  console.log(`[build] tag=${tag} branch=${project.branch} dockerfile=${project.dockerfile}`);
   db.query("UPDATE projects SET status = 'building' WHERE id = ?").run(project.id);
 
   try {
+    console.log("[build] starting docker build...");
+    const buildStart = Date.now();
     const buildOutput = await buildImage(
       project.github_url,
       project.branch,
       project.dockerfile,
       tag,
+    );
+    console.log(
+      `[build] completed in ${((Date.now() - buildStart) / 1000).toFixed(1)}s (${buildOutput.length} chars)`,
     );
     db.query("UPDATE projects SET image_tag = ?, status = 'stopped' WHERE id = ?").run(
       tag,
@@ -153,16 +222,20 @@ async function handleBuild(project: Project): Promise<Response> {
        VALUES (?, datetime('now'), datetime('now'), 0, ?, NULL)`,
     ).run(project.id, buildOutput);
 
+    console.log("[build] done — status set to 'stopped'");
     return Response.json({ message: "Build complete" });
   } catch (e) {
     db.query("UPDATE projects SET status = 'error' WHERE id = ?").run(project.id);
     const message = e instanceof Error ? e.message : "Unknown error";
+    console.error(`[build] FAILED: ${message}`);
     return new Response(message, { status: 500 });
   }
 }
 
 async function handleStart(project: Project): Promise<Response> {
+  console.log(`[start] project=${project.name} image=${project.image_tag}`);
   if (!project.image_tag) {
+    console.log("[start] rejected — no image built");
     return new Response("No image built yet", { status: 400 });
   }
 
@@ -170,6 +243,7 @@ async function handleStart(project: Project): Promise<Response> {
     key: string;
     value: string;
   }[];
+  console.log(`[start] creating container moor-${project.name} with ${envs.length} env vars`);
 
   try {
     const containerId = await createAndStartContainer(
@@ -177,6 +251,7 @@ async function handleStart(project: Project): Promise<Response> {
       `moor-${project.name}`,
       envs,
     );
+    console.log(`[start] container started: ${containerId}`);
     db.query("UPDATE projects SET container_id = ?, status = 'running' WHERE id = ?").run(
       containerId,
       project.id,
@@ -185,21 +260,26 @@ async function handleStart(project: Project): Promise<Response> {
   } catch (e) {
     db.query("UPDATE projects SET status = 'error' WHERE id = ?").run(project.id);
     const message = e instanceof Error ? e.message : "Unknown error";
+    console.error(`[start] FAILED: ${message}`);
     return new Response(message, { status: 500 });
   }
 }
 
 async function handleStop(project: Project): Promise<Response> {
+  console.log(`[stop] project=${project.name} container=${project.container_id}`);
   if (!project.container_id) {
+    console.log("[stop] rejected — no container");
     return new Response("No container running", { status: 400 });
   }
 
   try {
     await stopContainer(project.container_id);
+    console.log("[stop] container stopped");
     db.query("UPDATE projects SET status = 'stopped' WHERE id = ?").run(project.id);
     return Response.json({ message: "Container stopped" });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Unknown error";
+    console.error(`[stop] FAILED: ${message}`);
     return new Response(message, { status: 500 });
   }
 }

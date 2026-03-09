@@ -12,6 +12,7 @@ import { handleDocker } from "./routes/docker";
 import { handleEnvs } from "./routes/envs";
 import { handleProjects } from "./routes/projects";
 import { handleRuns } from "./routes/runs";
+import { terminalWebSocket, upgradeTerminal } from "./terminal";
 
 // Initialize DB (side-effect import runs migrations)
 import "./db";
@@ -25,7 +26,7 @@ const server = Bun.serve({
   port: PORT,
   hostname: "0.0.0.0",
 
-  async fetch(req) {
+  async fetch(req, server) {
     const url = new URL(req.url);
 
     // API routes
@@ -39,6 +40,13 @@ const server = Bun.serve({
         const token = getSessionFromCookie(req);
         if (!token || !validateSession(token)) {
           return Response.json({ error: "Unauthorized" }, { status: 401 });
+        }
+
+        // WebSocket terminal upgrade
+        if (url.pathname.match(/^\/api\/projects\/\d+\/terminal$/)) {
+          const wsRes = upgradeTerminal(req, server);
+          if (wsRes === true) return; // upgrade succeeded — must return undefined
+          return wsRes ?? new Response("Upgrade failed", { status: 500 });
         }
 
         const res =
@@ -72,6 +80,8 @@ const server = Bun.serve({
 
     return new Response("Run 'bun run build' in client/ first", { status: 503 });
   },
+
+  websocket: terminalWebSocket,
 });
 
 startCronScheduler();
