@@ -273,18 +273,19 @@ async function handleStart(project: Project): Promise<Response> {
 async function handleStop(project: Project): Promise<Response> {
   console.log(`[stop] project=${project.name} container=${project.container_id}`);
   if (!project.container_id) {
-    console.log("[stop] rejected — no container");
-    return new Response("No container running", { status: 400 });
+    console.log("[stop] no container — marking as stopped");
+    db.query("UPDATE projects SET status = 'stopped' WHERE id = ?").run(project.id);
+    return Response.json({ message: "Container stopped" });
   }
 
   try {
     await stopContainer(project.container_id);
     console.log("[stop] container stopped");
-    db.query("UPDATE projects SET status = 'stopped' WHERE id = ?").run(project.id);
-    return Response.json({ message: "Container stopped" });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Unknown error";
-    console.error(`[stop] FAILED: ${message}`);
-    return new Response(message, { status: 500 });
+    console.error(`[stop] error during stop (marking as stopped anyway): ${message}`);
   }
+
+  db.query("UPDATE projects SET status = 'stopped' WHERE id = ?").run(project.id);
+  return Response.json({ message: "Container stopped" });
 }

@@ -194,10 +194,17 @@ export async function createAndStartContainer(
 }
 
 export async function stopContainer(containerId: string): Promise<void> {
-  const res = await dockerFetch(`/v1.44/containers/${containerId}/stop?t=10`, { method: "POST" });
-  if (!res.ok && res.status !== 304) {
+  console.log(`[stopContainer] stopping ${containerId.slice(0, 12)}...`);
+  const res = await dockerFetch(`/v1.44/containers/${containerId}/stop?t=10`, {
+    method: "POST",
+    timeout: 30000,
+  });
+  console.log(`[stopContainer] response: ${res.status} ${res.statusText}`);
+  // 304 = already stopped, 404 = container gone — both are fine
+  if (!res.ok && res.status !== 304 && res.status !== 404) {
     const err = await res.text();
-    throw new Error(`Container stop failed: ${err}`);
+    console.error(`[stopContainer] error body: ${err}`);
+    throw new Error(`Container stop failed (${res.status}): ${err}`);
   }
 }
 
