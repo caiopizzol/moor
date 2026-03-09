@@ -105,13 +105,12 @@ export function EnvVars({ projectId }: Props) {
     <div>
       {rawMode ? (
         <textarea
-          className="mono"
+          className="env-textarea"
           placeholder={"KEY=value\nDB_HOST=localhost\n# comments are ignored"}
           value={rawText}
           onChange={(e) => setRawText(e.target.value)}
           rows={10}
           spellCheck={false}
-          style={{ width: "100%", resize: "vertical" }}
         />
       ) : (
         <div className="env-rows">

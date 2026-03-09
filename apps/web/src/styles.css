@@ -562,8 +562,8 @@ code,
   color: var(--text);
   padding: 6px 10px;
   border-radius: 4px;
-  font-family: "JetBrains Mono", "Fira Code", monospace;
-  font-size: 13px;
+  font-family: "JetBrains Mono", "Fira Code", "SF Mono", Menlo, monospace;
+  font-size: 12px;
 }
 
 .env-row input:first-child {
@@ -572,6 +572,29 @@ code,
 
 .env-row input:nth-child(2) {
   flex: 1;
+}
+
+.env-textarea {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 14px;
+  font-family: "JetBrains Mono", "Fira Code", "SF Mono", Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--text-muted);
+  width: 100%;
+  resize: vertical;
+  outline: none;
+  transition: border-color 0.1s;
+}
+
+.env-textarea:focus {
+  border-color: var(--text-dim);
+}
+
+.env-textarea::placeholder {
+  color: var(--text-dim);
 }
 
 /* Scrollbar */
