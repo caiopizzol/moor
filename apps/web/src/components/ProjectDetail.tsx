@@ -70,27 +70,40 @@ export function ProjectDetail({ project, onUpdate, onEdit, onDelete }: Props) {
 
   const handleRestart = async () => {
     setAction("restarting");
+    setTab("build");
+    setStreamingLines(["Stopping container...\n"]);
     try {
       await api.projects.stop(project.id);
+      setStreamingLines((prev) => [
+        ...(prev || []),
+        "Container stopped.\n\nStarting container...\n",
+      ]);
       await api.projects.start(project.id);
+      setStreamingLines((prev) => [...(prev || []), "Container started.\n"]);
       await onUpdate();
     } catch (e) {
-      alert(`Restart failed: ${e}`);
+      setStreamingLines((prev) => [...(prev || []), `\nError: ${e}\n`]);
       await onUpdate();
     } finally {
       setAction(null);
+      setStreamingLines(undefined);
     }
   };
 
   const handleRebuild = async () => {
     setAction("rebuilding");
+    setTab("build");
+    setStreamingLines([]);
     if (isRunning) {
+      setStreamingLines(["Stopping container...\n"]);
       try {
         await api.projects.stop(project.id);
+        setStreamingLines((prev) => [...(prev || []), "Container stopped.\n\n"]);
         await onUpdate();
       } catch (e) {
         alert(`Stop failed: ${e}`);
         setAction(null);
+        setStreamingLines(undefined);
         return;
       }
     }
