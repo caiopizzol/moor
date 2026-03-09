@@ -63,7 +63,7 @@ export function Terminal({ projectId, running }: Props) {
   if (!running) {
     return (
       <div className="log-empty">
-        Container is not running. Start the container to use the terminal.
+        Container is not running. Click <span style={{ color: "var(--green)" }}>Run</span> to start.
       </div>
     );
   }

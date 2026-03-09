@@ -32,7 +32,11 @@ export function ContainerLogs({ projectId, running }: Props) {
   }, [load, running]);
 
   if (!running) {
-    return <div className="log-empty">Container is not running.</div>;
+    return (
+      <div className="log-empty">
+        Container is not running. Click <span style={{ color: "var(--green)" }}>Run</span> to start.
+      </div>
+    );
   }
 
   return <XTermPanel handle={xtermRef} />;

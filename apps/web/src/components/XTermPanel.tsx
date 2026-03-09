@@ -18,10 +18,10 @@ type Props = {
 };
 
 const THEME = {
-  background: "#1a1a2e",
+  background: "#0a0a0a",
   foreground: "#e0e0e0",
   cursor: "#e0e0e0",
-  selectionBackground: "#3a3a5e",
+  selectionBackground: "#252525",
 };
 
 export function XTermPanel({ handle, interactive, onData, onResize }: Props) {
@@ -83,8 +83,9 @@ export function XTermPanel({ handle, interactive, onData, onResize }: Props) {
       style={{
         height: 400,
         padding: 4,
-        background: THEME.background,
+        background: "#0a0a0a",
         borderRadius: 6,
+        border: "1px solid #252525",
       }}
     />
   );
