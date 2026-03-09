@@ -1,7 +1,15 @@
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 
-const SOCKET =
-  process.env.DOCKER_HOST?.replace("unix://", "") || `${homedir()}/.docker/run/docker.sock`;
+function findSocket(): string {
+  if (process.env.DOCKER_HOST) return process.env.DOCKER_HOST.replace("unix://", "");
+  // Standard Linux path (Docker on VM / Linux host)
+  if (existsSync("/var/run/docker.sock")) return "/var/run/docker.sock";
+  // macOS Docker Desktop path
+  return `${homedir()}/.docker/run/docker.sock`;
+}
+
+const SOCKET = findSocket();
 
 async function dockerFetch(
   path: string,
