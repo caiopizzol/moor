@@ -95,87 +95,95 @@ export function ProjectDetail({ project, onUpdate, onEdit, onDelete }: Props) {
 
   return (
     <div className="detail">
-      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
-        <div>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <h2>{project.name}</h2>
-            <div className="btn-group">
-              {isRunning ? (
-                <>
-                  <button
-                    type="button"
-                    className="btn btn-danger"
-                    disabled={actionLoading}
-                    onClick={handleStop}
-                  >
-                    Stop
-                  </button>
+      {/* Header Card */}
+      <div className="project-card">
+        <div className="project-card-top">
+          <div>
+            <h2 className="project-card-name">{project.name}</h2>
+            <div className="meta">
+              {project.github_url ? (
+                <span>
+                  {project.github_url} &middot; {project.branch} &middot; {project.dockerfile}
+                </span>
+              ) : (
+                <span>No repository linked</span>
+              )}
+            </div>
+          </div>
+          <div className="btn-group">
+            <button type="button" className="btn btn-ghost btn-sm" onClick={onEdit}>
+              Edit
+            </button>
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm btn-danger"
+              onClick={() => {
+                if (confirm(`Delete "${project.name}"? This cannot be undone.`)) onDelete();
+              }}
+            >
+              Delete
+            </button>
+          </div>
+        </div>
+        <div className="project-card-status">
+          <div className="project-card-status-left">
+            <span className={`badge ${project.status}`}>{project.status}</span>
+          </div>
+          <div className="btn-group">
+            {isRunning ? (
+              <>
+                <button
+                  type="button"
+                  className="btn btn-stop btn-sm"
+                  disabled={actionLoading}
+                  onClick={handleStop}
+                >
+                  Stop
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-sm"
+                  disabled={actionLoading}
+                  onClick={handleRestart}
+                >
+                  Restart
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-sm"
+                  disabled={actionLoading}
+                  onClick={handleRebuild}
+                >
+                  Rebuild
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  className="btn btn-run btn-sm"
+                  disabled={actionLoading || isBuilding || !project.github_url}
+                  onClick={handleRun}
+                >
+                  {isBuilding ? "Building..." : "Run"}
+                </button>
+                {project.image_tag && (
                   <button
                     type="button"
                     className="btn btn-sm"
-                    disabled={actionLoading}
-                    onClick={handleRestart}
-                  >
-                    Restart
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-sm"
-                    disabled={actionLoading}
+                    disabled={actionLoading || isBuilding}
                     onClick={handleRebuild}
                   >
                     Rebuild
                   </button>
-                </>
-              ) : (
-                <>
-                  <button
-                    type="button"
-                    className="btn btn-run"
-                    disabled={actionLoading || isBuilding || !project.github_url}
-                    onClick={handleRun}
-                  >
-                    {isBuilding ? "Building..." : "Run"}
-                  </button>
-                  {project.image_tag && (
-                    <button
-                      type="button"
-                      className="btn btn-sm"
-                      disabled={actionLoading || isBuilding}
-                      onClick={handleRebuild}
-                    >
-                      Rebuild
-                    </button>
-                  )}
-                </>
-              )}
-              <button type="button" className="btn btn-sm" onClick={onEdit}>
-                Edit
-              </button>
-              <button
-                type="button"
-                className="btn btn-sm btn-danger"
-                onClick={() => {
-                  if (confirm(`Delete "${project.name}"? This cannot be undone.`)) onDelete();
-                }}
-              >
-                Delete
-              </button>
-            </div>
-          </div>
-          <div className="meta">
-            {project.github_url ? (
-              <span>
-                {project.github_url} &middot; {project.branch} &middot; {project.dockerfile}
-              </span>
-            ) : (
-              <span>No repository linked</span>
+                )}
+              </>
             )}
           </div>
         </div>
-        <span className={`badge ${project.status}`}>{project.status}</span>
       </div>
 
+      {/* Tabs + Content */}
       <div className="section">
         <div className="log-tabs">
           <button

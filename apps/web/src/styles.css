@@ -173,6 +173,48 @@ body,
   font-size: 13px;
 }
 
+/* Project Header Card */
+.project-card {
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 20px;
+  margin-bottom: 24px;
+}
+
+.project-card-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 12px;
+}
+
+.project-card-name {
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  margin-bottom: 4px;
+}
+
+.project-card .meta {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.project-card-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.project-card-status-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .detail h2 {
   font-size: 22px;
   font-weight: 600;
@@ -251,6 +293,25 @@ body,
 .btn-sm {
   padding: 4px 10px;
   font-size: 11px;
+}
+
+.btn-ghost {
+  border-color: transparent;
+  color: var(--text-muted);
+}
+
+.btn-ghost:hover {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+
+.btn-stop {
+  color: var(--red);
+  border-color: transparent;
+}
+
+.btn-stop:hover {
+  background: rgba(248, 113, 113, 0.1);
 }
 
 /* Inputs */
