@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { api } from "../lib/api";
+import { type XTermHandle, XTermPanel } from "./XTermPanel";
 
 type Props = {
   projectId: number;
@@ -7,42 +8,32 @@ type Props = {
 };
 
 export function ContainerLogs({ projectId, running }: Props) {
-  const [logs, setLogs] = useState("");
-  const boxRef = useRef<HTMLDivElement>(null);
+  const xtermRef = useRef<XTermHandle>(null);
+  const prevLogsRef = useRef("");
 
   const load = useCallback(async () => {
     try {
       const data = await api.projects.logs(projectId);
-      setLogs(data.logs);
+      if (data.logs && data.logs !== prevLogsRef.current) {
+        prevLogsRef.current = data.logs;
+        xtermRef.current?.clear();
+        xtermRef.current?.write(data.logs);
+      }
     } catch {
-      setLogs("");
+      // ignore
     }
   }, [projectId]);
 
   useEffect(() => {
     load();
-
     if (!running) return;
-
     const interval = setInterval(load, 5000);
     return () => clearInterval(interval);
   }, [load, running]);
 
-  // Auto-scroll to bottom on new logs
-  // biome-ignore lint/correctness/useExhaustiveDependencies: scroll when logs change
-  useEffect(() => {
-    if (boxRef.current) {
-      boxRef.current.scrollTop = boxRef.current.scrollHeight;
-    }
-  }, [logs]);
-
-  if (!running && !logs) {
+  if (!running) {
     return <div className="log-empty">Container is not running.</div>;
   }
 
-  return (
-    <div className="log-output" ref={boxRef}>
-      {logs || "No output yet."}
-    </div>
-  );
+  return <XTermPanel handle={xtermRef} />;
 }

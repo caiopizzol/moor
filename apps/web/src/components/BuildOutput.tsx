@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type Run } from "../lib/api";
+import { type XTermHandle, XTermPanel } from "./XTermPanel";
 
 type Props = {
   projectId: number;
@@ -9,7 +10,8 @@ type Props = {
 export function BuildOutput({ projectId, streamingLines }: Props) {
   const [run, setRun] = useState<Run | null>(null);
   const [loading, setLoading] = useState(true);
-  const logRef = useRef<HTMLDivElement>(null);
+  const xtermRef = useRef<XTermHandle>(null);
+  const writtenRef = useRef(0);
 
   const load = useCallback(async () => {
     try {
@@ -30,24 +32,31 @@ export function BuildOutput({ projectId, streamingLines }: Props) {
     if (!streamingLines) load();
   }, [load, streamingLines]);
 
-  // Auto-scroll during streaming
-  // biome-ignore lint/correctness/useExhaustiveDependencies: scroll when streaming lines change
+  // Write streaming lines incrementally
   useEffect(() => {
-    if (logRef.current) {
-      logRef.current.scrollTop = logRef.current.scrollHeight;
+    if (!streamingLines || !xtermRef.current) return;
+    // Reset if new stream
+    if (streamingLines.length === 0) {
+      writtenRef.current = 0;
+      xtermRef.current.clear();
+      return;
     }
+    for (let i = writtenRef.current; i < streamingLines.length; i++) {
+      xtermRef.current.write(streamingLines[i]);
+    }
+    writtenRef.current = streamingLines.length;
   }, [streamingLines]);
+
+  // Write saved build output when loaded
+  useEffect(() => {
+    if (run?.stdout && xtermRef.current && !streamingLines) {
+      xtermRef.current.write(run.stdout);
+    }
+  }, [run, streamingLines]);
 
   // Streaming mode
   if (streamingLines !== undefined) {
-    if (streamingLines.length === 0) {
-      return <div className="log-empty">Building...</div>;
-    }
-    return (
-      <div className="log-output" ref={logRef}>
-        {streamingLines.join("")}
-      </div>
-    );
+    return <XTermPanel handle={xtermRef} />;
   }
 
   if (loading) return null;
@@ -73,7 +82,7 @@ export function BuildOutput({ projectId, streamingLines }: Props) {
           Last build: {timestamp} — exit code {run.exit_code ?? "?"}
         </div>
       )}
-      <div className="log-output">{run.stdout}</div>
+      <XTermPanel handle={xtermRef} />
     </div>
   );
 }
