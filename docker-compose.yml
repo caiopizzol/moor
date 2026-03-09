@@ -2,12 +2,31 @@ services:
   moor:
     image: ghcr.io/caiopizzol/moor:latest
     # build: .  # uncomment for local dev
-    ports:
-      - "127.0.0.1:3000:3000"
+    expose:
+      - "3000"
+    # Uncomment to access directly without Caddy (e.g. local dev):
+    # ports:
+    #   - "3000:3000"
     volumes:
       - moor-data:/app/data
       - /var/run/docker.sock:/var/run/docker.sock
     restart: unless-stopped
+    # environment:
+    #   - MOOR_RESET_PASSWORD=your-new-password
+
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    restart: unless-stopped
 
 volumes:
   moor-data:
+  caddy-data:
+  caddy-config:

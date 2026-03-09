@@ -35,6 +35,42 @@ body,
   height: 100%;
 }
 
+/* Auth pages */
+.auth-page {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.auth-card {
+  width: 360px;
+  max-width: 90vw;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.auth-card h1 {
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+}
+
+.auth-subtitle {
+  color: var(--text-muted);
+  font-size: 13px;
+  margin-top: -8px;
+}
+
+.auth-error {
+  color: var(--red);
+  font-size: 13px;
+  background: rgba(248, 113, 113, 0.1);
+  padding: 8px 12px;
+  border-radius: 6px;
+}
+
 /* Sidebar */
 .sidebar {
   width: 280px;
@@ -403,6 +439,108 @@ code,
 .badge.error {
   background: rgba(248, 113, 113, 0.15);
   color: var(--red);
+}
+
+/* Run button */
+.btn-run {
+  color: var(--green);
+  border-color: transparent;
+}
+
+.btn-run:hover {
+  background: rgba(74, 222, 128, 0.1);
+}
+
+/* Log tabs */
+.log-tabs {
+  display: flex;
+  gap: 0;
+  margin-bottom: 12px;
+}
+
+.log-tab {
+  padding: 6px 14px;
+  font-size: 12px;
+  color: var(--text-dim);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  background: none;
+  border-top: none;
+  border-left: none;
+  border-right: none;
+  font-family: inherit;
+}
+
+.log-tab.active {
+  color: var(--text);
+  border-bottom-color: var(--text);
+}
+
+.log-tab:hover {
+  color: var(--text-muted);
+}
+
+/* Terminal */
+.terminal-box {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 14px;
+  font-family: "JetBrains Mono", "Fira Code", "SF Mono", Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.7;
+  max-height: 300px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.terminal-box .prompt {
+  color: var(--text-muted);
+}
+
+.terminal-box .output {
+  color: var(--text);
+}
+
+.terminal-input {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  margin-top: 8px;
+}
+
+.terminal-input .prompt-char {
+  color: var(--text-muted);
+  font-family: "JetBrains Mono", "Fira Code", "SF Mono", Menlo, monospace;
+  font-size: 12px;
+  padding: 8px 4px 8px 12px;
+  background: var(--bg);
+  border-radius: 6px 0 0 6px;
+  border: 1px solid var(--border);
+  border-right: none;
+}
+
+.terminal-input input {
+  flex: 1;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-left: none;
+  border-radius: 0 6px 6px 0;
+  color: var(--text);
+  font-family: "JetBrains Mono", "Fira Code", "SF Mono", Menlo, monospace;
+  font-size: 12px;
+  padding: 8px;
+  outline: none;
+  width: auto;
+}
+
+/* Empty state hint */
+.log-empty {
+  color: var(--text-dim);
+  font-size: 13px;
+  padding: 40px 0;
+  text-align: center;
 }
 
 /* Scrollbar */

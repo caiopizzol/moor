@@ -1,0 +1,4 @@
+# Replace :80 with your domain (e.g. moor.example.com) to enable auto HTTPS
+:80 {
+	reverse_proxy moor:3000
+}

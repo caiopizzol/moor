@@ -45,6 +45,10 @@ async function request<T>(path: string, opts?: RequestInit): Promise<T> {
     headers: { "Content-Type": "application/json" },
     ...opts,
   });
+  if (res.status === 401 && !path.startsWith("/api/auth/")) {
+    window.dispatchEvent(new CustomEvent("moor:unauthorized"));
+    throw new Error("Unauthorized");
+  }
   if (!res.ok) {
     const body = await res.text();
     throw new Error(`${res.status}: ${body}`);
@@ -54,6 +58,20 @@ async function request<T>(path: string, opts?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  auth: {
+    status: () => request<{ setup: boolean; authenticated: boolean }>("/api/auth/status"),
+    setup: (password: string) =>
+      request<{ ok: boolean }>("/api/auth/setup", {
+        method: "POST",
+        body: JSON.stringify({ password }),
+      }),
+    login: (password: string) =>
+      request<{ ok: boolean }>("/api/auth/login", {
+        method: "POST",
+        body: JSON.stringify({ password }),
+      }),
+    logout: () => request<{ ok: boolean }>("/api/auth/logout", { method: "POST" }),
+  },
   projects: {
     list: () => request<Project[]>("/api/projects"),
     get: (id: number) => request<Project>(`/api/projects/${id}`),
@@ -68,6 +86,17 @@ export const api = {
       request<{ message: string }>(`/api/projects/${id}/start`, { method: "POST" }),
     stop: (id: number) =>
       request<{ message: string }>(`/api/projects/${id}/stop`, { method: "POST" }),
+    run: (id: number) =>
+      request<{ message: string }>(`/api/projects/${id}/run`, { method: "POST" }),
+    logs: (id: number, tail = 100) =>
+      request<{ logs: string }>(`/api/projects/${id}/logs?tail=${tail}`),
+    exec: (id: number, command: string) =>
+      request<{ exitCode: number; stdout: string; stderr: string }>(`/api/projects/${id}/exec`, {
+        method: "POST",
+        body: JSON.stringify({ command }),
+      }),
+    buildOutput: (id: number) =>
+      request<Run | { output: null }>(`/api/projects/${id}/build-output`),
   },
   crons: {
     list: (projectId: number) => request<Cron[]>(`/api/projects/${projectId}/crons`),

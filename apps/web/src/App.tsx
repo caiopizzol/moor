@@ -1,8 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
+import { LoginPage } from "./components/LoginPage";
 import { ProjectDetail } from "./components/ProjectDetail";
 import { ProjectList } from "./components/ProjectList";
 import { ProjectModal } from "./components/ProjectModal";
+import { SetupPage } from "./components/SetupPage";
 import { api, type Project } from "./lib/api";
+
+type AuthState = "loading" | "setup" | "login" | "authenticated";
 
 function getIdFromPath(): number | null {
   const match = window.location.pathname.match(/^\/projects\/(\d+)$/);
@@ -10,11 +14,33 @@ function getIdFromPath(): number | null {
 }
 
 export function App() {
+  const [authState, setAuthState] = useState<AuthState>("loading");
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(getIdFromPath);
   const [modal, setModal] = useState<
     { mode: "create" } | { mode: "edit"; project: Project } | null
   >(null);
+
+  const checkAuth = useCallback(async () => {
+    try {
+      const { setup, authenticated } = await api.auth.status();
+      if (!setup) setAuthState("setup");
+      else if (!authenticated) setAuthState("login");
+      else setAuthState("authenticated");
+    } catch {
+      setAuthState("login");
+    }
+  }, []);
+
+  useEffect(() => {
+    checkAuth();
+  }, [checkAuth]);
+
+  useEffect(() => {
+    const handler = () => setAuthState("login");
+    window.addEventListener("moor:unauthorized", handler);
+    return () => window.removeEventListener("moor:unauthorized", handler);
+  }, []);
 
   const load = useCallback(async () => {
     const data = await api.projects.list();
@@ -22,8 +48,8 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    load();
-  }, [load]);
+    if (authState === "authenticated") load();
+  }, [authState, load]);
 
   const navigate = useCallback((id: number | null) => {
     setSelectedId(id);
@@ -53,6 +79,24 @@ export function App() {
 
   const selected = projects.find((p) => p.id === selectedId) ?? null;
 
+  if (authState === "loading") {
+    return (
+      <div className="auth-page">
+        <div className="auth-card">
+          <h1>Moor</h1>
+        </div>
+      </div>
+    );
+  }
+
+  if (authState === "setup") {
+    return <SetupPage onSuccess={() => setAuthState("authenticated")} />;
+  }
+
+  if (authState === "login") {
+    return <LoginPage onSuccess={() => setAuthState("authenticated")} />;
+  }
+
   return (
     <div className="app">
       <ProjectList
@@ -60,6 +104,10 @@ export function App() {
         selectedId={selectedId}
         onSelect={navigate}
         onCreate={() => setModal({ mode: "create" })}
+        onLogout={async () => {
+          await api.auth.logout();
+          setAuthState("login");
+        }}
       />
       {selected ? (
         <ProjectDetail

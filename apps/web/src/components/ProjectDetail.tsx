@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { api, type Project } from "../lib/api";
-import { CronSection } from "./CronSection";
-import { EnvSection } from "./EnvSection";
-import { LogsSection } from "./LogsSection";
+import { BuildOutput } from "./BuildOutput";
+import { ContainerLogs } from "./ContainerLogs";
+import { Terminal } from "./Terminal";
 
 type Props = {
   project: Project;
@@ -11,18 +11,38 @@ type Props = {
   onDelete: () => void;
 };
 
-export function ProjectDetail({ project, onUpdate, onEdit, onDelete }: Props) {
-  const [actionLoading, setActionLoading] = useState<string | null>(null);
+type Tab = "build" | "logs" | "terminal";
 
-  const doAction = async (action: "build" | "start" | "stop") => {
-    setActionLoading(action);
+export function ProjectDetail({ project, onUpdate, onEdit, onDelete }: Props) {
+  const [actionLoading, setActionLoading] = useState(false);
+  const [tab, setTab] = useState<Tab>("build");
+
+  const isRunning = project.status === "running";
+  const isBuilding = project.status === "building";
+
+  const handleRun = async () => {
+    setActionLoading(true);
+    setTab("build");
     try {
-      await api.projects[action](project.id);
+      await api.projects.run(project.id);
       await onUpdate();
     } catch (e) {
-      alert(`Action failed: ${e}`);
+      alert(`Run failed: ${e}`);
+      await onUpdate();
     } finally {
-      setActionLoading(null);
+      setActionLoading(false);
+    }
+  };
+
+  const handleStop = async () => {
+    setActionLoading(true);
+    try {
+      await api.projects.stop(project.id);
+      await onUpdate();
+    } catch (e) {
+      alert(`Stop failed: ${e}`);
+    } finally {
+      setActionLoading(false);
     }
   };
 
@@ -32,24 +52,39 @@ export function ProjectDetail({ project, onUpdate, onEdit, onDelete }: Props) {
         <div>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <h2>{project.name}</h2>
-            <button
-              type="button"
-              className="btn btn-sm"
-              onClick={onEdit}
-              style={{ marginBottom: 4 }}
-            >
-              Edit
-            </button>
-            <button
-              type="button"
-              className="btn btn-sm btn-danger"
-              style={{ marginBottom: 4 }}
-              onClick={() => {
-                if (confirm(`Delete "${project.name}"? This cannot be undone.`)) onDelete();
-              }}
-            >
-              Delete
-            </button>
+            <div className="btn-group">
+              {isRunning ? (
+                <button
+                  type="button"
+                  className="btn btn-danger"
+                  disabled={actionLoading}
+                  onClick={handleStop}
+                >
+                  {actionLoading ? "Stopping..." : "Stop"}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="btn btn-run"
+                  disabled={actionLoading || isBuilding || !project.github_url}
+                  onClick={handleRun}
+                >
+                  {actionLoading || isBuilding ? "Running..." : "Run"}
+                </button>
+              )}
+              <button type="button" className="btn btn-sm" onClick={onEdit}>
+                Edit
+              </button>
+              <button
+                type="button"
+                className="btn btn-sm btn-danger"
+                onClick={() => {
+                  if (confirm(`Delete "${project.name}"? This cannot be undone.`)) onDelete();
+                }}
+              >
+                Delete
+              </button>
+            </div>
           </div>
           <div className="meta">
             {project.github_url ? (
@@ -65,38 +100,34 @@ export function ProjectDetail({ project, onUpdate, onEdit, onDelete }: Props) {
       </div>
 
       <div className="section">
-        <h3>Actions</h3>
-        <div className="btn-group">
+        <div className="log-tabs">
           <button
             type="button"
-            className="btn"
-            disabled={!project.github_url || actionLoading !== null}
-            onClick={() => doAction("build")}
+            className={`log-tab ${tab === "build" ? "active" : ""}`}
+            onClick={() => setTab("build")}
           >
-            {actionLoading === "build" ? "Building..." : "Build"}
+            Build Output
           </button>
           <button
             type="button"
-            className="btn"
-            disabled={!project.image_tag || project.status === "running" || actionLoading !== null}
-            onClick={() => doAction("start")}
+            className={`log-tab ${tab === "logs" ? "active" : ""}`}
+            onClick={() => setTab("logs")}
           >
-            {actionLoading === "start" ? "Starting..." : "Start"}
+            Container Logs
           </button>
           <button
             type="button"
-            className="btn btn-danger"
-            disabled={project.status !== "running" || actionLoading !== null}
-            onClick={() => doAction("stop")}
+            className={`log-tab ${tab === "terminal" ? "active" : ""}`}
+            onClick={() => setTab("terminal")}
           >
-            {actionLoading === "stop" ? "Stopping..." : "Stop"}
+            Terminal
           </button>
         </div>
-      </div>
 
-      <CronSection projectId={project.id} />
-      <EnvSection projectId={project.id} />
-      <LogsSection projectId={project.id} />
+        {tab === "build" && <BuildOutput projectId={project.id} />}
+        {tab === "logs" && <ContainerLogs projectId={project.id} running={isRunning} />}
+        {tab === "terminal" && <Terminal projectId={project.id} running={isRunning} />}
+      </div>
     </div>
   );
 }

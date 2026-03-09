@@ -28,6 +28,23 @@ export function handleRuns(req: Request, url: URL): Response | null {
     return Response.json({ runs: rows, total });
   }
 
+  // /api/projects/:id/build-output
+  const buildMatch = url.pathname.match(/^\/api\/projects\/(\d+)\/build-output$/);
+  if (buildMatch && req.method === "GET") {
+    const projectId = Number(buildMatch[1]);
+    const row = db
+      .query(
+        `SELECT * FROM runs
+         WHERE project_id = ? AND cron_id IS NULL
+         ORDER BY started_at DESC
+         LIMIT 1`,
+      )
+      .get(projectId);
+
+    if (!row) return Response.json({ output: null });
+    return Response.json(row);
+  }
+
   // /api/runs/:id
   const runMatch = url.pathname.match(/^\/api\/runs\/(\d+)$/);
   if (runMatch && req.method === "GET") {

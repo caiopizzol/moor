@@ -1,5 +1,12 @@
 import { join } from "node:path";
+import {
+  checkPasswordReset,
+  cleanExpiredSessions,
+  getSessionFromCookie,
+  validateSession,
+} from "./auth";
 import { startCronScheduler } from "./cron";
+import { handleAuth } from "./routes/auth";
 import { handleCrons } from "./routes/crons";
 import { handleDocker } from "./routes/docker";
 import { handleEnvs } from "./routes/envs";
@@ -8,6 +15,8 @@ import { handleRuns } from "./routes/runs";
 
 // Initialize DB (side-effect import runs migrations)
 import "./db";
+
+checkPasswordReset();
 
 const PORT = Number(process.env.PORT || 3000);
 const clientDist = join(import.meta.dir, "..", "web", "dist");
@@ -22,6 +31,16 @@ const server = Bun.serve({
     // API routes
     if (url.pathname.startsWith("/api/")) {
       try {
+        // Auth routes are always accessible
+        const authRes = await handleAuth(req, url);
+        if (authRes) return authRes;
+
+        // All other API routes require authentication
+        const token = getSessionFromCookie(req);
+        if (!token || !validateSession(token)) {
+          return Response.json({ error: "Unauthorized" }, { status: 401 });
+        }
+
         const res =
           (await handleProjects(req, url)) ??
           (await handleDocker(req, url)) ??
@@ -56,5 +75,6 @@ const server = Bun.serve({
 });
 
 startCronScheduler();
+setInterval(cleanExpiredSessions, 3600_000);
 
 console.log(`Moor running at http://localhost:${server.port}`);

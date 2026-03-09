@@ -4,6 +4,7 @@
   "private": true,
   "workspaces": ["apps/*", "packages/*"],
   "scripts": {
+    "dev": "bun run dev:api & bun run dev:web",
     "dev:api": "bun run --hot apps/api/index.ts",
     "dev:web": "cd apps/web && bun run dev",
     "build": "cd apps/web && bun run build",

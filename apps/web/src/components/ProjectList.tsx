@@ -5,18 +5,24 @@ type Props = {
   selectedId: number | null;
   onSelect: (id: number | null) => void;
   onCreate: () => void;
+  onLogout: () => void;
 };
 
-export function ProjectList({ projects, selectedId, onSelect, onCreate }: Props) {
+export function ProjectList({ projects, selectedId, onSelect, onCreate, onLogout }: Props) {
   return (
     <div className="sidebar">
       <div className="sidebar-header">
         <button type="button" className="sidebar-title" onClick={() => onSelect(null)}>
           Moor
         </button>
-        <button type="button" className="btn btn-sm" onClick={onCreate}>
-          + New
-        </button>
+        <div style={{ display: "flex", gap: 6 }}>
+          <button type="button" className="btn btn-sm" onClick={onCreate}>
+            + New
+          </button>
+          <button type="button" className="btn btn-sm" onClick={onLogout} title="Sign out">
+            Logout
+          </button>
+        </div>
       </div>
       <div className="sidebar-list">
         {projects.length === 0 && (

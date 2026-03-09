@@ -1,4 +1,7 @@
-const SOCKET = "/var/run/docker.sock";
+import { homedir } from "node:os";
+
+const SOCKET =
+  process.env.DOCKER_HOST?.replace("unix://", "") || `${homedir()}/.docker/run/docker.sock`;
 
 async function dockerFetch(
   path: string,
@@ -156,6 +159,33 @@ export async function execInContainer(
   const inspect = (await inspectRes.json()) as { ExitCode: number };
 
   return { exitCode: inspect.ExitCode, stdout, stderr };
+}
+
+export async function getContainerLogs(containerId: string, tail: number): Promise<string> {
+  const params = new URLSearchParams({
+    stdout: "true",
+    stderr: "true",
+    tail: String(tail),
+  });
+  const res = await dockerFetch(`/v1.44/containers/${containerId}/logs?${params}`);
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Container logs failed: ${res.status} ${body}`);
+  }
+
+  // Docker returns multiplexed stream — strip 8-byte frame headers
+  const raw = new Uint8Array(await res.arrayBuffer());
+  const decoder = new TextDecoder();
+  let output = "";
+  let offset = 0;
+  while (offset + 8 <= raw.length) {
+    const size =
+      (raw[offset + 4] << 24) | (raw[offset + 5] << 16) | (raw[offset + 6] << 8) | raw[offset + 7];
+    offset += 8;
+    output += decoder.decode(raw.slice(offset, offset + size));
+    offset += size;
+  }
+  return output;
 }
 
 export async function inspectContainer(containerId: string): Promise<{ running: boolean }> {
