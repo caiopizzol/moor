@@ -2,6 +2,7 @@ import { useState } from "react";
 import { api, type Project } from "../lib/api";
 import { BuildOutput } from "./BuildOutput";
 import { ContainerLogs } from "./ContainerLogs";
+import { EnvVars } from "./EnvVars";
 import { Terminal } from "./Terminal";
 
 type Props = {
@@ -11,7 +12,7 @@ type Props = {
   onDelete: () => void;
 };
 
-type Tab = "build" | "logs" | "terminal";
+type Tab = "build" | "logs" | "terminal" | "env";
 
 export function ProjectDetail({ project, onUpdate, onEdit, onDelete }: Props) {
   const [actionLoading, setActionLoading] = useState(false);
@@ -198,11 +199,19 @@ export function ProjectDetail({ project, onUpdate, onEdit, onDelete }: Props) {
           >
             Terminal
           </button>
+          <button
+            type="button"
+            className={`log-tab ${tab === "env" ? "active" : ""}`}
+            onClick={() => setTab("env")}
+          >
+            Env Vars
+          </button>
         </div>
 
         {tab === "build" && <BuildOutput projectId={project.id} streamingLines={streamingLines} />}
         {tab === "logs" && <ContainerLogs projectId={project.id} running={isRunning} />}
         {tab === "terminal" && <Terminal projectId={project.id} running={isRunning} />}
+        {tab === "env" && <EnvVars projectId={project.id} />}
       </div>
     </div>
   );

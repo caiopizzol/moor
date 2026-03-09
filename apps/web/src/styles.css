@@ -543,6 +543,37 @@ code,
   text-align: center;
 }
 
+/* Env Vars */
+.env-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.env-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.env-row input {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 6px 10px;
+  border-radius: 4px;
+  font-family: "JetBrains Mono", "Fira Code", monospace;
+  font-size: 13px;
+}
+
+.env-row input:first-child {
+  width: 200px;
+}
+
+.env-row input:nth-child(2) {
+  flex: 1;
+}
+
 /* Scrollbar */
 ::-webkit-scrollbar {
   width: 6px;
