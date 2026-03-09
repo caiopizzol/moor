@@ -83,11 +83,15 @@ export async function buildImageStreaming(
   dockerfile: string,
   tag: string,
   onLine: (text: string) => void,
+  noCache = false,
 ): Promise<string> {
   const gitUrl = githubUrl.endsWith(".git") ? githubUrl : `${githubUrl}.git`;
   const remote = `${gitUrl}#${branch}`;
   const params = new URLSearchParams({ remote, t: tag, dockerfile });
-  console.log(`[buildImageStreaming] remote=${remote} tag=${tag} dockerfile=${dockerfile}`);
+  if (noCache) params.set("nocache", "true");
+  console.log(
+    `[buildImageStreaming] remote=${remote} tag=${tag} dockerfile=${dockerfile} nocache=${noCache}`,
+  );
   const res = await dockerFetch(`/v1.44/build?${params}`, {
     method: "POST",
     timeout: 300000,

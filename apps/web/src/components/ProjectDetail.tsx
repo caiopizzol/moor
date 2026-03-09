@@ -21,7 +21,7 @@ export function ProjectDetail({ project, onUpdate, onEdit, onDelete }: Props) {
   const isRunning = project.status === "running";
   const isBuilding = project.status === "building";
 
-  const startStreamingRun = async () => {
+  const startStreamingRun = async (noCache = false) => {
     setActionLoading(true);
     setTab("build");
     setStreamingLines([]);
@@ -39,6 +39,7 @@ export function ProjectDetail({ project, onUpdate, onEdit, onDelete }: Props) {
           onUpdate();
           setActionLoading(false);
         },
+        noCache,
       );
     } catch (e) {
       setStreamingLines((prev) => [...(prev || []), `\nError: ${e}\n`]);
@@ -88,7 +89,7 @@ export function ProjectDetail({ project, onUpdate, onEdit, onDelete }: Props) {
       }
       setActionLoading(false);
     }
-    startStreamingRun();
+    startStreamingRun(true);
   };
 
   return (

@@ -93,8 +93,10 @@ export const api = {
       onLog: (text: string) => void,
       onDone: () => void,
       onError: (err: string) => void,
+      noCache = false,
     ) => {
-      const res = await fetch(`/api/projects/${id}/run`, {
+      const params = noCache ? "?nocache=true" : "";
+      const res = await fetch(`/api/projects/${id}/run${params}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
       });

@@ -39,15 +39,19 @@ export async function handleDocker(req: Request, url: URL): Promise<Response | n
   if (action === "build" && req.method === "POST") return handleBuild(project);
   if (action === "start" && req.method === "POST") return handleStart(project);
   if (action === "stop" && req.method === "POST") return handleStop(project);
-  if (action === "run" && req.method === "POST") return handleRun(project);
+  if (action === "run" && req.method === "POST") return handleRun(req, project);
   if (action === "logs" && req.method === "GET") return handleLogs(project, url);
   if (action === "exec" && req.method === "POST") return handleExec(req, project);
 
   return null;
 }
 
-async function handleRun(project: Project): Promise<Response> {
-  console.log(`[run] starting run for project ${project.name} (id=${project.id})`);
+async function handleRun(req: Request, project: Project): Promise<Response> {
+  const url = new URL(req.url);
+  const noCache = url.searchParams.get("nocache") === "true";
+  console.log(
+    `[run] starting run for project ${project.name} (id=${project.id}) nocache=${noCache}`,
+  );
 
   if (!project.github_url) {
     if (project.image_tag) {
@@ -83,6 +87,7 @@ async function handleRun(project: Project): Promise<Response> {
           project.dockerfile,
           tag,
           (line) => send("log", line),
+          noCache,
         );
 
         const elapsed = ((Date.now() - buildStart) / 1000).toFixed(1);
