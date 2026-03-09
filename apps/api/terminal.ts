@@ -1,9 +1,6 @@
-import { homedir } from "node:os";
 import type { ServerWebSocket } from "bun";
 import db from "./db";
-
-const SOCKET_PATH =
-  process.env.DOCKER_HOST?.replace("unix://", "") || `${homedir()}/.docker/run/docker.sock`;
+import { SOCKET as SOCKET_PATH } from "./docker";
 
 type WsData = {
   projectId: number;

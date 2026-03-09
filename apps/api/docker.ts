@@ -9,7 +9,7 @@ function findSocket(): string {
   return `${homedir()}/.docker/run/docker.sock`;
 }
 
-const SOCKET = findSocket();
+export const SOCKET = findSocket();
 
 async function dockerFetch(
   path: string,
