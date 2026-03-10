@@ -309,9 +309,13 @@ export async function killExec(execId: string): Promise<void> {
     if (!res.ok) return;
     const data = (await res.json()) as { Running: boolean; Pid: number };
     if (data.Running && data.Pid > 0) {
-      process.kill(data.Pid, "SIGKILL");
+      try {
+        process.kill(data.Pid, "SIGKILL");
+      } catch {
+        // Process already gone — safe to ignore
+      }
     }
   } catch {
-    // Best effort — process may already be gone
+    // Best effort — exec may already be gone
   }
 }

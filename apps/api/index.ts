@@ -5,7 +5,7 @@ import {
   getSessionFromCookie,
   validateSession,
 } from "./auth";
-import { startCronScheduler } from "./cron";
+import { interruptActiveRuns, startCronScheduler } from "./cron";
 import { hostTerminalHandlers, isHostTerminal, upgradeHostTerminal } from "./host-terminal";
 import { handleAuth } from "./routes/auth";
 import { handleCrons } from "./routes/crons";
@@ -31,6 +31,11 @@ const server = Bun.serve({
   async fetch(req, server) {
     const url = new URL(req.url);
 
+    // Health check (no auth required)
+    if (url.pathname === "/api/health") {
+      return Response.json({ ok: true });
+    }
+
     // API routes
     if (url.pathname.startsWith("/api/")) {
       try {
@@ -44,14 +49,23 @@ const server = Bun.serve({
           return Response.json({ error: "Unauthorized" }, { status: 401 });
         }
 
-        // WebSocket terminal upgrades
-        if (url.pathname.match(/^\/api\/projects\/\d+\/terminal$/)) {
+        // WebSocket terminal upgrades — verify Origin header to prevent CSRF
+        if (
+          url.pathname.match(/^\/api\/projects\/\d+\/terminal$/) ||
+          url.pathname === "/api/terminal"
+        ) {
+          const origin = req.headers.get("origin");
+          const host = req.headers.get("host");
+          if (origin && host && !origin.includes(host)) {
+            return new Response("Origin mismatch", { status: 403 });
+          }
+
+          if (url.pathname === "/api/terminal") {
+            const wsRes = upgradeHostTerminal(req, server);
+            if (wsRes === true) return;
+            return wsRes ?? new Response("Upgrade failed", { status: 500 });
+          }
           const wsRes = upgradeTerminal(req, server);
-          if (wsRes === true) return; // upgrade succeeded — must return undefined
-          return wsRes ?? new Response("Upgrade failed", { status: 500 });
-        }
-        if (url.pathname === "/api/terminal") {
-          const wsRes = upgradeHostTerminal(req, server);
           if (wsRes === true) return;
           return wsRes ?? new Response("Upgrade failed", { status: 500 });
         }
@@ -62,7 +76,7 @@ const server = Bun.serve({
           (await handleCrons(req, url)) ??
           (await handleEnvs(req, url)) ??
           (await handleRuns(req, url)) ??
-          handleServer(req, url);
+          (await handleServer(req, url));
 
         if (res) return res;
       } catch (e) {
@@ -116,5 +130,15 @@ const server = Bun.serve({
 
 startCronScheduler();
 setInterval(cleanExpiredSessions, 3600_000);
+
+// Graceful shutdown
+const shutdown = () => {
+  console.log("[moor] Shutting down...");
+  interruptActiveRuns();
+  server.stop();
+  process.exit(0);
+};
+process.on("SIGTERM", shutdown);
+process.on("SIGINT", shutdown);
 
 console.log(`Moor running at http://localhost:${server.port}`);

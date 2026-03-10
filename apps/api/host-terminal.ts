@@ -35,12 +35,16 @@ export const hostTerminalHandlers = {
     const shell = process.env.SHELL || "/bin/bash";
 
     // Use `script` to allocate a PTY on Linux without native deps.
+    // Filter sensitive env vars before passing to shell
+    const safeEnv = { ...process.env };
+    delete safeEnv.MOOR_RESET_PASSWORD;
+
     const proc = spawn(["script", "-q", "/dev/null", "-c", shell], {
       stdin: "pipe",
       stdout: "pipe",
       stderr: "pipe",
       env: {
-        ...process.env,
+        ...safeEnv,
         TERM: "xterm-256color",
         COLUMNS: "80",
         LINES: "24",

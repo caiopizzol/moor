@@ -4,3 +4,5 @@ data/
 dev/
 .DS_Store
 *.db
+.env
+.env.*

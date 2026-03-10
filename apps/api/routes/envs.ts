@@ -33,18 +33,15 @@ export async function handleEnvs(req: Request, url: URL): Promise<Response | nul
 async function handleBulkSet(req: Request, projectId: number): Promise<Response> {
   const vars: { key: string; value: string }[] = await req.json();
 
-  db.exec("BEGIN");
-  try {
+  // Use db.transaction for safe concurrent access
+  const updateEnvs = db.transaction(() => {
     db.query("DELETE FROM env_vars WHERE project_id = ?").run(projectId);
     const insert = db.query("INSERT INTO env_vars (project_id, key, value) VALUES (?, ?, ?)");
     for (const { key, value } of vars) {
       if (key.trim()) insert.run(projectId, key.trim(), value);
     }
-    db.exec("COMMIT");
-  } catch (e) {
-    db.exec("ROLLBACK");
-    throw e;
-  }
+  });
+  updateEnvs();
 
   const rows = db.query("SELECT * FROM env_vars WHERE project_id = ? ORDER BY key").all(projectId);
   return Response.json(rows);

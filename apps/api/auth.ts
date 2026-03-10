@@ -84,5 +84,6 @@ export function checkPasswordReset(): void {
   db.query("DELETE FROM auth WHERE id = 1").run();
   db.query("INSERT INTO auth (id, password_hash) VALUES (1, ?)").run(hash);
   db.query("DELETE FROM sessions").run();
-  console.log("[auth] Password reset complete. Remove MOOR_RESET_PASSWORD and restart.");
+  delete process.env.MOOR_RESET_PASSWORD;
+  console.log("[auth] Password reset complete.");
 }

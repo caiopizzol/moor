@@ -124,8 +124,9 @@ export const terminalWebSocket = {
         },
       });
 
-      // Store the socket reference on the ws for use in message/close handlers
+      // Store the socket + exec ID on the ws for use in message/close handlers
       (ws as unknown as { _dockerSocket: typeof dockerSocket })._dockerSocket = dockerSocket;
+      (ws as unknown as { _execId: string })._execId = execId;
 
       // Send the exec/start request over the raw socket
       dockerSocket.write(buildExecStartRequest(execId));

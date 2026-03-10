@@ -1,4 +1,9 @@
 # Replace :80 with your domain (e.g. moor.example.com) to enable auto HTTPS
 :80 {
+	header {
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+	}
 	reverse_proxy moor:3000
 }

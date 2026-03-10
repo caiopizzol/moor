@@ -296,20 +296,14 @@ export function ProjectDetail({ project, onUpdate, onEdit, onDelete }: Props) {
           </button>
         </div>
 
-        <div className={`tab-panel ${tab === "build" ? "" : "hidden"}`}>
-          <BuildOutput projectId={project.id} streamingLines={streamingLines} />
-        </div>
-        <div className={`tab-panel ${tab === "logs" ? "" : "hidden"}`}>
-          <ContainerLogs projectId={project.id} running={isRunning} />
-        </div>
-        <div className={`tab-panel ${tab === "terminal" ? "" : "hidden"}`}>
-          <Terminal projectId={project.id} running={isRunning} />
-        </div>
-        <div className={`tab-panel ${tab === "env" ? "" : "hidden"}`}>
-          <EnvVars projectId={project.id} />
-        </div>
-        <div className={`tab-panel ${tab === "cron" ? "" : "hidden"}`}>
-          <CronJobs projectId={project.id} />
+        <div className="tab-panel">
+          {tab === "build" && (
+            <BuildOutput projectId={project.id} streamingLines={streamingLines} />
+          )}
+          {tab === "logs" && <ContainerLogs projectId={project.id} running={isRunning} />}
+          {tab === "terminal" && <Terminal projectId={project.id} running={isRunning} />}
+          {tab === "env" && <EnvVars projectId={project.id} />}
+          {tab === "cron" && <CronJobs projectId={project.id} />}
         </div>
       </div>
     </div>

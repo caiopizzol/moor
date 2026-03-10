@@ -65,7 +65,19 @@ function matchField(pattern: string, value: number, _min: number, _max: number):
   return false;
 }
 
+let tickRunning = false;
+
 async function tick() {
+  if (tickRunning) return;
+  tickRunning = true;
+  try {
+    await tickInner();
+  } finally {
+    tickRunning = false;
+  }
+}
+
+async function tickInner() {
   const now = new Date();
   const crons = db.query("SELECT * FROM crons WHERE enabled = 1").all() as CronRow[];
 
@@ -148,4 +160,15 @@ export async function stopCronRun(runId: number): Promise<boolean> {
 export function startCronScheduler() {
   console.log("[cron] Scheduler started — checking every 60s");
   setInterval(tick, 60_000);
+}
+
+/** Mark all active runs as interrupted (called during graceful shutdown) */
+export function interruptActiveRuns() {
+  for (const [runId, active] of activeRuns) {
+    active.controller.abort();
+    db.query(
+      "UPDATE runs SET finished_at = ?, exit_code = -1, stderr = ? WHERE id = ? AND finished_at IS NULL",
+    ).run(new Date().toISOString(), "Server shutting down", runId);
+  }
+  activeRuns.clear();
 }

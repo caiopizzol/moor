@@ -19,6 +19,16 @@ type Project = {
   status: string;
 };
 
+function validateGithubUrl(url: string): string | null {
+  try {
+    const parsed = new URL(url);
+    if (!parsed.hostname.endsWith("github.com")) return "Only GitHub URLs are supported";
+  } catch {
+    return "Invalid GitHub URL";
+  }
+  return null;
+}
+
 export async function handleDocker(req: Request, url: URL): Promise<Response | null> {
   const match = url.pathname.match(/^\/api\/projects\/(\d+)\/(build|start|stop|run|logs|exec)$/);
   if (!match) return null;
@@ -61,6 +71,9 @@ async function handleRun(req: Request, project: Project): Promise<Response> {
     console.log("[run] no github_url or image_tag — nothing to do");
     return new Response("No GitHub URL or image configured", { status: 400 });
   }
+
+  const urlError = validateGithubUrl(project.github_url);
+  if (urlError) return new Response(urlError, { status: 400 });
 
   const tag = `moor/${project.name}:latest`;
   console.log(
@@ -199,6 +212,8 @@ async function handleBuild(project: Project): Promise<Response> {
     console.log("[build] rejected — no github_url");
     return new Response("No GitHub URL configured", { status: 400 });
   }
+  const urlError = validateGithubUrl(project.github_url);
+  if (urlError) return new Response(urlError, { status: 400 });
 
   const tag = `moor/${project.name}:latest`;
   console.log(`[build] tag=${tag} branch=${project.branch} dockerfile=${project.dockerfile}`);

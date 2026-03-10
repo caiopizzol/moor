@@ -4,3 +4,5 @@ data
 dev
 .github
 *.md
+.env
+.env.*

@@ -1,4 +1,5 @@
 import db from "../db";
+import { stopContainer } from "../docker";
 
 export async function handleProjects(req: Request, url: URL): Promise<Response | null> {
   const match = url.pathname.match(/^\/api\/projects(?:\/(\d+))?$/);
@@ -28,6 +29,17 @@ export async function handleProjects(req: Request, url: URL): Promise<Response |
   }
 
   if (req.method === "DELETE" && id) {
+    // Stop and remove the container before deleting the project
+    const project = db.query("SELECT container_id FROM projects WHERE id = ?").get(id) as {
+      container_id: string | null;
+    } | null;
+    if (project?.container_id) {
+      try {
+        await stopContainer(project.container_id);
+      } catch {
+        // best effort — container may already be gone
+      }
+    }
     db.query("DELETE FROM projects WHERE id = ?").run(id);
     return new Response(null, { status: 204 });
   }
@@ -42,6 +54,11 @@ async function handleCreate(req: Request): Promise<Response> {
     `[projects] create: name=${name} github_url=${github_url} branch=${branch || "main"} dockerfile=${dockerfile || "Dockerfile"}`,
   );
   if (!name) return new Response("name is required", { status: 400 });
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/.test(name)) {
+    return new Response("name must be alphanumeric (hyphens and underscores allowed)", {
+      status: 400,
+    });
+  }
 
   const result = db
     .query(
@@ -58,15 +75,7 @@ async function handleUpdate(req: Request, id: number): Promise<Response> {
   const fields: string[] = [];
   const values: (string | number)[] = [];
 
-  for (const key of [
-    "name",
-    "github_url",
-    "branch",
-    "dockerfile",
-    "image_tag",
-    "container_id",
-    "status",
-  ]) {
+  for (const key of ["name", "github_url", "branch", "dockerfile"]) {
     if (key in body) {
       fields.push(`${key} = ?`);
       values.push(body[key]);
