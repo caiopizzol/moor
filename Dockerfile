@@ -27,8 +27,8 @@ RUN bun install --frozen-lockfile --ignore-scripts --production
 COPY --from=build /app/apps/web/dist apps/web/dist
 COPY apps/api/ apps/api/
 
-COPY entrypoint.sh /app/entrypoint.sh
-RUN chmod +x /app/entrypoint.sh && mkdir -p data
+RUN mkdir -p data && chown -R bun:bun data
+USER bun
 
 EXPOSE 3000
-ENTRYPOINT ["/app/entrypoint.sh"]
+CMD ["bun", "run", "apps/api/index.ts"]
