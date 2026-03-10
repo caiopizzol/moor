@@ -85,6 +85,7 @@ async function handleRun(req: Request, project: Project): Promise<Response> {
 
   // Stream build output via SSE
   let streamClosed = false;
+  let keepalive: ReturnType<typeof setInterval>;
   const stream = new ReadableStream({
     async start(controller) {
       const encoder = new TextEncoder();
@@ -110,7 +111,7 @@ async function handleRun(req: Request, project: Project): Promise<Response> {
       };
 
       // Send SSE keepalive comments every 5s to prevent idle timeout
-      const keepalive = setInterval(() => {
+      keepalive = setInterval(() => {
         if (streamClosed) return;
         try {
           controller.enqueue(encoder.encode(":keepalive\n\n"));
@@ -145,8 +146,8 @@ async function handleRun(req: Request, project: Project): Promise<Response> {
 
         send("log", `\nBuild completed in ${elapsed}s\n`);
 
-        // Auto-detect exposed ports from image (force re-detect on rebuild)
-        const detectedPorts = await autoDetectPorts(project.id, tag, noCache);
+        // Auto-detect exposed ports from image (always re-detect on rebuild)
+        const detectedPorts = await autoDetectPorts(project.id, tag, true);
         for (const { host_port, container_port } of detectedPorts) {
           send("log", `Port ${container_port} → host :${host_port}\n`);
         }
@@ -189,6 +190,7 @@ async function handleRun(req: Request, project: Project): Promise<Response> {
       safeClose();
     },
     cancel() {
+      clearInterval(keepalive);
       streamClosed = true;
     },
   });
@@ -280,8 +282,8 @@ async function handleBuild(project: Project): Promise<Response> {
        VALUES (?, datetime('now'), datetime('now'), 0, ?, NULL)`,
     ).run(project.id, buildOutput);
 
-    // Auto-detect exposed ports from image
-    await autoDetectPorts(project.id, tag);
+    // Auto-detect exposed ports from image (always re-detect on rebuild)
+    await autoDetectPorts(project.id, tag, true);
 
     console.log("[build] done — status set to 'stopped'");
     return Response.json({ message: "Build complete" });

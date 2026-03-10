@@ -1,5 +1,5 @@
 import db from "../db";
-import { autoDetectPorts } from "../ports";
+import { autoDetectPorts, getProjectPorts } from "../ports";
 
 export async function handlePorts(req: Request, url: URL): Promise<Response | null> {
   const match = url.pathname.match(/^\/api\/projects\/(\d+)\/ports$/);
@@ -8,9 +8,7 @@ export async function handlePorts(req: Request, url: URL): Promise<Response | nu
   const projectId = Number(match[1]);
 
   if (req.method === "GET") {
-    let rows = db
-      .query("SELECT * FROM port_mappings WHERE project_id = ? ORDER BY container_port")
-      .all(projectId);
+    let rows = getProjectPorts(projectId);
 
     // Auto-detect ports from image if none stored yet
     if (rows.length === 0) {
@@ -19,10 +17,7 @@ export async function handlePorts(req: Request, url: URL): Promise<Response | nu
       } | null;
       if (project?.image_tag) {
         try {
-          await autoDetectPorts(projectId, project.image_tag);
-          rows = db
-            .query("SELECT * FROM port_mappings WHERE project_id = ? ORDER BY container_port")
-            .all(projectId);
+          rows = await autoDetectPorts(projectId, project.image_tag);
         } catch {
           // Race condition or no available ports — return empty
         }

@@ -11,6 +11,8 @@ function findSocket(): string {
 
 export const SOCKET = findSocket();
 
+const BUILD_TIMEOUT = 1_800_000; // 30 minutes
+
 async function dockerFetch(
   path: string,
   opts?: RequestInit & { timeout?: number },
@@ -60,7 +62,7 @@ export async function buildImage(
   console.log(`[buildImage] remote=${remote} tag=${tag} dockerfile=${dockerfile}`);
   const res = await dockerFetch(`/v1.44/build?${params}`, {
     method: "POST",
-    timeout: 1800000,
+    timeout: BUILD_TIMEOUT,
   });
 
   if (!res.ok) {
@@ -111,7 +113,7 @@ export async function buildImageStreaming(
   );
   const res = await dockerFetch(`/v1.44/build?${params}`, {
     method: "POST",
-    timeout: 1800000,
+    timeout: BUILD_TIMEOUT,
   });
 
   if (!res.ok) {
@@ -187,10 +189,10 @@ export async function createAndStartContainer(
   const body = {
     Image: imageTag,
     Env: envVars.map((e) => `${e.key}=${e.value}`),
-    ExposedPorts: Object.keys(exposedPorts).length > 0 ? exposedPorts : undefined,
+    ExposedPorts: exposedPorts,
     HostConfig: {
       RestartPolicy: { Name: "unless-stopped" },
-      PortBindings: Object.keys(portBindings).length > 0 ? portBindings : undefined,
+      PortBindings: portBindings,
     },
   };
 
