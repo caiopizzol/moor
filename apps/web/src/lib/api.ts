@@ -161,6 +161,18 @@ export const api = {
         method: "DELETE",
       }),
   },
+  server: {
+    stats: () =>
+      request<{
+        hostname: string;
+        os: string;
+        uptime: string;
+        cpu: { percent: number; cores: number };
+        memory: { total: string; used: string; percent: number };
+        disk: { total: string; used: string; percent: number };
+        containers: { running: number; total: number };
+      }>("/api/server/stats"),
+  },
   runs: {
     list: (projectId: number, page = 1) =>
       request<{ runs: Run[]; total: number }>(`/api/projects/${projectId}/runs?page=${page}`),

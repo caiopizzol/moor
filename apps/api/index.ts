@@ -6,12 +6,14 @@ import {
   validateSession,
 } from "./auth";
 import { startCronScheduler } from "./cron";
+import { hostTerminalHandlers, isHostTerminal, upgradeHostTerminal } from "./host-terminal";
 import { handleAuth } from "./routes/auth";
 import { handleCrons } from "./routes/crons";
 import { handleDocker } from "./routes/docker";
 import { handleEnvs } from "./routes/envs";
 import { handleProjects } from "./routes/projects";
 import { handleRuns } from "./routes/runs";
+import { handleServer } from "./routes/server";
 import { terminalWebSocket, upgradeTerminal } from "./terminal";
 
 // Initialize DB (side-effect import runs migrations)
@@ -42,10 +44,15 @@ const server = Bun.serve({
           return Response.json({ error: "Unauthorized" }, { status: 401 });
         }
 
-        // WebSocket terminal upgrade
+        // WebSocket terminal upgrades
         if (url.pathname.match(/^\/api\/projects\/\d+\/terminal$/)) {
           const wsRes = upgradeTerminal(req, server);
           if (wsRes === true) return; // upgrade succeeded — must return undefined
+          return wsRes ?? new Response("Upgrade failed", { status: 500 });
+        }
+        if (url.pathname === "/api/terminal") {
+          const wsRes = upgradeHostTerminal(req, server);
+          if (wsRes === true) return;
           return wsRes ?? new Response("Upgrade failed", { status: 500 });
         }
 
@@ -54,7 +61,8 @@ const server = Bun.serve({
           (await handleDocker(req, url)) ??
           (await handleCrons(req, url)) ??
           (await handleEnvs(req, url)) ??
-          handleRuns(req, url);
+          handleRuns(req, url) ??
+          handleServer(req, url);
 
         if (res) return res;
       } catch (e) {
@@ -81,7 +89,29 @@ const server = Bun.serve({
     return new Response("Run 'bun run build' in client/ first", { status: 503 });
   },
 
-  websocket: terminalWebSocket,
+  websocket: {
+    open(ws: import("bun").ServerWebSocket<unknown>) {
+      if (isHostTerminal(ws.data)) {
+        hostTerminalHandlers.open(ws as never);
+      } else {
+        terminalWebSocket.open(ws as never);
+      }
+    },
+    message(ws: import("bun").ServerWebSocket<unknown>, message: string | Buffer) {
+      if (isHostTerminal(ws.data)) {
+        hostTerminalHandlers.message(ws as never, message);
+      } else {
+        terminalWebSocket.message(ws as never, message);
+      }
+    },
+    close(ws: import("bun").ServerWebSocket<unknown>, code: number, reason: string) {
+      if (isHostTerminal(ws.data)) {
+        hostTerminalHandlers.close(ws as never);
+      } else {
+        terminalWebSocket.close(ws as never, code, reason);
+      }
+    },
+  },
 });
 
 startCronScheduler();

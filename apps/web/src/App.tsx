@@ -3,20 +3,25 @@ import { LoginPage } from "./components/LoginPage";
 import { ProjectDetail } from "./components/ProjectDetail";
 import { ProjectList } from "./components/ProjectList";
 import { ProjectModal } from "./components/ProjectModal";
+import { ServerView } from "./components/ServerView";
 import { SetupPage } from "./components/SetupPage";
 import { api, type Project } from "./lib/api";
 
 type AuthState = "loading" | "setup" | "login" | "authenticated";
 
-function getIdFromPath(): number | null {
+type View = { type: "project"; id: number } | { type: "server" } | null;
+
+function getViewFromPath(): View {
+  if (window.location.pathname === "/server") return { type: "server" };
   const match = window.location.pathname.match(/^\/projects\/(\d+)$/);
-  return match ? Number(match[1]) : null;
+  if (match) return { type: "project", id: Number(match[1]) };
+  return null;
 }
 
 export function App() {
   const [authState, setAuthState] = useState<AuthState>("loading");
   const [projects, setProjects] = useState<Project[]>([]);
-  const [selectedId, setSelectedId] = useState<number | null>(getIdFromPath);
+  const [view, setView] = useState<View>(getViewFromPath);
   const [modal, setModal] = useState<
     { mode: "create" } | { mode: "edit"; project: Project } | null
   >(null);
@@ -52,15 +57,22 @@ export function App() {
   }, [authState, load]);
 
   const navigate = useCallback((id: number | null) => {
-    setSelectedId(id);
+    setView(id ? { type: "project", id } : null);
     const path = id ? `/projects/${id}` : "/";
     if (window.location.pathname !== path) {
       history.pushState(null, "", path);
     }
   }, []);
 
+  const navigateServer = useCallback(() => {
+    setView({ type: "server" });
+    if (window.location.pathname !== "/server") {
+      history.pushState(null, "", "/server");
+    }
+  }, []);
+
   useEffect(() => {
-    const onPopState = () => setSelectedId(getIdFromPath());
+    const onPopState = () => setView(getViewFromPath());
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
   }, []);
@@ -77,6 +89,8 @@ export function App() {
     return () => window.removeEventListener("keydown", handler);
   }, []);
 
+  const selectedId = view?.type === "project" ? view.id : null;
+  const serverSelected = view?.type === "server";
   const selected = projects.find((p) => p.id === selectedId) ?? null;
 
   if (authState === "loading") {
@@ -102,14 +116,18 @@ export function App() {
       <ProjectList
         projects={projects}
         selectedId={selectedId}
+        serverSelected={serverSelected}
         onSelect={navigate}
+        onServerSelect={navigateServer}
         onCreate={() => setModal({ mode: "create" })}
         onLogout={async () => {
           await api.auth.logout();
           setAuthState("login");
         }}
       />
-      {selected ? (
+      {serverSelected ? (
+        <ServerView />
+      ) : selected ? (
         <ProjectDetail
           key={selected.id}
           project={selected}
