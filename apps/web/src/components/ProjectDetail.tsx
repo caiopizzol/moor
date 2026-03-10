@@ -2,6 +2,7 @@ import { useState } from "react";
 import { api, type Project } from "../lib/api";
 import { BuildOutput } from "./BuildOutput";
 import { ContainerLogs } from "./ContainerLogs";
+import { CronJobs } from "./CronJobs";
 import { EnvVars } from "./EnvVars";
 import { Terminal } from "./Terminal";
 
@@ -12,7 +13,7 @@ type Props = {
   onDelete: () => void;
 };
 
-type Tab = "build" | "logs" | "terminal" | "env";
+type Tab = "build" | "logs" | "terminal" | "env" | "cron";
 type Action = null | "stopping" | "restarting" | "rebuilding" | "building";
 
 export function ProjectDetail({ project, onUpdate, onEdit, onDelete }: Props) {
@@ -236,6 +237,13 @@ export function ProjectDetail({ project, onUpdate, onEdit, onDelete }: Props) {
           >
             Env
           </button>
+          <button
+            type="button"
+            className={`log-tab ${tab === "cron" ? "active" : ""}`}
+            onClick={() => setTab("cron")}
+          >
+            Cron
+          </button>
         </div>
 
         <div className={`tab-panel ${tab === "build" ? "" : "hidden"}`}>
@@ -249,6 +257,9 @@ export function ProjectDetail({ project, onUpdate, onEdit, onDelete }: Props) {
         </div>
         <div className={`tab-panel ${tab === "env" ? "" : "hidden"}`}>
           <EnvVars projectId={project.id} />
+        </div>
+        <div className={`tab-panel ${tab === "cron" ? "" : "hidden"}`}>
+          <CronJobs projectId={project.id} />
         </div>
       </div>
     </div>
