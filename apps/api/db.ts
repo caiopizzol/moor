@@ -73,4 +73,11 @@ db.exec(`
   );
 `);
 
+// Migrations — add columns that may not exist in older databases
+try {
+  db.exec("ALTER TABLE projects ADD COLUMN docker_image TEXT");
+} catch {
+  // Column already exists
+}
+
 export default db;

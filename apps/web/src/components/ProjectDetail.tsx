@@ -58,7 +58,8 @@ export function ProjectDetail({ project, onUpdate, onEdit, onDelete }: Props) {
   }, [loadPorts, project.status]);
 
   const isRunning = project.status === "running";
-  const isBuilding = project.status === "building";
+  const isBuilding = project.status === "building" || project.status === "pulling";
+  const isImageProject = !!project.docker_image;
   const actionLoading = action !== null;
 
   // Display status: action overrides project.status
@@ -156,8 +157,8 @@ export function ProjectDetail({ project, onUpdate, onEdit, onDelete }: Props) {
   const statusLabel: Record<string, string> = {
     stopping: "Stopping...",
     restarting: "Restarting...",
-    rebuilding: "Rebuilding...",
-    building: "Building...",
+    rebuilding: isImageProject ? "Re-pulling..." : "Rebuilding...",
+    building: isImageProject ? "Pulling..." : "Building...",
   };
 
   return (
@@ -168,12 +169,19 @@ export function ProjectDetail({ project, onUpdate, onEdit, onDelete }: Props) {
           <div>
             <h2 className="project-card-name">{project.name}</h2>
             <div className="meta">
-              {project.github_url ? (
-                <span>
-                  {project.github_url} &middot; {project.branch} &middot; {project.dockerfile}
-                </span>
+              {project.docker_image ? (
+                <span className="source-badge image-badge">{project.docker_image}</span>
+              ) : project.github_url ? (
+                <>
+                  <span className="source-badge github-badge">
+                    {project.github_url.replace(/^https?:\/\//, "")}
+                  </span>
+                  <span>
+                    {project.branch} &middot; {project.dockerfile}
+                  </span>
+                </>
               ) : (
-                <span>No repository linked</span>
+                <span>No source configured</span>
               )}
             </div>
           </div>
@@ -218,7 +226,7 @@ export function ProjectDetail({ project, onUpdate, onEdit, onDelete }: Props) {
                   Restart
                 </button>
                 <button type="button" className="btn btn-sm" onClick={handleRebuild}>
-                  Rebuild
+                  {isImageProject ? "Re-pull" : "Rebuild"}
                 </button>
               </>
             ) : (
@@ -226,19 +234,23 @@ export function ProjectDetail({ project, onUpdate, onEdit, onDelete }: Props) {
                 <button
                   type="button"
                   className="btn btn-run btn-sm"
-                  disabled={isBuilding || !project.github_url}
+                  disabled={isBuilding || (!project.github_url && !project.docker_image)}
                   onClick={handleRun}
                 >
-                  {isBuilding ? "Building..." : "Run"}
+                  {isBuilding
+                    ? project.status === "pulling"
+                      ? "Pulling..."
+                      : "Building..."
+                    : "Run"}
                 </button>
-                {project.image_tag && (
+                {(project.image_tag || project.docker_image) && (
                   <button
                     type="button"
                     className="btn btn-sm"
                     disabled={isBuilding}
                     onClick={handleRebuild}
                   >
-                    Rebuild
+                    {isImageProject ? "Re-pull" : "Rebuild"}
                   </button>
                 )}
               </>
@@ -282,7 +294,7 @@ export function ProjectDetail({ project, onUpdate, onEdit, onDelete }: Props) {
             className={`log-tab ${tab === "build" ? "active" : ""}`}
             onClick={() => setTab("build")}
           >
-            Build
+            {isImageProject ? "Pull" : "Build"}
           </button>
           <button
             type="button"
@@ -317,7 +329,11 @@ export function ProjectDetail({ project, onUpdate, onEdit, onDelete }: Props) {
 
         <div className="tab-panel">
           {tab === "build" && (
-            <BuildOutput projectId={project.id} streamingLines={streamingLines} />
+            <BuildOutput
+              projectId={project.id}
+              streamingLines={streamingLines}
+              isImageProject={isImageProject}
+            />
           )}
           {tab === "logs" && <ContainerLogs projectId={project.id} running={isRunning} />}
           {tab === "terminal" && <Terminal projectId={project.id} running={isRunning} />}

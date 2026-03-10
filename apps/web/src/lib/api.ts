@@ -2,6 +2,7 @@ export type Project = {
   id: number;
   name: string;
   github_url: string | null;
+  docker_image: string | null;
   branch: string;
   dockerfile: string;
   image_tag: string | null;

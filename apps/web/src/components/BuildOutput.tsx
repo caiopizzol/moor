@@ -5,9 +5,10 @@ import { type XTermHandle, XTermPanel } from "./XTermPanel";
 type Props = {
   projectId: number;
   streamingLines?: string[];
+  isImageProject?: boolean;
 };
 
-export function BuildOutput({ projectId, streamingLines }: Props) {
+export function BuildOutput({ projectId, streamingLines, isImageProject }: Props) {
   const [run, setRun] = useState<Run | null>(null);
   const [loading, setLoading] = useState(true);
   const xtermRef = useRef<XTermHandle>(null);
@@ -64,7 +65,17 @@ export function BuildOutput({ projectId, streamingLines }: Props) {
   if (!run?.stdout) {
     return (
       <div className="log-empty">
-        No builds yet. Click <span style={{ color: "var(--green)" }}>Run</span> to build and start.
+        {isImageProject ? (
+          <>
+            No pulls yet. Click <span style={{ color: "var(--green)" }}>Run</span> to pull and
+            start.
+          </>
+        ) : (
+          <>
+            No builds yet. Click <span style={{ color: "var(--green)" }}>Run</span> to build and
+            start.
+          </>
+        )}
       </div>
     );
   }
@@ -79,7 +90,7 @@ export function BuildOutput({ projectId, streamingLines }: Props) {
     <div>
       {timestamp && (
         <div style={{ color: "var(--text-muted)", fontSize: "0.85em", marginBottom: 8 }}>
-          Last build: {timestamp} — exit code {run.exit_code ?? "?"}
+          Last {isImageProject ? "pull" : "build"}: {timestamp} — exit code {run.exit_code ?? "?"}
         </div>
       )}
       <XTermPanel handle={xtermRef} />

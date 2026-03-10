@@ -5,6 +5,7 @@ import {
   createAndStartContainer,
   execInContainer,
   getContainerLogs,
+  pullImageStreaming,
   stopContainer,
 } from "../docker";
 import { autoDetectPorts, getProjectPorts } from "../ports";
@@ -13,6 +14,7 @@ type Project = {
   id: number;
   name: string;
   github_url: string | null;
+  docker_image: string | null;
   branch: string;
   dockerfile: string;
   image_tag: string | null;
@@ -60,30 +62,31 @@ export async function handleDocker(req: Request, url: URL): Promise<Response | n
 async function handleRun(req: Request, project: Project): Promise<Response> {
   const url = new URL(req.url);
   const noCache = url.searchParams.get("nocache") === "true";
+  const isImageProject = !!project.docker_image;
   console.log(
-    `[run] starting run for project ${project.name} (id=${project.id}) nocache=${noCache}`,
+    `[run] starting run for project ${project.name} (id=${project.id}) type=${isImageProject ? "image" : "github"} nocache=${noCache}`,
   );
 
-  if (!project.github_url) {
+  if (!project.github_url && !project.docker_image) {
     if (project.image_tag) {
-      console.log("[run] no github_url, starting existing image");
+      console.log("[run] no source, starting existing image");
       return handleStart(project);
     }
-    console.log("[run] no github_url or image_tag — nothing to do");
-    return new Response("No GitHub URL or image configured", { status: 400 });
+    console.log("[run] no source or image_tag — nothing to do");
+    return new Response("No GitHub URL or Docker image configured", { status: 400 });
   }
 
-  const urlError = validateGithubUrl(project.github_url);
-  if (urlError) return new Response(urlError, { status: 400 });
+  if (project.github_url) {
+    const urlError = validateGithubUrl(project.github_url);
+    if (urlError) return new Response(urlError, { status: 400 });
+  }
 
-  const tag = `moor/${project.name}:latest`;
-  console.log(
-    `[run] github_url=${project.github_url} branch=${project.branch} dockerfile=${project.dockerfile}`,
-  );
+  const tag = isImageProject ? project.docker_image! : `moor/${project.name}:latest`;
+  const status = isImageProject ? "pulling" : "building";
   console.log(`[run] image tag will be: ${tag}`);
-  db.query("UPDATE projects SET status = 'building' WHERE id = ?").run(project.id);
+  db.query(`UPDATE projects SET status = ? WHERE id = ?`).run(status, project.id);
 
-  // Stream build output via SSE
+  // Stream build/pull output via SSE
   let streamClosed = false;
   let keepalive: ReturnType<typeof setInterval>;
   const stream = new ReadableStream({
@@ -110,7 +113,6 @@ async function handleRun(req: Request, project: Project): Promise<Response> {
         }
       };
 
-      // Send SSE keepalive comments every 5s to prevent idle timeout
       keepalive = setInterval(() => {
         if (streamClosed) return;
         try {
@@ -120,20 +122,28 @@ async function handleRun(req: Request, project: Project): Promise<Response> {
         }
       }, 5000);
 
-      let buildOutput = "";
-      const buildStart = Date.now();
+      let output = "";
+      const startTime = Date.now();
 
       try {
-        buildOutput = await buildImageStreaming(
-          project.github_url as string,
-          project.branch,
-          project.dockerfile,
-          tag,
-          (line) => send("log", line),
-          noCache,
-        );
+        if (isImageProject) {
+          // Pull pre-built image
+          send("log", `Pulling ${project.docker_image}...\n`);
+          output = await pullImageStreaming(project.docker_image!, (line) => send("log", line));
+        } else {
+          // Build from GitHub
+          output = await buildImageStreaming(
+            project.github_url as string,
+            project.branch,
+            project.dockerfile,
+            tag,
+            (line) => send("log", line),
+            noCache,
+          );
+        }
 
-        const elapsed = ((Date.now() - buildStart) / 1000).toFixed(1);
+        const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+        const verb = isImageProject ? "Pull" : "Build";
 
         db.query("UPDATE projects SET image_tag = ?, status = 'stopped' WHERE id = ?").run(
           tag,
@@ -142,22 +152,22 @@ async function handleRun(req: Request, project: Project): Promise<Response> {
         db.query(
           `INSERT INTO runs (project_id, started_at, finished_at, exit_code, stdout, cron_id)
            VALUES (?, datetime('now'), datetime('now'), 0, ?, NULL)`,
-        ).run(project.id, buildOutput);
+        ).run(project.id, output);
 
-        send("log", `\nBuild completed in ${elapsed}s\n`);
+        send("log", `\n${verb} completed in ${elapsed}s\n`);
 
-        // Auto-detect exposed ports from image (always re-detect on rebuild)
+        // Auto-detect exposed ports from image
         const detectedPorts = await autoDetectPorts(project.id, tag, true);
         for (const { host_port, container_port } of detectedPorts) {
           send("log", `Port ${container_port} → host :${host_port}\n`);
         }
       } catch (e) {
         const message = e instanceof Error ? e.message : "Unknown error";
-        console.error(`[run] BUILD FAILED: ${message}`);
+        console.error(`[run] FAILED: ${message}`);
         db.query(
           `INSERT INTO runs (project_id, started_at, finished_at, exit_code, stdout, cron_id)
            VALUES (?, datetime('now'), datetime('now'), 1, ?, NULL)`,
-        ).run(project.id, buildOutput || message);
+        ).run(project.id, output || message);
         db.query("UPDATE projects SET status = 'error' WHERE id = ?").run(project.id);
         send("error", message);
         safeClose();

@@ -159,7 +159,8 @@ body,
 .status-dot.stopped {
   background: var(--text-dim);
 }
-.status-dot.building {
+.status-dot.building,
+.status-dot.pulling {
   background: var(--yellow);
 }
 .status-dot.error {
@@ -209,6 +210,10 @@ body,
 .project-card .meta {
   color: var(--text-muted);
   font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .project-card-status {
@@ -575,7 +580,8 @@ code,
   background: rgba(112, 112, 112, 0.15);
   color: var(--text-muted);
 }
-.badge.building {
+.badge.building,
+.badge.pulling {
   background: rgba(251, 191, 36, 0.15);
   color: var(--yellow);
 }
@@ -643,6 +649,7 @@ code,
   color: var(--red);
 }
 .badge-status.building,
+.badge-status.pulling,
 .badge-status.stopping,
 .badge-status.restarting,
 .badge-status.rebuilding {
@@ -1361,4 +1368,58 @@ code,
 
 ::-webkit-scrollbar-thumb:hover {
   background: var(--text-dim);
+}
+
+/* Source toggle (GitHub / Docker Image) */
+.source-toggle {
+  display: flex;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin-bottom: 16px;
+  overflow: hidden;
+}
+
+.source-toggle button {
+  flex: 1;
+  padding: 7px 0;
+  font-size: 12px;
+  font-weight: 500;
+  font-family: inherit;
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.source-toggle button.active {
+  background: var(--bg-raised);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  margin: -1px;
+}
+
+/* Source badges */
+.source-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-family: "JetBrains Mono", "Fira Code", "SF Mono", Menlo, monospace;
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+.image-badge {
+  background: rgba(96, 165, 250, 0.08);
+  border: 1px solid rgba(96, 165, 250, 0.2);
+  color: #60a5fa;
+}
+
+.github-badge {
+  background: rgba(224, 224, 224, 0.06);
+  border: 1px solid rgba(224, 224, 224, 0.15);
+  color: var(--text-muted);
 }

@@ -160,6 +160,97 @@ export async function buildImageStreaming(
   return output;
 }
 
+/** Parse a single Docker pull JSON line into display text. */
+function parsePullLine(line: string): { text: string; error?: boolean } | null {
+  try {
+    const parsed = JSON.parse(line);
+    if (parsed.error) return { text: `ERROR: ${parsed.error}\n`, error: true };
+    if (parsed.status) {
+      const id = parsed.id ? `${parsed.id}: ` : "";
+      // Skip noisy per-layer progress bars, show status changes only
+      if (parsed.progress) return null;
+      return { text: `${id}${parsed.status}\n` };
+    }
+  } catch {
+    return { text: `${line}\n` };
+  }
+  return null;
+}
+
+/** Pull a Docker image with streaming output. */
+export async function pullImageStreaming(
+  imageRef: string,
+  onLine: (text: string) => void,
+): Promise<string> {
+  // Split image:tag
+  const [fromImage, tag] = imageRef.includes(":")
+    ? [imageRef.slice(0, imageRef.lastIndexOf(":")), imageRef.slice(imageRef.lastIndexOf(":") + 1)]
+    : [imageRef, "latest"];
+
+  const params = new URLSearchParams({ fromImage, tag });
+
+  // Explicitly set platform to avoid manifest parsing failures on multi-arch images
+  try {
+    const versionRes = await dockerFetch("/v1.44/version");
+    if (versionRes.ok) {
+      const version = (await versionRes.json()) as { Os: string; Arch: string };
+      params.set("platform", `${version.Os}/${version.Arch}`);
+    }
+  } catch {
+    // Fall back to no platform — let Docker decide
+  }
+
+  console.log(
+    `[pullImageStreaming] fromImage=${fromImage} tag=${tag} platform=${params.get("platform") ?? "auto"}`,
+  );
+
+  const res = await dockerFetch(`/v1.44/images/create?${params}`, {
+    method: "POST",
+    timeout: BUILD_TIMEOUT,
+  });
+
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Docker pull failed: ${res.status} ${body}`);
+  }
+
+  let pullError: string | null = null;
+  let output = "";
+  let buffer = "";
+  const reader = res.body?.getReader();
+  if (!reader) return "";
+
+  const decoder = new TextDecoder();
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+
+    const lines = buffer.split("\n");
+    buffer = lines.pop() || "";
+    for (const line of lines) {
+      if (!line) continue;
+      const parsed = parsePullLine(line);
+      if (parsed) {
+        output += parsed.text;
+        onLine(parsed.text);
+        if (parsed.error) pullError = parsed.text;
+      }
+    }
+  }
+  if (buffer) {
+    const parsed = parsePullLine(buffer);
+    if (parsed) {
+      output += parsed.text;
+      onLine(parsed.text);
+      if (parsed.error) pullError = parsed.text;
+    }
+  }
+
+  if (pullError) throw new Error(pullError);
+  return output;
+}
+
 export async function createAndStartContainer(
   imageTag: string,
   name: string,
@@ -230,6 +321,17 @@ export async function stopContainer(containerId: string): Promise<void> {
     const err = await res.text();
     console.error(`[stopContainer] error body: ${err}`);
     throw new Error(`Container stop failed (${res.status}): ${err}`);
+  }
+}
+
+export async function removeContainer(containerId: string): Promise<void> {
+  console.log(`[removeContainer] removing ${containerId.slice(0, 12)}...`);
+  const res = await dockerFetch(`/v1.44/containers/${containerId}?force=true`, {
+    method: "DELETE",
+  });
+  if (!res.ok && res.status !== 404) {
+    const err = await res.text();
+    console.error(`[removeContainer] error: ${err}`);
   }
 }
 

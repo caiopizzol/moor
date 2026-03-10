@@ -1,5 +1,5 @@
 import db from "../db";
-import { stopContainer } from "../docker";
+import { removeContainer, stopContainer } from "../docker";
 
 export async function handleProjects(req: Request, url: URL): Promise<Response | null> {
   const match = url.pathname.match(/^\/api\/projects(?:\/(\d+))?$/);
@@ -36,6 +36,7 @@ export async function handleProjects(req: Request, url: URL): Promise<Response |
     if (project?.container_id) {
       try {
         await stopContainer(project.container_id);
+        await removeContainer(project.container_id);
       } catch {
         // best effort — container may already be gone
       }
@@ -49,9 +50,9 @@ export async function handleProjects(req: Request, url: URL): Promise<Response |
 
 async function handleCreate(req: Request): Promise<Response> {
   const body = await req.json();
-  const { name, github_url, branch, dockerfile } = body;
+  const { name, github_url, docker_image, branch, dockerfile } = body;
   console.log(
-    `[projects] create: name=${name} github_url=${github_url} branch=${branch || "main"} dockerfile=${dockerfile || "Dockerfile"}`,
+    `[projects] create: name=${name} github_url=${github_url} docker_image=${docker_image} branch=${branch || "main"} dockerfile=${dockerfile || "Dockerfile"}`,
   );
   if (!name) return new Response("name is required", { status: 400 });
   if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/.test(name)) {
@@ -67,9 +68,15 @@ async function handleCreate(req: Request): Promise<Response> {
 
   const result = db
     .query(
-      "INSERT INTO projects (name, github_url, branch, dockerfile) VALUES (?, ?, ?, ?) RETURNING *",
+      "INSERT INTO projects (name, github_url, docker_image, branch, dockerfile) VALUES (?, ?, ?, ?, ?) RETURNING *",
     )
-    .get(name, github_url ?? null, branch ?? "main", dockerfile ?? "Dockerfile");
+    .get(
+      name,
+      docker_image ? null : (github_url ?? null),
+      docker_image ?? null,
+      branch ?? "main",
+      dockerfile ?? "Dockerfile",
+    );
 
   console.log("[projects] created:", JSON.stringify(result));
   return Response.json(result, { status: 201 });
@@ -80,10 +87,23 @@ async function handleUpdate(req: Request, id: number): Promise<Response> {
   const fields: string[] = [];
   const values: (string | number)[] = [];
 
-  for (const key of ["name", "github_url", "branch", "dockerfile"]) {
+  for (const key of ["name", "github_url", "docker_image", "branch", "dockerfile"]) {
     if (key in body) {
       fields.push(`${key} = ?`);
       values.push(body[key]);
+    }
+  }
+
+  // When switching source type, clear the other
+  if ("docker_image" in body && body.docker_image) {
+    if (!fields.some((f) => f.startsWith("github_url"))) {
+      fields.push("github_url = ?");
+      values.push(null as unknown as string);
+    }
+  } else if ("github_url" in body && body.github_url) {
+    if (!fields.some((f) => f.startsWith("docker_image"))) {
+      fields.push("docker_image = ?");
+      values.push(null as unknown as string);
     }
   }
 
