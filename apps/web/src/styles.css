@@ -1031,25 +1031,6 @@ code,
   color: var(--red);
 }
 
-.cron-running-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  font-size: 10px;
-  font-weight: 500;
-  color: var(--yellow);
-  flex-shrink: 0;
-}
-
-.cron-running-badge .spinner {
-  width: 10px;
-  height: 10px;
-  border: 1.5px solid transparent;
-  border-top-color: currentColor;
-  border-radius: 50%;
-  animation: badge-spin 0.7s linear infinite;
-}
-
 /* Sidebar divider */
 .sidebar-divider {
   border-top: 1px solid var(--border);

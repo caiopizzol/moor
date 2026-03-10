@@ -403,12 +403,6 @@ export function CronJobs({ projectId }: Props) {
               <span className="cron-row-schedule">
                 {describeCron(cron.schedule) || cron.schedule}
               </span>
-              {cron.lastRun && !cron.lastRun.finished_at && (
-                <span className="cron-running-badge">
-                  <span className="spinner" />
-                  Running
-                </span>
-              )}
               <button type="button" className="btn btn-sm" onClick={() => setEditing(cron)}>
                 Edit
               </button>

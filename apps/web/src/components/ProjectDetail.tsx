@@ -25,7 +25,14 @@ export function ProjectDetail({ project, onUpdate, onEdit, onDelete }: Props) {
   const loadActiveCrons = useCallback(async () => {
     try {
       const { runs } = await api.runs.list(project.id);
-      setActiveCronRuns(runs.filter((r) => r.cron_id && !r.finished_at));
+      const active = runs.filter((r) => r.cron_id && !r.finished_at);
+      const seen = new Set<number>();
+      const deduped = active.filter((r) => {
+        if (seen.has(r.cron_id!)) return false;
+        seen.add(r.cron_id!);
+        return true;
+      });
+      setActiveCronRuns(deduped);
     } catch {
       // ignore
     }
