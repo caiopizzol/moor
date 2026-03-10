@@ -35,8 +35,7 @@ export const hostTerminalHandlers = {
     const shell = process.env.SHELL || "/bin/sh";
 
     // Use `script` to allocate a PTY on Linux without native deps.
-    // `script -q /dev/null` creates a PTY and runs the default shell.
-    const proc = spawn(["script", "-q", "/dev/null", shell, "-l"], {
+    const proc = spawn(["script", "-q", "/dev/null", "-c", shell], {
       stdin: "pipe",
       stdout: "pipe",
       stderr: "pipe",
