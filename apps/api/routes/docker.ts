@@ -7,6 +7,7 @@ import {
   getContainerLogs,
   stopContainer,
 } from "../docker";
+import { autoDetectPorts, getProjectPorts } from "../ports";
 
 type Project = {
   id: number;
@@ -83,12 +84,40 @@ async function handleRun(req: Request, project: Project): Promise<Response> {
   db.query("UPDATE projects SET status = 'building' WHERE id = ?").run(project.id);
 
   // Stream build output via SSE
+  let streamClosed = false;
   const stream = new ReadableStream({
     async start(controller) {
       const encoder = new TextEncoder();
+
       const send = (event: string, data: string) => {
-        controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
+        if (streamClosed) return;
+        try {
+          controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
+        } catch {
+          streamClosed = true;
+        }
       };
+
+      const safeClose = () => {
+        clearInterval(keepalive);
+        if (streamClosed) return;
+        streamClosed = true;
+        try {
+          controller.close();
+        } catch {
+          // Already closed
+        }
+      };
+
+      // Send SSE keepalive comments every 5s to prevent idle timeout
+      const keepalive = setInterval(() => {
+        if (streamClosed) return;
+        try {
+          controller.enqueue(encoder.encode(":keepalive\n\n"));
+        } catch {
+          streamClosed = true;
+        }
+      }, 5000);
 
       let buildOutput = "";
       const buildStart = Date.now();
@@ -104,7 +133,6 @@ async function handleRun(req: Request, project: Project): Promise<Response> {
         );
 
         const elapsed = ((Date.now() - buildStart) / 1000).toFixed(1);
-        console.log(`[run] build completed in ${elapsed}s`);
 
         db.query("UPDATE projects SET image_tag = ?, status = 'stopped' WHERE id = ?").run(
           tag,
@@ -116,6 +144,12 @@ async function handleRun(req: Request, project: Project): Promise<Response> {
         ).run(project.id, buildOutput);
 
         send("log", `\nBuild completed in ${elapsed}s\n`);
+
+        // Auto-detect exposed ports from image (force re-detect on rebuild)
+        const detectedPorts = await autoDetectPorts(project.id, tag, noCache);
+        for (const { host_port, container_port } of detectedPorts) {
+          send("log", `Port ${container_port} → host :${host_port}\n`);
+        }
       } catch (e) {
         const message = e instanceof Error ? e.message : "Unknown error";
         console.error(`[run] BUILD FAILED: ${message}`);
@@ -125,7 +159,7 @@ async function handleRun(req: Request, project: Project): Promise<Response> {
         ).run(project.id, buildOutput || message);
         db.query("UPDATE projects SET status = 'error' WHERE id = ?").run(project.id);
         send("error", message);
-        controller.close();
+        safeClose();
         return;
       }
 
@@ -134,9 +168,10 @@ async function handleRun(req: Request, project: Project): Promise<Response> {
         const envs = db
           .query("SELECT key, value FROM env_vars WHERE project_id = ?")
           .all(project.id) as { key: string; value: string }[];
+        const ports = getProjectPorts(project.id);
 
         send("log", "Starting container...\n");
-        const containerId = await createAndStartContainer(tag, `moor-${project.name}`, envs);
+        const containerId = await createAndStartContainer(tag, `moor-${project.name}`, envs, ports);
         console.log(`[run] container started: ${containerId}`);
 
         db.query("UPDATE projects SET container_id = ?, status = 'running' WHERE id = ?").run(
@@ -151,7 +186,10 @@ async function handleRun(req: Request, project: Project): Promise<Response> {
         send("error", message);
       }
 
-      controller.close();
+      safeClose();
+    },
+    cancel() {
+      streamClosed = true;
     },
   });
 
@@ -242,6 +280,9 @@ async function handleBuild(project: Project): Promise<Response> {
        VALUES (?, datetime('now'), datetime('now'), 0, ?, NULL)`,
     ).run(project.id, buildOutput);
 
+    // Auto-detect exposed ports from image
+    await autoDetectPorts(project.id, tag);
+
     console.log("[build] done — status set to 'stopped'");
     return Response.json({ message: "Build complete" });
   } catch (e) {
@@ -263,13 +304,17 @@ async function handleStart(project: Project): Promise<Response> {
     key: string;
     value: string;
   }[];
-  console.log(`[start] creating container moor-${project.name} with ${envs.length} env vars`);
+  const ports = getProjectPorts(project.id);
+  console.log(
+    `[start] creating container moor-${project.name} with ${envs.length} env vars and ${ports.length} ports`,
+  );
 
   try {
     const containerId = await createAndStartContainer(
       project.image_tag,
       `moor-${project.name}`,
       envs,
+      ports,
     );
     console.log(`[start] container started: ${containerId}`);
     db.query("UPDATE projects SET container_id = ?, status = 'running' WHERE id = ?").run(

@@ -11,6 +11,7 @@ import { handleAuth } from "./routes/auth";
 import { handleCrons } from "./routes/crons";
 import { handleDocker } from "./routes/docker";
 import { handleEnvs } from "./routes/envs";
+import { handlePorts } from "./routes/ports";
 import { handleProjects } from "./routes/projects";
 import { handleRuns } from "./routes/runs";
 import { handleServer } from "./routes/server";
@@ -27,6 +28,7 @@ const clientDist = join(import.meta.dir, "..", "web", "dist");
 const server = Bun.serve({
   port: PORT,
   hostname: "0.0.0.0",
+  idleTimeout: 255, // seconds — SSE streams can be silent during long Docker builds
 
   async fetch(req, server) {
     const url = new URL(req.url);
@@ -75,6 +77,7 @@ const server = Bun.serve({
           (await handleDocker(req, url)) ??
           (await handleCrons(req, url)) ??
           (await handleEnvs(req, url)) ??
+          (await handlePorts(req, url)) ??
           (await handleRuns(req, url)) ??
           (await handleServer(req, url));
 

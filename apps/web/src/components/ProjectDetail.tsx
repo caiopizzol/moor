@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, type Project, type Run } from "../lib/api";
+import { api, type PortMapping, type Project, type Run } from "../lib/api";
 import { BuildOutput } from "./BuildOutput";
 import { ContainerLogs } from "./ContainerLogs";
 import { CronJobs } from "./CronJobs";
@@ -21,6 +21,7 @@ export function ProjectDetail({ project, onUpdate, onEdit, onDelete }: Props) {
   const [tab, setTab] = useState<Tab>("build");
   const [streamingLines, setStreamingLines] = useState<string[] | undefined>(undefined);
   const [activeCronRuns, setActiveCronRuns] = useState<Run[]>([]);
+  const [ports, setPorts] = useState<PortMapping[]>([]);
 
   const loadActiveCrons = useCallback(async () => {
     try {
@@ -43,6 +44,18 @@ export function ProjectDetail({ project, onUpdate, onEdit, onDelete }: Props) {
     const interval = setInterval(loadActiveCrons, 5000);
     return () => clearInterval(interval);
   }, [loadActiveCrons]);
+
+  const loadPorts = useCallback(() => {
+    api.ports
+      .list(project.id)
+      .then(setPorts)
+      .catch(() => {});
+  }, [project.id]);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reload ports when status changes (e.g. after build)
+  useEffect(() => {
+    loadPorts();
+  }, [loadPorts, project.status]);
 
   const isRunning = project.status === "running";
   const isBuilding = project.status === "building";
@@ -185,6 +198,11 @@ export function ProjectDetail({ project, onUpdate, onEdit, onDelete }: Props) {
               <span className={isTransitional ? "spinner" : "dot"} />
               {displayStatus}
             </span>
+            {ports.map((p) => (
+              <span key={p.id} className="port-badge">
+                :{p.host_port}
+              </span>
+            ))}
           </div>
           <div className="btn-group">
             {actionLoading ? (
@@ -287,6 +305,7 @@ export function ProjectDetail({ project, onUpdate, onEdit, onDelete }: Props) {
           >
             Env
           </button>
+
           <button
             type="button"
             className={`log-tab ${tab === "cron" ? "active" : ""}`}

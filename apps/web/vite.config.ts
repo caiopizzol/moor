@@ -9,14 +9,9 @@ export default defineConfig({
       "/api": {
         target: "http://localhost:3000",
         ws: true,
+        timeout: 0, // No timeout for SSE streams
         // Disable buffering so SSE streams arrive in real time
         configure: (proxy) => {
-          proxy.on("proxyReq", (_proxyReq, req) => {
-            if (req.url?.includes("/run")) {
-              // @ts-expect-error -- needed for SSE streaming
-              req._proxyTimeout = 300000;
-            }
-          });
           proxy.on("proxyRes", (proxyRes) => {
             if (proxyRes.headers["content-type"]?.includes("text/event-stream")) {
               proxyRes.headers["x-accel-buffering"] = "no";

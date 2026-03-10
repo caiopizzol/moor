@@ -62,6 +62,15 @@ db.exec(`
     created_at TEXT DEFAULT (datetime('now')),
     expires_at TEXT NOT NULL
   );
+
+  CREATE TABLE IF NOT EXISTS port_mappings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    host_port INTEGER NOT NULL,
+    container_port INTEGER NOT NULL,
+    protocol TEXT DEFAULT 'tcp',
+    UNIQUE(host_port, protocol)
+  );
 `);
 
 export default db;

@@ -60,6 +60,11 @@ async function handleCreate(req: Request): Promise<Response> {
     });
   }
 
+  const existing = db.query("SELECT id FROM projects WHERE name = ?").get(name);
+  if (existing) {
+    return new Response("A project with this name already exists", { status: 409 });
+  }
+
   const result = db
     .query(
       "INSERT INTO projects (name, github_url, branch, dockerfile) VALUES (?, ?, ?, ?) RETURNING *",
@@ -83,6 +88,15 @@ async function handleUpdate(req: Request, id: number): Promise<Response> {
   }
 
   if (fields.length === 0) return new Response("No fields to update", { status: 400 });
+
+  if ("name" in body && body.name) {
+    const existing = db
+      .query("SELECT id FROM projects WHERE name = ? AND id != ?")
+      .get(body.name, id);
+    if (existing) {
+      return new Response("A project with this name already exists", { status: 409 });
+    }
+  }
 
   values.push(id);
   const row = db

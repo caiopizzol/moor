@@ -585,6 +585,18 @@ code,
 }
 
 /* Badge — status with spinner/dot */
+.port-badge {
+  display: inline-block;
+  font-size: 11px;
+  font-family: monospace;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  margin-right: 6px;
+}
+
 .badge-status {
   display: inline-flex;
   align-items: center;

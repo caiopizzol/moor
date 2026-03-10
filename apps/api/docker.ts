@@ -35,6 +35,13 @@ function parseBuildLine(line: string): { text: string; error?: boolean } | null 
     if (parsed.error) return { text: `ERROR: ${parsed.error}\n`, error: true };
     if (parsed.stream) return { text: parsed.stream };
     if (parsed.aux?.ID) return { text: `Built image: ${parsed.aux.ID.slice(0, 19)}\n` };
+    // Docker pull progress (e.g. "Pulling from library/golang", "Downloading", "Extracting")
+    if (parsed.status) {
+      const id = parsed.id ? `${parsed.id}: ` : "";
+      // Skip noisy per-layer progress bars, show status changes only
+      if (parsed.progress) return null;
+      return { text: `${id}${parsed.status}\n` };
+    }
   } catch {
     return { text: `${line}\n` };
   }
@@ -53,7 +60,7 @@ export async function buildImage(
   console.log(`[buildImage] remote=${remote} tag=${tag} dockerfile=${dockerfile}`);
   const res = await dockerFetch(`/v1.44/build?${params}`, {
     method: "POST",
-    timeout: 300000,
+    timeout: 1800000,
   });
 
   if (!res.ok) {
@@ -104,7 +111,7 @@ export async function buildImageStreaming(
   );
   const res = await dockerFetch(`/v1.44/build?${params}`, {
     method: "POST",
-    timeout: 300000,
+    timeout: 1800000,
   });
 
   if (!res.ok) {
@@ -116,34 +123,34 @@ export async function buildImageStreaming(
   let output = "";
   let buffer = "";
   const reader = res.body?.getReader();
-  if (reader) {
-    const decoder = new TextDecoder();
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
+  if (!reader) return "";
 
-      // Process complete lines
-      const lines = buffer.split("\n");
-      buffer = lines.pop() || ""; // keep incomplete line in buffer
-      for (const line of lines) {
-        if (!line) continue;
-        const parsed = parseBuildLine(line);
-        if (parsed) {
-          output += parsed.text;
-          onLine(parsed.text);
-          if (parsed.error) buildError = parsed.text;
-        }
-      }
-    }
-    // Process remaining buffer
-    if (buffer) {
-      const parsed = parseBuildLine(buffer);
+  const decoder = new TextDecoder();
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+
+    // Process complete lines
+    const lines = buffer.split("\n");
+    buffer = lines.pop() || ""; // keep incomplete line in buffer
+    for (const line of lines) {
+      if (!line) continue;
+      const parsed = parseBuildLine(line);
       if (parsed) {
         output += parsed.text;
         onLine(parsed.text);
         if (parsed.error) buildError = parsed.text;
       }
+    }
+  }
+  // Process remaining buffer
+  if (buffer) {
+    const parsed = parseBuildLine(buffer);
+    if (parsed) {
+      output += parsed.text;
+      onLine(parsed.text);
+      if (parsed.error) buildError = parsed.text;
     }
   }
 
@@ -155,8 +162,11 @@ export async function createAndStartContainer(
   imageTag: string,
   name: string,
   envVars: { key: string; value: string }[],
+  ports: { host_port: number; container_port: number }[] = [],
 ): Promise<string> {
-  console.log(`[createContainer] image=${imageTag} name=${name} envVars=${envVars.length}`);
+  console.log(
+    `[createContainer] image=${imageTag} name=${name} envVars=${envVars.length} ports=${ports.length}`,
+  );
   // Remove existing container with this name if it exists
   try {
     console.log(`[createContainer] removing existing container ${name}...`);
@@ -165,11 +175,22 @@ export async function createAndStartContainer(
     console.log("[createContainer] no existing container to remove");
   }
 
+  // Build port bindings for Docker API
+  const exposedPorts: Record<string, object> = {};
+  const portBindings: Record<string, { HostPort: string }[]> = {};
+  for (const { host_port, container_port } of ports) {
+    const key = `${container_port}/tcp`;
+    exposedPorts[key] = {};
+    portBindings[key] = [{ HostPort: String(host_port) }];
+  }
+
   const body = {
     Image: imageTag,
     Env: envVars.map((e) => `${e.key}=${e.value}`),
+    ExposedPorts: Object.keys(exposedPorts).length > 0 ? exposedPorts : undefined,
     HostConfig: {
       RestartPolicy: { Name: "unless-stopped" },
+      PortBindings: Object.keys(portBindings).length > 0 ? portBindings : undefined,
     },
   };
 
@@ -267,6 +288,23 @@ export async function execInContainer(
   const inspect = (await inspectRes.json()) as { ExitCode: number };
 
   return { exitCode: inspect.ExitCode, stdout, stderr };
+}
+
+export async function getImageExposedPorts(imageTag: string): Promise<number[]> {
+  try {
+    const res = await dockerFetch(`/v1.44/images/${encodeURIComponent(imageTag)}/json`);
+    if (!res.ok) return [];
+    const data = (await res.json()) as {
+      Config?: { ExposedPorts?: Record<string, object> };
+    };
+    const exposed = data.Config?.ExposedPorts;
+    if (!exposed) return [];
+    return Object.keys(exposed)
+      .map((k) => Number.parseInt(k, 10))
+      .filter((n) => !Number.isNaN(n));
+  } catch {
+    return [];
+  }
 }
 
 export async function getContainerLogs(containerId: string, tail: number): Promise<string> {

@@ -19,6 +19,7 @@ export function ProjectModal({ project, onClose, onSave }: Props) {
     project?.dockerfile && project.dockerfile !== "Dockerfile" ? project.dockerfile : "",
   );
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
 
   useEffect(() => {
     nameRef.current?.focus();
@@ -27,20 +28,25 @@ export function ProjectModal({ project, onClose, onSave }: Props) {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) return;
+    setError("");
     setLoading(true);
-    await onSave({
-      name: name.trim(),
-      github_url: githubUrl.trim() || undefined,
-      branch: branch.trim() || "main",
-      dockerfile: dockerfile.trim() || "Dockerfile",
-    });
+    try {
+      await onSave({
+        name: name.trim(),
+        github_url: githubUrl.trim() || undefined,
+        branch: branch.trim() || "main",
+        dockerfile: dockerfile.trim() || "Dockerfile",
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Something went wrong");
+      setLoading(false);
+    }
   };
 
   return (
-    // biome-ignore lint/a11y/noStaticElementInteractions: overlay dismisses modal on click
+    // biome-ignore lint/a11y/noStaticElementInteractions: overlay handles keyboard events
     <div
       className="modal-overlay"
-      onClick={onClose}
       onKeyDown={(e) => {
         if (e.key === "Escape") onClose();
       }}
@@ -92,6 +98,7 @@ export function ProjectModal({ project, onClose, onSave }: Props) {
             />
           </label>
         </div>
+        {error && <div style={{ color: "var(--red, #e55)", fontSize: "0.9em" }}>{error}</div>}
         <div className="actions">
           <button type="button" className="btn" onClick={onClose}>
             Cancel

@@ -27,6 +27,14 @@ export type EnvVar = {
   value: string;
 };
 
+export type PortMapping = {
+  id: number;
+  project_id: number;
+  host_port: number;
+  container_port: number;
+  protocol: string;
+};
+
 export type Run = {
   id: number;
   cron_id: number | null;
@@ -150,6 +158,9 @@ export const api = {
       request<Cron>(`/api/crons/${id}`, { method: "PUT", body: JSON.stringify(data) }),
     delete: (id: number) => request<void>(`/api/crons/${id}`, { method: "DELETE" }),
     run: (id: number) => request<{ ok: boolean }>(`/api/crons/${id}/run`, { method: "POST" }),
+  },
+  ports: {
+    list: (projectId: number) => request<PortMapping[]>(`/api/projects/${projectId}/ports`),
   },
   envs: {
     list: (projectId: number) => request<EnvVar[]>(`/api/projects/${projectId}/envs`),
