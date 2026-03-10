@@ -242,6 +242,21 @@ body,
   color: var(--yellow);
 }
 
+.project-card-activity-link {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: 11px;
+  font-family: inherit;
+  cursor: pointer;
+  padding: 0;
+  margin-top: 2px;
+}
+
+.project-card-activity-link:hover {
+  color: var(--text-muted);
+}
+
 .project-card-activity-item .spinner {
   width: 10px;
   height: 10px;
@@ -1029,6 +1044,154 @@ code,
 
 .cron-hint.invalid {
   color: var(--red);
+}
+
+/* Cron Recent Runs */
+.cron-runs-section {
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.cron-runs-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  margin-bottom: 10px;
+}
+
+.cron-runs-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.cron-run-item {
+  border-bottom: 1px solid var(--border);
+}
+
+.cron-run-item:last-child {
+  border-bottom: none;
+}
+
+.cron-run-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 4px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: inherit;
+  text-align: left;
+  color: var(--text);
+}
+
+.cron-run-row:hover {
+  background: var(--bg-hover);
+}
+
+.cron-run-status {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.cron-run-status .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.cron-run-status .spinner {
+  width: 10px;
+  height: 10px;
+  border: 1.5px solid transparent;
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: badge-spin 0.7s linear infinite;
+}
+
+.cron-run-status.running {
+  color: var(--yellow);
+}
+
+.cron-run-status.success {
+  color: var(--green);
+}
+
+.cron-run-status.failed {
+  color: var(--red);
+}
+
+.cron-run-name {
+  font-size: 12px;
+  font-weight: 500;
+  flex-shrink: 0;
+}
+
+.cron-run-cmd {
+  font-size: 11px;
+  font-family: "JetBrains Mono", "Fira Code", monospace;
+  color: var(--text-dim);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cron-run-time {
+  font-size: 11px;
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+
+.cron-run-duration {
+  font-size: 11px;
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+
+.cron-run-exit {
+  font-size: 10px;
+  font-family: "JetBrains Mono", "Fira Code", monospace;
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+
+.cron-run-exit.failed {
+  color: var(--red);
+}
+
+.cron-run-chevron {
+  font-size: 10px;
+  color: var(--text-dim);
+  flex-shrink: 0;
+  transition: transform 0.15s;
+}
+
+.cron-run-chevron.open {
+  transform: rotate(90deg);
+}
+
+.cron-run-output {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px;
+  margin: 0 4px 8px;
+  font-family: "JetBrains Mono", "Fira Code", "SF Mono", Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--text-muted);
+  max-height: 200px;
+  overflow-y: auto;
 }
 
 /* Sidebar divider */

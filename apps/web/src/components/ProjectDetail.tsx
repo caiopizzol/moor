@@ -238,6 +238,13 @@ export function ProjectDetail({ project, onUpdate, onEdit, onDelete }: Props) {
                 )}
               </div>
             ))}
+            <button
+              type="button"
+              className="project-card-activity-link"
+              onClick={() => setTab("cron")}
+            >
+              View runs &rarr;
+            </button>
           </div>
         )}
       </div>

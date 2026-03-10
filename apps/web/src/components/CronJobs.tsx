@@ -62,6 +62,15 @@ function timeAgo(iso: string): string {
   return `${days}d ago`;
 }
 
+function formatDuration(ms: number): string {
+  if (ms < 1000) return `${ms}ms`;
+  const secs = Math.floor(ms / 1000);
+  if (secs < 60) return `${secs}s`;
+  const mins = Math.floor(secs / 60);
+  const remSecs = secs % 60;
+  return `${mins}m ${remSecs}s`;
+}
+
 // --- Schedule Builder ---
 
 type Frequency = "minutes" | "hourly" | "daily" | "weekly" | "monthly";
@@ -205,24 +214,32 @@ function ScheduleBuilder({ onApply }: { onApply: (expr: string) => void }) {
 
 // --- Main Component ---
 
-type CronWithLastRun = Cron & { lastRun?: Run };
-
 export function CronJobs({ projectId }: Props) {
-  const [crons, setCrons] = useState<CronWithLastRun[]>([]);
+  const [crons, setCrons] = useState<Cron[]>([]);
+  const [runs, setRuns] = useState<Run[]>([]);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState<Partial<Cron> | null>(null);
   const [saving, setSaving] = useState(false);
   const [showBuilder, setShowBuilder] = useState(false);
+  const [expandedRun, setExpandedRun] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     try {
-      const cronList = await api.crons.list(projectId);
-      const { runs } = await api.runs.list(projectId);
-      const withLastRun: CronWithLastRun[] = cronList.map((c) => ({
-        ...c,
-        lastRun: runs.find((r) => r.cron_id === c.id),
-      }));
-      setCrons(withLastRun);
+      const [cronList, runData] = await Promise.all([
+        api.crons.list(projectId),
+        api.runs.list(projectId),
+      ]);
+      setCrons(cronList);
+      // Deduplicate in-progress runs: keep only the latest per cron_id
+      const cronRuns = runData.runs.filter((r) => r.cron_id);
+      const seenInProgress = new Set<number>();
+      const deduped = cronRuns.filter((r) => {
+        if (r.finished_at) return true;
+        if (seenInProgress.has(r.cron_id as number)) return false;
+        seenInProgress.add(r.cron_id as number);
+        return true;
+      });
+      setRuns(deduped);
     } catch {
       // ignore
     } finally {
@@ -426,6 +443,48 @@ export function CronJobs({ projectId }: Props) {
           + Add
         </button>
       </div>
+
+      {runs.length > 0 && (
+        <div className="cron-runs-section">
+          <h3 className="cron-runs-title">Recent Runs</h3>
+          <div className="cron-runs-list">
+            {runs.map((run) => {
+              const inProgress = !run.finished_at;
+              const failed = !inProgress && run.exit_code !== 0;
+              const statusClass = inProgress ? "running" : failed ? "failed" : "success";
+              const expanded = expandedRun === run.id;
+              const output = [run.stdout, run.stderr].filter(Boolean).join("\n");
+
+              return (
+                <div key={run.id} className="cron-run-item">
+                  <button
+                    type="button"
+                    className="cron-run-row"
+                    onClick={() => setExpandedRun(expanded ? null : run.id)}
+                  >
+                    <span className={`cron-run-status ${statusClass}`}>
+                      {inProgress ? <span className="spinner" /> : <span className="dot" />}
+                    </span>
+                    <span className="cron-run-name">{run.cron_name || "cron"}</span>
+                    <span className="cron-run-cmd">{run.cron_command}</span>
+                    <span className="cron-run-time">{timeAgo(run.started_at)}</span>
+                    {run.duration_ms != null && (
+                      <span className="cron-run-duration">{formatDuration(run.duration_ms)}</span>
+                    )}
+                    {!inProgress && (
+                      <span className={`cron-run-exit ${failed ? "failed" : ""}`}>
+                        exit {run.exit_code}
+                      </span>
+                    )}
+                    <span className={`cron-run-chevron ${expanded ? "open" : ""}`}>&#9656;</span>
+                  </button>
+                  {expanded && <pre className="cron-run-output">{output || "No output."}</pre>}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
