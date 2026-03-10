@@ -79,6 +79,10 @@ export const terminalWebSocket = {
     console.log(`[terminal] WebSocket opened for container ${containerId.slice(0, 12)}`);
 
     try {
+      console.log(`[terminal] socket path: ${SOCKET_PATH}`);
+      console.log(`[terminal] socket exists: ${require("fs").existsSync(SOCKET_PATH)}`);
+
+      console.log(`[terminal] creating exec for container ${containerId}...`);
       const execId = await createExec(containerId);
       console.log(`[terminal] exec created: ${execId.slice(0, 12)}`);
 
@@ -86,6 +90,7 @@ export const terminalWebSocket = {
       let headersParsed = false;
       let headerBuffer = "";
 
+      console.log(`[terminal] opening raw socket to ${SOCKET_PATH}...`);
       const dockerSocket = await Bun.connect({
         unix: SOCKET_PATH,
         socket: {
@@ -133,7 +138,9 @@ export const terminalWebSocket = {
       console.log(`[terminal] exec started, streaming`);
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Unknown error";
+      const stack = e instanceof Error ? e.stack : "";
       console.error(`[terminal] setup failed: ${msg}`);
+      console.error(`[terminal] stack: ${stack}`);
       ws.send(`\r\nError: ${msg}\r\n`);
       ws.close(1011, msg);
     }
