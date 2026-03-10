@@ -1,8 +1,11 @@
 {
   "name": "moor",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
-  "workspaces": ["apps/*", "packages/*"],
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
   "scripts": {
     "dev": "bun run dev:api & bun run dev:web",
     "dev:api": "bun run --hot apps/api/index.ts",
