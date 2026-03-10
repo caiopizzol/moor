@@ -27,8 +27,7 @@ RUN bun install --frozen-lockfile --ignore-scripts --production
 COPY --from=build /app/apps/web/dist apps/web/dist
 COPY apps/api/ apps/api/
 
-RUN mkdir -p data && chown -R bun:bun data
-USER bun
+RUN mkdir -p data
 
 EXPOSE 3000
 CMD ["bun", "run", "apps/api/index.ts"]
