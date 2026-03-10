@@ -290,6 +290,15 @@ export function CronJobs({ projectId }: Props) {
     }
   };
 
+  const handleRunNow = async (cron: Cron) => {
+    try {
+      await api.crons.run(cron.id);
+      await load();
+    } catch (e) {
+      alert(`Failed to run: ${e}`);
+    }
+  };
+
   const handleDelete = async (cron: Cron) => {
     if (!confirm(`Delete cron "${cron.name}"?`)) return;
     try {
@@ -420,6 +429,13 @@ export function CronJobs({ projectId }: Props) {
               <span className="cron-row-schedule">
                 {describeCron(cron.schedule) || cron.schedule}
               </span>
+              <button
+                type="button"
+                className="btn btn-sm btn-run"
+                onClick={() => handleRunNow(cron)}
+              >
+                Run
+              </button>
               <button type="button" className="btn btn-sm" onClick={() => setEditing(cron)}>
                 Edit
               </button>

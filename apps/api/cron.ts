@@ -83,7 +83,7 @@ async function tick() {
   }
 }
 
-async function runCron(cron: CronRow, containerId: string) {
+export async function runCron(cron: CronRow, containerId: string) {
   const startedAt = new Date().toISOString();
   const run = db
     .query("INSERT INTO runs (cron_id, project_id, started_at) VALUES (?, ?, ?) RETURNING id")

@@ -149,6 +149,7 @@ export const api = {
     update: (id: number, data: Partial<Cron>) =>
       request<Cron>(`/api/crons/${id}`, { method: "PUT", body: JSON.stringify(data) }),
     delete: (id: number) => request<void>(`/api/crons/${id}`, { method: "DELETE" }),
+    run: (id: number) => request<{ ok: boolean }>(`/api/crons/${id}/run`, { method: "POST" }),
   },
   envs: {
     list: (projectId: number) => request<EnvVar[]>(`/api/projects/${projectId}/envs`),

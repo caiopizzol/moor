@@ -1,3 +1,4 @@
+import { runCron } from "../cron";
 import db from "../db";
 
 export async function handleCrons(req: Request, url: URL): Promise<Response | null> {
@@ -28,6 +29,31 @@ export async function handleCrons(req: Request, url: URL): Promise<Response | nu
       db.query("DELETE FROM crons WHERE id = ?").run(id);
       return new Response(null, { status: 204 });
     }
+  }
+
+  // Trigger: /api/crons/:id/run
+  const runMatch = url.pathname.match(/^\/api\/crons\/(\d+)\/run$/);
+  if (runMatch && req.method === "POST") {
+    const id = Number(runMatch[1]);
+    const cron = db.query("SELECT * FROM crons WHERE id = ?").get(id) as {
+      id: number;
+      project_id: number;
+      name: string;
+      schedule: string;
+      command: string;
+      enabled: number;
+    } | null;
+    if (!cron) return new Response("Cron not found", { status: 404 });
+
+    const project = db
+      .query("SELECT id, container_id, status FROM projects WHERE id = ?")
+      .get(cron.project_id) as { id: number; container_id: string | null; status: string } | null;
+    if (!project || project.status !== "running" || !project.container_id) {
+      return Response.json({ error: "Container is not running" }, { status: 400 });
+    }
+
+    runCron(cron, project.container_id);
+    return Response.json({ ok: true });
   }
 
   return null;
