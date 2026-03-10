@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { api, type Project } from "../lib/api";
+import { useCallback, useEffect, useState } from "react";
+import { api, type Project, type Run } from "../lib/api";
 import { BuildOutput } from "./BuildOutput";
 import { ContainerLogs } from "./ContainerLogs";
 import { CronJobs } from "./CronJobs";
@@ -20,6 +20,22 @@ export function ProjectDetail({ project, onUpdate, onEdit, onDelete }: Props) {
   const [action, setAction] = useState<Action>(null);
   const [tab, setTab] = useState<Tab>("build");
   const [streamingLines, setStreamingLines] = useState<string[] | undefined>(undefined);
+  const [activeCronRuns, setActiveCronRuns] = useState<Run[]>([]);
+
+  const loadActiveCrons = useCallback(async () => {
+    try {
+      const { runs } = await api.runs.list(project.id);
+      setActiveCronRuns(runs.filter((r) => r.cron_id && !r.finished_at));
+    } catch {
+      // ignore
+    }
+  }, [project.id]);
+
+  useEffect(() => {
+    loadActiveCrons();
+    const interval = setInterval(loadActiveCrons, 5000);
+    return () => clearInterval(interval);
+  }, [loadActiveCrons]);
 
   const isRunning = project.status === "running";
   const isBuilding = project.status === "building";
@@ -204,6 +220,19 @@ export function ProjectDetail({ project, onUpdate, onEdit, onDelete }: Props) {
             )}
           </div>
         </div>
+        {activeCronRuns.length > 0 && (
+          <div className="project-card-activity">
+            {activeCronRuns.map((run) => (
+              <div key={run.id} className="project-card-activity-item">
+                <span className="spinner" />
+                <span className="project-card-activity-name">{run.cron_name || "cron"}</span>
+                {run.cron_command && (
+                  <span className="project-card-activity-cmd">{run.cron_command}</span>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Tabs + Content */}

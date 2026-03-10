@@ -232,6 +232,8 @@ export function CronJobs({ projectId }: Props) {
 
   useEffect(() => {
     load();
+    const interval = setInterval(load, 5000);
+    return () => clearInterval(interval);
   }, [load]);
 
   const handleSave = async () => {
@@ -390,12 +392,10 @@ export function CronJobs({ projectId }: Props) {
             <div key={cron.id} className="cron-row">
               <button
                 type="button"
-                className={`cron-toggle ${cron.enabled ? "on" : ""}`}
+                className={`toggle ${cron.enabled ? "on" : ""}`}
                 onClick={() => handleToggle(cron)}
                 title={cron.enabled ? "Disable" : "Enable"}
-              >
-                <span className="cron-toggle-knob" />
-              </button>
+              />
               <span className={`cron-row-name ${!cron.enabled ? "disabled" : ""}`}>
                 {cron.name}
               </span>
@@ -403,6 +403,12 @@ export function CronJobs({ projectId }: Props) {
               <span className="cron-row-schedule">
                 {describeCron(cron.schedule) || cron.schedule}
               </span>
+              {cron.lastRun && !cron.lastRun.finished_at && (
+                <span className="cron-running-badge">
+                  <span className="spinner" />
+                  Running
+                </span>
+              )}
               <button type="button" className="btn btn-sm" onClick={() => setEditing(cron)}>
                 Edit
               </button>

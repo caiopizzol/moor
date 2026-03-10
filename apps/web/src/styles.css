@@ -225,6 +225,45 @@ body,
   gap: 10px;
 }
 
+/* Project card activity (running crons) */
+.project-card-activity {
+  padding-top: 10px;
+  margin-top: 10px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.project-card-activity-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--yellow);
+}
+
+.project-card-activity-item .spinner {
+  width: 10px;
+  height: 10px;
+  border: 1.5px solid transparent;
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: badge-spin 0.7s linear infinite;
+  flex-shrink: 0;
+}
+
+.project-card-activity-name {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.project-card-activity-cmd {
+  font-size: 11px;
+  font-family: "JetBrains Mono", "Fira Code", monospace;
+  color: var(--text-dim);
+}
+
 .detail h2 {
   font-size: 22px;
   font-weight: 600;
@@ -815,45 +854,6 @@ code,
   white-space: nowrap;
 }
 
-/* Toggle switch */
-.cron-toggle {
-  width: 32px;
-  height: 18px;
-  border-radius: 9px;
-  border: 1px solid var(--border);
-  background: var(--bg-raised);
-  cursor: pointer;
-  position: relative;
-  flex-shrink: 0;
-  padding: 0;
-  transition:
-    background 0.15s,
-    border-color 0.15s;
-}
-
-.cron-toggle.on {
-  background: var(--green);
-  border-color: var(--green);
-}
-
-.cron-toggle-knob {
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  background: var(--text-dim);
-  transition:
-    transform 0.15s,
-    background 0.15s;
-}
-
-.cron-toggle.on .cron-toggle-knob {
-  transform: translateX(14px);
-  background: #fff;
-}
-
 /* Cron form */
 .cron-form-row {
   display: flex;
@@ -1029,6 +1029,25 @@ code,
 
 .cron-hint.invalid {
   color: var(--red);
+}
+
+.cron-running-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--yellow);
+  flex-shrink: 0;
+}
+
+.cron-running-badge .spinner {
+  width: 10px;
+  height: 10px;
+  border: 1.5px solid transparent;
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: badge-spin 0.7s linear infinite;
 }
 
 /* Sidebar divider */

@@ -12,7 +12,7 @@ export function handleRuns(req: Request, url: URL): Response | null {
 
     const rows = db
       .query(
-        `SELECT r.*, c.name as cron_name
+        `SELECT r.*, c.name as cron_name, c.command as cron_command
          FROM runs r
          LEFT JOIN crons c ON c.id = r.cron_id
          WHERE r.project_id = ?
@@ -51,7 +51,7 @@ export function handleRuns(req: Request, url: URL): Response | null {
     const id = Number(runMatch[1]);
     const row = db
       .query(
-        `SELECT r.*, c.name as cron_name
+        `SELECT r.*, c.name as cron_name, c.command as cron_command
          FROM runs r
          LEFT JOIN crons c ON c.id = r.cron_id
          WHERE r.id = ?`,

@@ -38,6 +38,7 @@ export type Run = {
   stderr: string | null;
   duration_ms: number | null;
   cron_name?: string;
+  cron_command?: string;
 };
 
 async function request<T>(path: string, opts?: RequestInit): Promise<T> {
