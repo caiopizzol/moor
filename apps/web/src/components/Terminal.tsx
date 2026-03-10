@@ -14,17 +14,20 @@ export function Terminal({ projectId, running }: Props) {
     if (!running) return;
 
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const ws = new WebSocket(
-      `${protocol}//${window.location.host}/api/projects/${projectId}/terminal`,
-    );
+    const wsUrl = `${protocol}//${window.location.host}/api/projects/${projectId}/terminal`;
+    console.log(`[terminal] connecting to ${wsUrl}`);
+    const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
     ws.binaryType = "arraybuffer";
 
     ws.onopen = () => {
+      console.log("[terminal] WebSocket connected");
       xtermRef.current?.focus();
     };
 
     ws.onmessage = (e) => {
+      const size = e.data instanceof ArrayBuffer ? e.data.byteLength : e.data.length;
+      console.log(`[terminal] received ${size} bytes`);
       if (e.data instanceof ArrayBuffer) {
         xtermRef.current?.write(new Uint8Array(e.data));
       } else {
@@ -33,12 +36,16 @@ export function Terminal({ projectId, running }: Props) {
     };
 
     ws.onclose = (e) => {
+      console.log(
+        `[terminal] WebSocket closed: code=${e.code} reason=${e.reason} clean=${e.wasClean}`,
+      );
       xtermRef.current?.write(
         `\r\n\x1b[90m[Connection closed: ${e.reason || "disconnected"}]\x1b[0m\r\n`,
       );
     };
 
-    ws.onerror = () => {
+    ws.onerror = (e) => {
+      console.error("[terminal] WebSocket error:", e);
       xtermRef.current?.write("\r\n\x1b[31m[Connection error]\x1b[0m\r\n");
     };
 

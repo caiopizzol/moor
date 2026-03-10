@@ -108,6 +108,9 @@ const server = Bun.serve({
 
   websocket: {
     open(ws: import("bun").ServerWebSocket<unknown>) {
+      console.log(
+        `[ws] open handler, data keys: ${Object.keys(ws.data as object).join(",")}, isHost: ${isHostTerminal(ws.data)}`,
+      );
       if (isHostTerminal(ws.data)) {
         hostTerminalHandlers.open(ws as never);
       } else {

@@ -14,7 +14,10 @@ export function upgradeTerminal(
 ): Response | true {
   const url = new URL(req.url);
   const match = url.pathname.match(/^\/api\/projects\/(\d+)\/terminal$/);
-  if (!match) return new Response("Not found", { status: 404 });
+  if (!match) {
+    console.log(`[terminal] upgrade: no match for ${url.pathname}`);
+    return new Response("Not found", { status: 404 });
+  }
 
   const projectId = Number(match[1]);
   const project = db.query("SELECT * FROM projects WHERE id = ?").get(projectId) as {
@@ -22,7 +25,12 @@ export function upgradeTerminal(
     status: string;
   } | null;
 
+  console.log(
+    `[terminal] upgrade: project=${projectId} status=${project?.status ?? "null"} container=${project?.container_id?.slice(0, 12) ?? "null"}`,
+  );
+
   if (!project?.container_id || project.status !== "running") {
+    console.log(`[terminal] upgrade rejected: container not running`);
     return new Response("Container is not running", { status: 400 });
   }
 
@@ -30,6 +38,7 @@ export function upgradeTerminal(
     data: { projectId, containerId: project.container_id },
   });
 
+  console.log(`[terminal] upgrade result: ${upgraded}`);
   if (upgraded) return true;
   return new Response("WebSocket upgrade failed", { status: 500 });
 }
