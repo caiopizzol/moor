@@ -61,7 +61,7 @@ const server = Bun.serve({
           (await handleDocker(req, url)) ??
           (await handleCrons(req, url)) ??
           (await handleEnvs(req, url)) ??
-          handleRuns(req, url) ??
+          (await handleRuns(req, url)) ??
           handleServer(req, url);
 
         if (res) return res;

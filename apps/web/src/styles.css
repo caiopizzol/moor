@@ -242,6 +242,24 @@ body,
   color: var(--yellow);
 }
 
+.project-card-activity-stop {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: 11px;
+  font-family: inherit;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 3px;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.project-card-activity-stop:hover {
+  color: var(--red);
+  background: rgba(248, 113, 113, 0.1);
+}
+
 .project-card-activity-link {
   background: none;
   border: none;
@@ -1165,6 +1183,23 @@ code,
 
 .cron-run-exit.failed {
   color: var(--red);
+}
+
+.cron-run-stop {
+  font-size: 11px;
+  font-family: inherit;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 1px 6px;
+  border-radius: 3px;
+  flex-shrink: 0;
+  background: none;
+  border: none;
+}
+
+.cron-run-stop:hover {
+  color: var(--red);
+  background: rgba(248, 113, 113, 0.1);
 }
 
 .cron-run-chevron {

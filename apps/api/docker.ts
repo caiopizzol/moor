@@ -15,12 +15,14 @@ async function dockerFetch(
   path: string,
   opts?: RequestInit & { timeout?: number },
 ): Promise<Response> {
-  const { timeout = 30000, ...init } = opts ?? {};
+  const { timeout = 30000, signal, ...init } = opts ?? {};
+  const timeoutSignal = AbortSignal.timeout(timeout);
+  const combinedSignal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
   console.log(`[docker-api] ${init.method || "GET"} ${path}`);
   const res = await fetch(`http://localhost${path}`, {
     ...init,
     unix: SOCKET,
-    signal: AbortSignal.timeout(timeout),
+    signal: combinedSignal,
   });
   console.log(`[docker-api] → ${res.status} ${res.statusText}`);
   return res;
@@ -211,6 +213,7 @@ export async function stopContainer(containerId: string): Promise<void> {
 export async function execInContainer(
   containerId: string,
   command: string,
+  opts?: { signal?: AbortSignal; onExecId?: (id: string) => void },
 ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
   console.log(`[execInContainer] container=${containerId.slice(0, 12)} cmd="${command}"`);
   // Create exec
@@ -227,12 +230,16 @@ export async function execInContainer(
   if (!createRes.ok) throw new Error(`Exec create failed: ${await createRes.text()}`);
   const { Id } = (await createRes.json()) as { Id: string };
 
+  // Expose exec ID to caller before blocking start
+  opts?.onExecId?.(Id);
+
   // Start exec
   const startRes = await dockerFetch(`/v1.44/exec/${Id}/start`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ Detach: false }),
     timeout: 600000,
+    signal: opts?.signal,
   });
 
   if (!startRes.ok) throw new Error(`Exec start failed: ${await startRes.text()}`);
@@ -294,4 +301,17 @@ export async function inspectContainer(containerId: string): Promise<{ running: 
   if (!res.ok) return { running: false };
   const data = (await res.json()) as { State: { Running: boolean } };
   return { running: data.State.Running };
+}
+
+export async function killExec(execId: string): Promise<void> {
+  try {
+    const res = await dockerFetch(`/v1.44/exec/${execId}/json`);
+    if (!res.ok) return;
+    const data = (await res.json()) as { Running: boolean; Pid: number };
+    if (data.Running && data.Pid > 0) {
+      process.kill(data.Pid, "SIGKILL");
+    }
+  } catch {
+    // Best effort — process may already be gone
+  }
 }

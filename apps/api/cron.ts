@@ -1,5 +1,7 @@
 import db from "./db";
-import { execInContainer } from "./docker";
+import { execInContainer, killExec } from "./docker";
+
+const activeRuns = new Map<number, { controller: AbortController; execId: string }>();
 
 type CronRow = {
   id: number;
@@ -87,10 +89,19 @@ async function runCron(cron: CronRow, containerId: string) {
     .query("INSERT INTO runs (cron_id, project_id, started_at) VALUES (?, ?, ?) RETURNING id")
     .get(cron.id, cron.project_id, startedAt) as { id: number };
 
+  const controller = new AbortController();
+  const entry = { controller, execId: "" };
+  activeRuns.set(run.id, entry);
+
   const start = Date.now();
 
   try {
-    const result = await execInContainer(containerId, cron.command);
+    const result = await execInContainer(containerId, cron.command, {
+      signal: controller.signal,
+      onExecId: (id) => {
+        entry.execId = id;
+      },
+    });
     const duration = Date.now() - start;
 
     db.query(
@@ -105,11 +116,33 @@ async function runCron(cron: CronRow, containerId: string) {
     );
   } catch (e) {
     const duration = Date.now() - start;
-    const message = e instanceof Error ? e.message : "Unknown error";
-    db.query(
-      "UPDATE runs SET finished_at = ?, exit_code = -1, stderr = ?, duration_ms = ? WHERE id = ?",
-    ).run(new Date().toISOString(), message, duration, run.id);
+    if (controller.signal.aborted) {
+      db.query(
+        "UPDATE runs SET finished_at = ?, exit_code = -1, stderr = ?, duration_ms = ? WHERE id = ?",
+      ).run(new Date().toISOString(), "Stopped by user", duration, run.id);
+    } else {
+      const message = e instanceof Error ? e.message : "Unknown error";
+      db.query(
+        "UPDATE runs SET finished_at = ?, exit_code = -1, stderr = ?, duration_ms = ? WHERE id = ?",
+      ).run(new Date().toISOString(), message, duration, run.id);
+    }
+  } finally {
+    activeRuns.delete(run.id);
   }
+}
+
+export async function stopCronRun(runId: number): Promise<boolean> {
+  const active = activeRuns.get(runId);
+  if (!active) return false;
+
+  // Kill the process inside the container
+  if (active.execId) {
+    await killExec(active.execId);
+  }
+
+  // Abort the fetch (causes runCron to record "Stopped by user")
+  active.controller.abort();
+  return true;
 }
 
 export function startCronScheduler() {

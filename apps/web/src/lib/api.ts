@@ -178,5 +178,6 @@ export const api = {
     list: (projectId: number, page = 1) =>
       request<{ runs: Run[]; total: number }>(`/api/projects/${projectId}/runs?page=${page}`),
     get: (id: number) => request<Run>(`/api/runs/${id}`),
+    stop: (id: number) => request<{ ok: boolean }>(`/api/runs/${id}/stop`, { method: "POST" }),
   },
 };

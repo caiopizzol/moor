@@ -471,7 +471,18 @@ export function CronJobs({ projectId }: Props) {
                     {run.duration_ms != null && (
                       <span className="cron-run-duration">{formatDuration(run.duration_ms)}</span>
                     )}
-                    {!inProgress && (
+                    {inProgress ? (
+                      <button
+                        type="button"
+                        className="cron-run-stop"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          api.runs.stop(run.id).then(load);
+                        }}
+                      >
+                        Stop
+                      </button>
+                    ) : (
                       <span className={`cron-run-exit ${failed ? "failed" : ""}`}>
                         exit {run.exit_code}
                       </span>

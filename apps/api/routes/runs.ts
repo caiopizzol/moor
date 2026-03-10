@@ -1,8 +1,9 @@
+import { stopCronRun } from "../cron";
 import db from "../db";
 
 const PAGE_SIZE = 20;
 
-export function handleRuns(req: Request, url: URL): Response | null {
+export async function handleRuns(req: Request, url: URL): Promise<Response | null> {
   // /api/projects/:id/runs
   const projectMatch = url.pathname.match(/^\/api\/projects\/(\d+)\/runs$/);
   if (projectMatch && req.method === "GET") {
@@ -60,6 +61,17 @@ export function handleRuns(req: Request, url: URL): Response | null {
 
     if (!row) return new Response("Not found", { status: 404 });
     return Response.json(row);
+  }
+
+  // /api/runs/:id/stop
+  const stopMatch = url.pathname.match(/^\/api\/runs\/(\d+)\/stop$/);
+  if (stopMatch && req.method === "POST") {
+    const id = Number(stopMatch[1]);
+    const stopped = await stopCronRun(id);
+    if (!stopped) {
+      return Response.json({ error: "Run not active or not found" }, { status: 404 });
+    }
+    return Response.json({ ok: true });
   }
 
   return null;

@@ -236,6 +236,13 @@ export function ProjectDetail({ project, onUpdate, onEdit, onDelete }: Props) {
                 {run.cron_command && (
                   <span className="project-card-activity-cmd">{run.cron_command}</span>
                 )}
+                <button
+                  type="button"
+                  className="project-card-activity-stop"
+                  onClick={() => api.runs.stop(run.id).then(loadActiveCrons)}
+                >
+                  Stop
+                </button>
               </div>
             ))}
             <button
