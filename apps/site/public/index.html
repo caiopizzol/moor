@@ -1,0 +1,663 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>moor — self-hosted Docker management</title>
+  <meta name="description" content="A simpler alternative to Coolify. Deploy, manage, and monitor Docker containers with full control and zero complexity." />
+  <meta name="theme-color" content="#0a0a0a" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet" />
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    :root {
+      --bg: #0a0a0a;
+      --bg-raised: #141414;
+      --bg-hover: #1a1a1a;
+      --border: #252525;
+      --text: #e0e0e0;
+      --text-muted: #707070;
+      --text-dim: #505050;
+      --green: #4ade80;
+      --green-dim: #2d8a56;
+      --red: #f87171;
+      --yellow: #fbbf24;
+    }
+
+    html, body {
+      height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: "Inter", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+      font-size: 15px;
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .page {
+      max-width: 760px;
+      margin: 0 auto;
+      padding: 80px 24px 120px;
+    }
+
+    /* Header */
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 80px;
+    }
+
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      text-decoration: none;
+    }
+
+    .logo-name {
+      font-size: 18px;
+      font-weight: 600;
+      color: var(--text);
+      letter-spacing: -0.03em;
+    }
+
+    .header-links {
+      display: flex;
+      gap: 24px;
+    }
+
+    .header-links a {
+      color: var(--text-muted);
+      text-decoration: none;
+      font-size: 14px;
+      transition: color 0.15s;
+    }
+
+    .header-links a:hover { color: var(--text); }
+
+    /* Hero */
+    .hero h1 {
+      font-size: 44px;
+      font-weight: 600;
+      letter-spacing: -0.035em;
+      line-height: 1.15;
+      margin-bottom: 20px;
+    }
+
+    .hero h1 .accent { color: var(--green); }
+
+    .hero p {
+      color: var(--text-muted);
+      font-size: 17px;
+      line-height: 1.7;
+      max-width: 540px;
+      margin-bottom: 36px;
+    }
+
+    .hero-actions {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 10px 20px;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 500;
+      text-decoration: none;
+      border: 1px solid var(--border);
+      transition: all 0.15s;
+      cursor: pointer;
+    }
+
+    .btn-primary {
+      background: var(--green);
+      color: #0a0a0a;
+      border-color: var(--green);
+    }
+
+    .btn-primary:hover { background: #5eeba0; border-color: #5eeba0; }
+
+    .btn-secondary {
+      background: var(--bg-raised);
+      color: var(--text);
+    }
+
+    .btn-secondary:hover { background: #1a1a1a; border-color: #333; }
+
+    /* ── Animated Demo ── */
+    .demo {
+      margin-top: 64px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+      background: var(--bg);
+    }
+
+    /* Dashboard panel */
+    .demo-dashboard {
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+    }
+
+    .demo-project {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 0;
+    }
+
+    .demo-project + .demo-project {
+      border-top: 1px solid var(--border);
+    }
+
+    .demo-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .demo-dot.green { background: var(--green); }
+    .demo-dot.gray { background: var(--text-dim); }
+    .demo-dot.yellow {
+      background: var(--yellow);
+      animation: pulse-dot 1.5s ease-in-out infinite;
+    }
+
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+
+    .demo-project-name {
+      font-size: 13px;
+      font-weight: 500;
+      flex: 1;
+    }
+
+    .demo-badge {
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      padding: 2px 8px;
+      border-radius: 4px;
+    }
+
+    .demo-badge.running {
+      color: var(--green);
+      background: rgba(74, 222, 128, 0.12);
+    }
+
+    .demo-badge.stopped {
+      color: var(--text-dim);
+      background: rgba(80, 80, 80, 0.15);
+    }
+
+    .demo-badge.building {
+      color: var(--yellow);
+      background: rgba(251, 191, 36, 0.12);
+      animation: pulse-badge 1.5s ease-in-out infinite;
+    }
+
+    @keyframes pulse-badge {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.6; }
+    }
+
+    .demo-meta {
+      font-size: 11px;
+      color: var(--text-dim);
+      font-family: "JetBrains Mono", monospace;
+    }
+
+    /* Tabs */
+    .demo-tabs {
+      display: flex;
+      border-bottom: 1px solid var(--border);
+      padding: 0 20px;
+    }
+
+    .demo-tab {
+      padding: 8px 14px;
+      font-size: 12px;
+      color: var(--text-muted);
+      position: relative;
+    }
+
+    .demo-tab.active {
+      color: var(--text);
+    }
+
+    .demo-tab.active::after {
+      content: "";
+      position: absolute;
+      bottom: 0;
+      left: 14px;
+      right: 14px;
+      height: 1px;
+      background: var(--text);
+    }
+
+    /* Terminal */
+    .demo-terminal {
+      font-family: "JetBrains Mono", monospace;
+      font-size: 12px;
+      line-height: 1.7;
+      padding: 16px 20px;
+      height: 260px;
+      overflow: hidden;
+      position: relative;
+      background: var(--bg);
+    }
+
+    .demo-terminal::after {
+      content: "";
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      height: 48px;
+      background: linear-gradient(transparent, var(--bg));
+      pointer-events: none;
+    }
+
+    .term-lines {
+      animation: scroll-logs 20s linear infinite;
+    }
+
+    @keyframes scroll-logs {
+      0% { transform: translateY(0); }
+      100% { transform: translateY(-50%); }
+    }
+
+    .term-line {
+      white-space: nowrap;
+      opacity: 0;
+      animation: fade-in-line 0.3s ease forwards;
+    }
+
+    /* Stagger line appearances within each loop cycle */
+    .term-line:nth-child(1)  { animation-delay: 0s; }
+    .term-line:nth-child(2)  { animation-delay: 0.08s; }
+    .term-line:nth-child(3)  { animation-delay: 0.16s; }
+    .term-line:nth-child(4)  { animation-delay: 0.24s; }
+    .term-line:nth-child(5)  { animation-delay: 0.32s; }
+    .term-line:nth-child(6)  { animation-delay: 0.4s; }
+    .term-line:nth-child(7)  { animation-delay: 0.48s; }
+    .term-line:nth-child(8)  { animation-delay: 0.56s; }
+    .term-line:nth-child(9)  { animation-delay: 0.64s; }
+    .term-line:nth-child(10) { animation-delay: 0.72s; }
+    .term-line:nth-child(11) { animation-delay: 0.8s; }
+    .term-line:nth-child(12) { animation-delay: 0.88s; }
+    .term-line:nth-child(13) { animation-delay: 0.96s; }
+    .term-line:nth-child(14) { animation-delay: 1.04s; }
+    .term-line:nth-child(15) { animation-delay: 1.12s; }
+    .term-line:nth-child(16) { animation-delay: 1.2s; }
+
+    @keyframes fade-in-line {
+      to { opacity: 1; }
+    }
+
+    .t-muted { color: var(--text-dim); }
+    .t-green { color: var(--green); }
+    .t-yellow { color: var(--yellow); }
+    .t-text { color: var(--text-muted); }
+    .t-step { color: var(--text); }
+    .t-hash { color: var(--green-dim); }
+
+    /* ── Features ── */
+    .features {
+      margin-top: 96px;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1px;
+      background: var(--border);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+    }
+
+    .feature {
+      padding: 28px;
+      background: var(--bg);
+    }
+
+    .feature-title {
+      font-size: 14px;
+      font-weight: 600;
+      margin-bottom: 6px;
+      letter-spacing: -0.02em;
+    }
+
+    .feature-desc {
+      font-size: 13px;
+      color: var(--text-muted);
+      line-height: 1.6;
+    }
+
+    /* ── Comparison ── */
+    .comparison {
+      margin-top: 96px;
+    }
+
+    .comparison h2 {
+      font-size: 28px;
+      font-weight: 600;
+      letter-spacing: -0.03em;
+      margin-bottom: 8px;
+    }
+
+    .comparison > p {
+      color: var(--text-muted);
+      margin-bottom: 32px;
+    }
+
+    .compare-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+
+    .compare-col {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 24px;
+      background: var(--bg);
+    }
+
+    .compare-col.highlight { border-color: var(--green-dim); }
+
+    .compare-col h3 {
+      font-size: 14px;
+      font-weight: 600;
+      margin-bottom: 16px;
+      letter-spacing: -0.02em;
+    }
+
+    .compare-col.highlight h3 { color: var(--green); }
+
+    .compare-col ul {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .compare-col li {
+      font-size: 13px;
+      color: var(--text-muted);
+      line-height: 1.5;
+    }
+
+    .compare-col li::before {
+      content: "- ";
+      color: var(--text-dim);
+    }
+
+    .compare-col.highlight li::before {
+      content: "+ ";
+      color: var(--green-dim);
+    }
+
+    /* ── Install ── */
+    .install-section {
+      margin-top: 96px;
+      text-align: center;
+    }
+
+    .install-section h2 {
+      font-size: 28px;
+      font-weight: 600;
+      letter-spacing: -0.03em;
+      margin-bottom: 12px;
+    }
+
+    .install-section > p {
+      color: var(--text-muted);
+      margin-bottom: 28px;
+    }
+
+    .install-block {
+      display: inline-block;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 13px;
+      color: var(--text-muted);
+      background: var(--bg-raised);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px 24px;
+      text-align: left;
+    }
+
+    .install-block .prompt { color: var(--green); }
+    .install-block .comment { color: var(--text-dim); }
+
+    .install-block div + div { margin-top: 4px; }
+
+    /* ── Footer ── */
+    .footer {
+      margin-top: 96px;
+      padding-top: 32px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .footer-text {
+      font-size: 13px;
+      color: var(--text-muted);
+    }
+
+    .footer-links {
+      display: flex;
+      gap: 20px;
+    }
+
+    .footer-links a {
+      font-size: 13px;
+      color: var(--text-muted);
+      text-decoration: none;
+      transition: color 0.15s;
+    }
+
+    .footer-links a:hover { color: var(--text); }
+
+    /* Responsive */
+    @media (max-width: 600px) {
+      .page { padding: 48px 20px 80px; }
+      .header { margin-bottom: 56px; }
+      .hero h1 { font-size: 32px; }
+      .hero p { font-size: 15px; }
+      .features { grid-template-columns: 1fr; }
+      .compare-grid { grid-template-columns: 1fr; }
+      .hero-actions { flex-direction: column; align-items: flex-start; }
+      .footer { flex-direction: column; gap: 12px; align-items: flex-start; }
+      .demo-meta { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header class="header">
+      <a href="/" class="logo">
+        <svg width="24" height="24" viewBox="0 0 1024 1024">
+          <path fill="#4ade80" d="m522.02 115.46c3 1.87 18.3 8.75 22.45 10.78l65.19 31.36 171.5 82.16q40.13 18.8 79.89 38.38c-0.41 26.64 0.08 54.63 0.12 81.38l-0.15 134.16c-13.89 7.05-28.18 13.15-42.42 19.49l-43.92 20.06-213.59 98.44c-0.58 54.29-0.14 110.05-0.01 164.4 29.64-13.23 60.54-28.26 89.97-42.12l129.79-60.75q-0.28-48.65-0.02-97.29c5.58-3.88 22.3-11.67 29.25-15.14q25.35-12.88 50.97-25.23l0.17 188.92c-14.5 7.64-32 15.21-47 22.16l-68.17 31.98-227.25 106.28c-6.74-3.43-15.57-7.15-22.6-10.35l-51.27-23.25-167.3-76.95-66.72-30.29c-13.53-6.13-28.17-12.46-41.4-19.02l-0.03-66.27 0.07-271.91c10.83 4.39 21.74 9.43 32.47 14.11q30.02 12.95 59.9 26.22l170.27 75.41c28.8 12.85 58.5 26.72 87.4 39.14 23.01-10.03 46.78-21.4 69.6-32l76.84-35.15 69.5-31.4c15.19-6.75 30.13-12.85 45.18-20.05q-0.26-31.1-0.17-62.2c-87.5 37.53-174.03 78.84-261.81 116.42-11.93-4.71-26.38-11.64-38.41-16.88l-99.87-43.93-121.52-53.34c-29.11-12.63-60.72-25.75-89.45-38.89l0.05-65.42 191.75-89.72c14.01 6.94 29.76 13.56 44.13 20.1l114.55 51.69c11.44-4.8 23.06-10.36 34.39-15.52 9.76-4.44 20.87-9.03 30.14-14.17-6.73-3.87-14.81-7.43-21.9-10.85q-18.08-8.83-36.34-17.27-48.44-22.18-96.45-45.3c3.31-1.75 6.92-3.37 10.32-4.98 27.09-12.84 54.8-24.64 81.91-37.4z"/>
+          <path fill="#2d8a56" d="m250.62 528.45c75.52 34.48 152.67 67.01 227.92 102.16 0.49 8.23 0.31 18.49 0.32 26.85l0.04 43.99c0.01 31.34 0.67 65.27-0.14 96.42-15.33-5.82-36.86-16.77-52.61-23.89l-123.07-56.57c-16.65-7.65-35.89-17.09-52.47-24.05-0.16-6.45-0.11-13.04-0.07-19.51 0.33-48.43-0.51-96.99 0.08-145.41z"/>
+          <path fill="#2d8a56" d="m674.22 276.42c2.39-0.16 64.75 29.74 71.21 32.82-17.14 8.37-34.99 15.78-52.44 23.56l-86 38.63-56.86 25.88c-9.72 4.37-21.01 9.84-30.9 13.3-16.17-6.66-34.17-14.9-50.21-22.02q-53.29-23.81-106.81-47.08c-15.55-6.48-30.9-14.19-46.56-20.59-8.07-3.29-16.67-7.16-24.56-10.89 5.71-3.54 17.42-8.32 24.05-11.37l47.61-21.98c7.15 3.79 16.58 7.63 24.12 10.98q19.38 8.85 38.93 17.34l93.3 41.72q77.32-35.68 155.12-70.3z"/>
+        </svg>
+        <span class="logo-name">moor</span>
+      </a>
+      <div class="header-links">
+        <a href="https://github.com/caiopizzol/moor">GitHub</a>
+        <a href="https://github.com/caiopizzol/moor#readme">Docs</a>
+      </div>
+    </header>
+
+    <section class="hero">
+      <h1>Deploy Docker containers<br/><span class="accent">without the complexity.</span></h1>
+      <p>
+        Self-hosted container management for developers who want full control.
+        Build, deploy, schedule, and monitor &mdash; all from a single dashboard.
+        No abstractions. No magic. Just Docker.
+      </p>
+      <div class="hero-actions">
+        <a href="https://github.com/caiopizzol/moor" class="btn btn-primary">Get Started</a>
+        <a href="https://github.com/caiopizzol/moor" class="btn btn-secondary">View Source</a>
+      </div>
+    </section>
+
+    <!-- Animated demo -->
+    <div class="demo">
+      <div class="demo-dashboard">
+        <div class="demo-project">
+          <span class="demo-dot green"></span>
+          <span class="demo-project-name">my-api</span>
+          <span class="demo-meta">main &middot; Dockerfile</span>
+          <span class="demo-badge running">running</span>
+        </div>
+        <div class="demo-project">
+          <span class="demo-dot yellow"></span>
+          <span class="demo-project-name">web-app</span>
+          <span class="demo-meta">main &middot; Dockerfile</span>
+          <span class="demo-badge building">building</span>
+        </div>
+        <div class="demo-project">
+          <span class="demo-dot gray"></span>
+          <span class="demo-project-name">worker</span>
+          <span class="demo-meta">main &middot; Dockerfile.prod</span>
+          <span class="demo-badge stopped">stopped</span>
+        </div>
+      </div>
+      <div class="demo-tabs">
+        <span class="demo-tab active">Build</span>
+        <span class="demo-tab">Logs</span>
+        <span class="demo-tab">Terminal</span>
+        <span class="demo-tab">Env</span>
+        <span class="demo-tab">Cron</span>
+      </div>
+      <div class="demo-terminal">
+        <div class="term-lines">
+          <div class="term-line"><span class="t-step">[1/8]</span> <span class="t-text">FROM docker.io/oven/bun:1</span></div>
+          <div class="term-line"><span class="t-step">[2/8]</span> <span class="t-text">WORKDIR /app</span></div>
+          <div class="term-line"><span class="t-step">[3/8]</span> <span class="t-text">COPY package.json bun.lock* ./</span></div>
+          <div class="term-line"><span class="t-step">[4/8]</span> <span class="t-text">RUN bun install --frozen-lockfile</span></div>
+          <div class="term-line"><span class="t-muted">  │ 586 packages installed [1.55s]</span></div>
+          <div class="term-line"><span class="t-step">[5/8]</span> <span class="t-text">COPY apps/web/ apps/web/</span></div>
+          <div class="term-line"><span class="t-step">[6/8]</span> <span class="t-text">RUN cd apps/web && bun run build</span></div>
+          <div class="term-line"><span class="t-muted">  │ build  dist/index.html  12.4 KB</span></div>
+          <div class="term-line"><span class="t-muted">  │ build  dist/assets/app.js  148 KB</span></div>
+          <div class="term-line"><span class="t-step">[7/8]</span> <span class="t-text">COPY apps/api/ apps/api/</span></div>
+          <div class="term-line"><span class="t-step">[8/8]</span> <span class="t-text">EXPOSE 3000</span></div>
+          <div class="term-line"><span class="t-muted">  │ exporting layers</span></div>
+          <div class="term-line"><span class="t-muted">  │ writing image sha256:</span><span class="t-hash">a3df452e...</span></div>
+          <div class="term-line"><span class="t-green">  ✓ Build complete</span> <span class="t-muted">in 8.2s</span></div>
+          <div class="term-line"><span class="t-green">  ✓ Container started</span> <span class="t-muted">on port 3000</span></div>
+          <div class="term-line">&nbsp;</div>
+          <!-- Duplicate for seamless scroll loop -->
+          <div class="term-line"><span class="t-step">[1/8]</span> <span class="t-text">FROM docker.io/oven/bun:1</span></div>
+          <div class="term-line"><span class="t-step">[2/8]</span> <span class="t-text">WORKDIR /app</span></div>
+          <div class="term-line"><span class="t-step">[3/8]</span> <span class="t-text">COPY package.json bun.lock* ./</span></div>
+          <div class="term-line"><span class="t-step">[4/8]</span> <span class="t-text">RUN bun install --frozen-lockfile</span></div>
+          <div class="term-line"><span class="t-muted">  │ 586 packages installed [1.55s]</span></div>
+          <div class="term-line"><span class="t-step">[5/8]</span> <span class="t-text">COPY apps/web/ apps/web/</span></div>
+          <div class="term-line"><span class="t-step">[6/8]</span> <span class="t-text">RUN cd apps/web && bun run build</span></div>
+          <div class="term-line"><span class="t-muted">  │ build  dist/index.html  12.4 KB</span></div>
+          <div class="term-line"><span class="t-muted">  │ build  dist/assets/app.js  148 KB</span></div>
+          <div class="term-line"><span class="t-step">[7/8]</span> <span class="t-text">COPY apps/api/ apps/api/</span></div>
+          <div class="term-line"><span class="t-step">[8/8]</span> <span class="t-text">EXPOSE 3000</span></div>
+          <div class="term-line"><span class="t-muted">  │ exporting layers</span></div>
+          <div class="term-line"><span class="t-muted">  │ writing image sha256:</span><span class="t-hash">a3df452e...</span></div>
+          <div class="term-line"><span class="t-green">  ✓ Build complete</span> <span class="t-muted">in 8.2s</span></div>
+          <div class="term-line"><span class="t-green">  ✓ Container started</span> <span class="t-muted">on port 3000</span></div>
+          <div class="term-line">&nbsp;</div>
+        </div>
+      </div>
+    </div>
+
+    <section class="features">
+      <div class="feature">
+        <div class="feature-title">Git-based builds</div>
+        <div class="feature-desc">Connect a GitHub repo, pick a branch and Dockerfile. Moor builds and deploys your image.</div>
+      </div>
+      <div class="feature">
+        <div class="feature-title">Cron jobs</div>
+        <div class="feature-desc">Schedule commands inside your containers. View run history, output, and trigger jobs manually.</div>
+      </div>
+      <div class="feature">
+        <div class="feature-title">Web terminal</div>
+        <div class="feature-desc">SSH into your containers or the host machine directly from the browser. No port forwarding needed.</div>
+      </div>
+      <div class="feature">
+        <div class="feature-title">Environment variables</div>
+        <div class="feature-desc">Manage env vars per project. Changes are injected on the next container start.</div>
+      </div>
+      <div class="feature">
+        <div class="feature-title">Live logs</div>
+        <div class="feature-desc">Stream build output and container logs in real time. See exactly what your app is doing.</div>
+      </div>
+      <div class="feature">
+        <div class="feature-title">Server monitoring</div>
+        <div class="feature-desc">CPU, memory, disk, and container stats at a glance. Know when your server needs attention.</div>
+      </div>
+    </section>
+
+    <section class="comparison">
+      <h2>Why moor?</h2>
+      <p>Built for developers who outgrew Coolify's complexity but don't need Kubernetes.</p>
+      <div class="compare-grid">
+        <div class="compare-col">
+          <h3>Coolify</h3>
+          <ul>
+            <li>Heavy abstraction layer over Docker</li>
+            <li>Complex multi-service architecture</li>
+            <li>Opinionated build pipeline</li>
+            <li>Large resource footprint</li>
+            <li>Many features you'll never use</li>
+          </ul>
+        </div>
+        <div class="compare-col highlight">
+          <h3>moor</h3>
+          <ul>
+            <li>Thin layer &mdash; you see the Docker underneath</li>
+            <li>Single binary, single container</li>
+            <li>Your Dockerfile, your rules</li>
+            <li>Minimal footprint (~50MB)</li>
+            <li>Only what you need, nothing more</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="install-section">
+      <h2>Get started in seconds.</h2>
+      <p>One file. One command. You're live.</p>
+      <div class="install-block">
+        <div><span class="comment"># create a compose file and run</span></div>
+        <div><span class="prompt">$</span> curl -fsSL moor.sh/install | sh</div>
+        <div><span class="prompt">$</span> docker compose up -d</div>
+      </div>
+    </section>
+
+    <footer class="footer">
+      <span class="footer-text">moor.sh</span>
+      <div class="footer-links">
+        <a href="https://github.com/caiopizzol/moor">GitHub</a>
+        <a href="https://github.com/caiopizzol/moor/releases">Releases</a>
+      </div>
+    </footer>
+  </div>
+</body>
+</html>
