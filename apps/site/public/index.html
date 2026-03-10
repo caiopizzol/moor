@@ -42,7 +42,7 @@
       padding: 80px 24px 120px;
     }
 
-    /* Header */
+    /* ── Header ── */
     .header {
       display: flex;
       align-items: center;
@@ -78,7 +78,37 @@
 
     .header-links a:hover { color: var(--text); }
 
-    /* Hero */
+    /* ── Section headings ── */
+    .section {
+      margin-top: 96px;
+    }
+
+    .section-label {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--green);
+      margin-bottom: 12px;
+    }
+
+    .section-title {
+      font-size: 28px;
+      font-weight: 600;
+      letter-spacing: -0.03em;
+      line-height: 1.25;
+      margin-bottom: 8px;
+    }
+
+    .section-desc {
+      color: var(--text-muted);
+      font-size: 15px;
+      line-height: 1.7;
+      max-width: 520px;
+      margin-bottom: 32px;
+    }
+
+    /* ── Hero ── */
     .hero h1 {
       font-size: 44px;
       font-weight: 600;
@@ -89,7 +119,7 @@
 
     .hero h1 .accent { color: var(--green); }
 
-    .hero p {
+    .hero > p {
       color: var(--text-muted);
       font-size: 17px;
       line-height: 1.7;
@@ -97,42 +127,29 @@
       margin-bottom: 36px;
     }
 
-    .hero-actions {
-      display: flex;
-      gap: 12px;
-      align-items: center;
-    }
-
-    .btn {
+    .hero-cta {
       display: inline-flex;
       align-items: center;
-      gap: 6px;
-      padding: 10px 20px;
+      gap: 8px;
+      padding: 10px 22px;
       border-radius: 8px;
       font-size: 14px;
       font-weight: 500;
       text-decoration: none;
-      border: 1px solid var(--border);
-      transition: all 0.15s;
-      cursor: pointer;
-    }
-
-    .btn-primary {
       background: var(--green);
       color: #0a0a0a;
-      border-color: var(--green);
+      border: 1px solid var(--green);
+      transition: all 0.15s;
     }
 
-    .btn-primary:hover { background: #5eeba0; border-color: #5eeba0; }
+    .hero-cta:hover { background: #5eeba0; border-color: #5eeba0; }
 
-    .btn-secondary {
-      background: var(--bg-raised);
-      color: var(--text);
+    .hero-cta svg {
+      width: 14px;
+      height: 14px;
     }
 
-    .btn-secondary:hover { background: #1a1a1a; border-color: #333; }
-
-    /* ── Animated Demo ── */
+    /* ── Demo ── */
     .demo {
       margin-top: 64px;
       border: 1px solid var(--border);
@@ -141,13 +158,9 @@
       background: var(--bg);
     }
 
-    /* Dashboard panel */
     .demo-dashboard {
       padding: 16px 20px;
       border-bottom: 1px solid var(--border);
-      display: flex;
-      flex-direction: column;
-      gap: 0;
     }
 
     .demo-project {
@@ -195,16 +208,8 @@
       border-radius: 4px;
     }
 
-    .demo-badge.running {
-      color: var(--green);
-      background: rgba(74, 222, 128, 0.12);
-    }
-
-    .demo-badge.stopped {
-      color: var(--text-dim);
-      background: rgba(80, 80, 80, 0.15);
-    }
-
+    .demo-badge.running { color: var(--green); background: rgba(74, 222, 128, 0.12); }
+    .demo-badge.stopped { color: var(--text-dim); background: rgba(80, 80, 80, 0.15); }
     .demo-badge.building {
       color: var(--yellow);
       background: rgba(251, 191, 36, 0.12);
@@ -222,7 +227,6 @@
       font-family: "JetBrains Mono", monospace;
     }
 
-    /* Tabs */
     .demo-tabs {
       display: flex;
       border-bottom: 1px solid var(--border);
@@ -236,9 +240,7 @@
       position: relative;
     }
 
-    .demo-tab.active {
-      color: var(--text);
-    }
+    .demo-tab.active { color: var(--text); }
 
     .demo-tab.active::after {
       content: "";
@@ -250,7 +252,6 @@
       background: var(--text);
     }
 
-    /* Terminal */
     .demo-terminal {
       font-family: "JetBrains Mono", monospace;
       font-size: 12px;
@@ -259,7 +260,6 @@
       height: 260px;
       overflow: hidden;
       position: relative;
-      background: var(--bg);
     }
 
     .demo-terminal::after {
@@ -288,7 +288,6 @@
       animation: fade-in-line 0.3s ease forwards;
     }
 
-    /* Stagger line appearances within each loop cycle */
     .term-line:nth-child(1)  { animation-delay: 0s; }
     .term-line:nth-child(2)  { animation-delay: 0.08s; }
     .term-line:nth-child(3)  { animation-delay: 0.16s; }
@@ -312,14 +311,44 @@
 
     .t-muted { color: var(--text-dim); }
     .t-green { color: var(--green); }
-    .t-yellow { color: var(--yellow); }
     .t-text { color: var(--text-muted); }
     .t-step { color: var(--text); }
     .t-hash { color: var(--green-dim); }
 
+    /* ── Problem ── */
+    .problem-points {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .problem-point {
+      display: flex;
+      gap: 14px;
+      align-items: flex-start;
+    }
+
+    .problem-icon {
+      flex-shrink: 0;
+      width: 20px;
+      height: 20px;
+      margin-top: 2px;
+      color: var(--text-muted);
+    }
+
+    .problem-text {
+      font-size: 14px;
+      color: var(--text-muted);
+      line-height: 1.6;
+    }
+
+    .problem-text strong {
+      color: var(--text);
+      font-weight: 500;
+    }
+
     /* ── Features ── */
-    .features {
-      margin-top: 96px;
+    .features-grid {
       display: grid;
       grid-template-columns: 1fr 1fr;
       gap: 1px;
@@ -347,104 +376,59 @@
       line-height: 1.6;
     }
 
-    /* ── Comparison ── */
-    .comparison {
-      margin-top: 96px;
-    }
-
-    .comparison h2 {
-      font-size: 28px;
-      font-weight: 600;
-      letter-spacing: -0.03em;
-      margin-bottom: 8px;
-    }
-
-    .comparison > p {
-      color: var(--text-muted);
-      margin-bottom: 32px;
-    }
-
-    .compare-grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 16px;
-    }
-
-    .compare-col {
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 24px;
-      background: var(--bg);
-    }
-
-    .compare-col.highlight { border-color: var(--green-dim); }
-
-    .compare-col h3 {
-      font-size: 14px;
-      font-weight: 600;
-      margin-bottom: 16px;
-      letter-spacing: -0.02em;
-    }
-
-    .compare-col.highlight h3 { color: var(--green); }
-
-    .compare-col ul {
-      list-style: none;
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-    }
-
-    .compare-col li {
-      font-size: 13px;
-      color: var(--text-muted);
-      line-height: 1.5;
-    }
-
-    .compare-col li::before {
-      content: "- ";
-      color: var(--text-dim);
-    }
-
-    .compare-col.highlight li::before {
-      content: "+ ";
-      color: var(--green-dim);
-    }
-
-    /* ── Install ── */
-    .install-section {
-      margin-top: 96px;
+    /* ── Get started ── */
+    .get-started {
       text-align: center;
     }
 
-    .install-section h2 {
-      font-size: 28px;
-      font-weight: 600;
-      letter-spacing: -0.03em;
+    .get-started .section-title {
       margin-bottom: 12px;
     }
 
-    .install-section > p {
-      color: var(--text-muted);
+    .get-started .section-desc {
+      max-width: 100%;
+      margin-left: auto;
+      margin-right: auto;
       margin-bottom: 28px;
     }
 
     .install-block {
-      display: inline-block;
+      display: inline-flex;
+      align-items: stretch;
+      text-align: left;
+    }
+
+    .install-code {
       font-family: "JetBrains Mono", monospace;
       font-size: 13px;
       color: var(--text-muted);
       background: var(--bg-raised);
       border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 14px 24px;
-      text-align: left;
+      border-radius: 8px 0 0 8px;
+      padding: 14px 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
     }
 
-    .install-block .prompt { color: var(--green); }
-    .install-block .comment { color: var(--text-dim); }
+    .install-code .prompt { color: var(--green); }
 
-    .install-block div + div { margin-top: 4px; }
+    .install-copy {
+      background: var(--bg-raised);
+      border: 1px solid var(--border);
+      border-left: none;
+      border-radius: 0 8px 8px 0;
+      padding: 0 16px;
+      color: var(--text-muted);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      transition: all 0.15s;
+    }
+
+    .install-copy:hover { background: var(--bg-hover); color: var(--text); }
+    .install-copy.copied { color: var(--green); }
+    .install-copy svg { width: 16px; height: 16px; }
 
     /* ── Footer ── */
     .footer {
@@ -475,22 +459,32 @@
 
     .footer-links a:hover { color: var(--text); }
 
-    /* Responsive */
+    /* ── Responsive ── */
     @media (max-width: 600px) {
       .page { padding: 48px 20px 80px; }
       .header { margin-bottom: 56px; }
       .hero h1 { font-size: 32px; }
-      .hero p { font-size: 15px; }
-      .features { grid-template-columns: 1fr; }
-      .compare-grid { grid-template-columns: 1fr; }
-      .hero-actions { flex-direction: column; align-items: flex-start; }
+      .hero > p { font-size: 15px; }
+      .section-title { font-size: 24px; }
+      .features-grid { grid-template-columns: 1fr; }
       .footer { flex-direction: column; gap: 12px; align-items: flex-start; }
       .demo-meta { display: none; }
+      .install-block { flex-direction: column; }
+      .install-code { border-radius: 8px 8px 0 0; }
+      .install-copy {
+        border-radius: 0 0 8px 8px;
+        border-left: 1px solid var(--border);
+        border-top: none;
+        padding: 10px;
+        justify-content: center;
+      }
     }
   </style>
 </head>
 <body>
   <div class="page">
+
+    <!-- Header -->
     <header class="header">
       <a href="/" class="logo">
         <svg width="24" height="24" viewBox="0 0 1024 1024">
@@ -506,20 +500,20 @@
       </div>
     </header>
 
+    <!-- 1. Hero: What is this? -->
     <section class="hero">
       <h1>Deploy Docker containers<br/><span class="accent">without the complexity.</span></h1>
       <p>
-        Self-hosted container management for developers who want full control.
-        Build, deploy, schedule, and monitor &mdash; all from a single dashboard.
-        No abstractions. No magic. Just Docker.
+        A self-hosted dashboard to build, run, and manage your Docker containers.
+        Connect a repo, pick a Dockerfile, and you're live.
       </p>
-      <div class="hero-actions">
-        <a href="https://github.com/caiopizzol/moor" class="btn btn-primary">Get Started</a>
-        <a href="https://github.com/caiopizzol/moor" class="btn btn-secondary">View Source</a>
-      </div>
+      <a href="#get-started" class="hero-cta">
+        Get Started
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+      </a>
     </section>
 
-    <!-- Animated demo -->
+    <!-- 2. Demo: Show me -->
     <div class="demo">
       <div class="demo-dashboard">
         <div class="demo-project">
@@ -554,15 +548,15 @@
           <div class="term-line"><span class="t-step">[2/8]</span> <span class="t-text">WORKDIR /app</span></div>
           <div class="term-line"><span class="t-step">[3/8]</span> <span class="t-text">COPY package.json bun.lock* ./</span></div>
           <div class="term-line"><span class="t-step">[4/8]</span> <span class="t-text">RUN bun install --frozen-lockfile</span></div>
-          <div class="term-line"><span class="t-muted">  │ 586 packages installed [1.55s]</span></div>
+          <div class="term-line"><span class="t-muted">  | 586 packages installed [1.55s]</span></div>
           <div class="term-line"><span class="t-step">[5/8]</span> <span class="t-text">COPY apps/web/ apps/web/</span></div>
           <div class="term-line"><span class="t-step">[6/8]</span> <span class="t-text">RUN cd apps/web && bun run build</span></div>
-          <div class="term-line"><span class="t-muted">  │ build  dist/index.html  12.4 KB</span></div>
-          <div class="term-line"><span class="t-muted">  │ build  dist/assets/app.js  148 KB</span></div>
+          <div class="term-line"><span class="t-muted">  | build  dist/index.html  12.4 KB</span></div>
+          <div class="term-line"><span class="t-muted">  | build  dist/assets/app.js  148 KB</span></div>
           <div class="term-line"><span class="t-step">[7/8]</span> <span class="t-text">COPY apps/api/ apps/api/</span></div>
           <div class="term-line"><span class="t-step">[8/8]</span> <span class="t-text">EXPOSE 3000</span></div>
-          <div class="term-line"><span class="t-muted">  │ exporting layers</span></div>
-          <div class="term-line"><span class="t-muted">  │ writing image sha256:</span><span class="t-hash">a3df452e...</span></div>
+          <div class="term-line"><span class="t-muted">  | exporting layers</span></div>
+          <div class="term-line"><span class="t-muted">  | writing image sha256:</span><span class="t-hash">a3df452e...</span></div>
           <div class="term-line"><span class="t-green">  ✓ Build complete</span> <span class="t-muted">in 8.2s</span></div>
           <div class="term-line"><span class="t-green">  ✓ Container started</span> <span class="t-muted">on port 3000</span></div>
           <div class="term-line">&nbsp;</div>
@@ -571,15 +565,15 @@
           <div class="term-line"><span class="t-step">[2/8]</span> <span class="t-text">WORKDIR /app</span></div>
           <div class="term-line"><span class="t-step">[3/8]</span> <span class="t-text">COPY package.json bun.lock* ./</span></div>
           <div class="term-line"><span class="t-step">[4/8]</span> <span class="t-text">RUN bun install --frozen-lockfile</span></div>
-          <div class="term-line"><span class="t-muted">  │ 586 packages installed [1.55s]</span></div>
+          <div class="term-line"><span class="t-muted">  | 586 packages installed [1.55s]</span></div>
           <div class="term-line"><span class="t-step">[5/8]</span> <span class="t-text">COPY apps/web/ apps/web/</span></div>
           <div class="term-line"><span class="t-step">[6/8]</span> <span class="t-text">RUN cd apps/web && bun run build</span></div>
-          <div class="term-line"><span class="t-muted">  │ build  dist/index.html  12.4 KB</span></div>
-          <div class="term-line"><span class="t-muted">  │ build  dist/assets/app.js  148 KB</span></div>
+          <div class="term-line"><span class="t-muted">  | build  dist/index.html  12.4 KB</span></div>
+          <div class="term-line"><span class="t-muted">  | build  dist/assets/app.js  148 KB</span></div>
           <div class="term-line"><span class="t-step">[7/8]</span> <span class="t-text">COPY apps/api/ apps/api/</span></div>
           <div class="term-line"><span class="t-step">[8/8]</span> <span class="t-text">EXPOSE 3000</span></div>
-          <div class="term-line"><span class="t-muted">  │ exporting layers</span></div>
-          <div class="term-line"><span class="t-muted">  │ writing image sha256:</span><span class="t-hash">a3df452e...</span></div>
+          <div class="term-line"><span class="t-muted">  | exporting layers</span></div>
+          <div class="term-line"><span class="t-muted">  | writing image sha256:</span><span class="t-hash">a3df452e...</span></div>
           <div class="term-line"><span class="t-green">  ✓ Build complete</span> <span class="t-muted">in 8.2s</span></div>
           <div class="term-line"><span class="t-green">  ✓ Container started</span> <span class="t-muted">on port 3000</span></div>
           <div class="term-line">&nbsp;</div>
@@ -587,70 +581,86 @@
       </div>
     </div>
 
-    <section class="features">
-      <div class="feature">
-        <div class="feature-title">Git-based builds</div>
-        <div class="feature-desc">Connect a GitHub repo, pick a branch and Dockerfile. Moor builds and deploys your image.</div>
+    <!-- 3. The problem: Why this exists -->
+    <section class="section">
+      <div class="section-label">The problem</div>
+      <div class="section-title">Self-hosting shouldn't require<br/>another platform to learn.</div>
+      <div class="section-desc">
+        Tools like Coolify add layers of abstraction between you and Docker.
+        You end up debugging the platform instead of your app.
       </div>
-      <div class="feature">
-        <div class="feature-title">Cron jobs</div>
-        <div class="feature-desc">Schedule commands inside your containers. View run history, output, and trigger jobs manually.</div>
-      </div>
-      <div class="feature">
-        <div class="feature-title">Web terminal</div>
-        <div class="feature-desc">SSH into your containers or the host machine directly from the browser. No port forwarding needed.</div>
-      </div>
-      <div class="feature">
-        <div class="feature-title">Environment variables</div>
-        <div class="feature-desc">Manage env vars per project. Changes are injected on the next container start.</div>
-      </div>
-      <div class="feature">
-        <div class="feature-title">Live logs</div>
-        <div class="feature-desc">Stream build output and container logs in real time. See exactly what your app is doing.</div>
-      </div>
-      <div class="feature">
-        <div class="feature-title">Server monitoring</div>
-        <div class="feature-desc">CPU, memory, disk, and container stats at a glance. Know when your server needs attention.</div>
-      </div>
-    </section>
-
-    <section class="comparison">
-      <h2>Why moor?</h2>
-      <p>Built for developers who outgrew Coolify's complexity but don't need Kubernetes.</p>
-      <div class="compare-grid">
-        <div class="compare-col">
-          <h3>Coolify</h3>
-          <ul>
-            <li>Heavy abstraction layer over Docker</li>
-            <li>Complex multi-service architecture</li>
-            <li>Opinionated build pipeline</li>
-            <li>Large resource footprint</li>
-            <li>Many features you'll never use</li>
-          </ul>
+      <div class="problem-points">
+        <div class="problem-point">
+          <svg class="problem-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 9v4m0 4h.01M3 12a9 9 0 1 1 18 0 9 9 0 0 1-18 0Z"/></svg>
+          <div class="problem-text"><strong>Heavy abstractions</strong> hide what Docker is actually doing. When something breaks, you're stuck reading platform docs instead of Docker docs.</div>
         </div>
-        <div class="compare-col highlight">
-          <h3>moor</h3>
-          <ul>
-            <li>Thin layer &mdash; you see the Docker underneath</li>
-            <li>Single binary, single container</li>
-            <li>Your Dockerfile, your rules</li>
-            <li>Minimal footprint (~50MB)</li>
-            <li>Only what you need, nothing more</li>
-          </ul>
+        <div class="problem-point">
+          <svg class="problem-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 9v4m0 4h.01M3 12a9 9 0 1 1 18 0 9 9 0 0 1-18 0Z"/></svg>
+          <div class="problem-text"><strong>Opinionated build pipelines</strong> force you into a specific workflow. Your Dockerfile should be enough.</div>
+        </div>
+        <div class="problem-point">
+          <svg class="problem-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 9v4m0 4h.01M3 12a9 9 0 1 1 18 0 9 9 0 0 1-18 0Z"/></svg>
+          <div class="problem-text"><strong>Resource overhead</strong> from multi-service architectures eating into the VPS you're paying for.</div>
         </div>
       </div>
     </section>
 
-    <section class="install-section">
-      <h2>Get started in seconds.</h2>
-      <p>One file. One command. You're live.</p>
+    <!-- 4. What you get -->
+    <section class="section">
+      <div class="section-label">What you get</div>
+      <div class="section-title">Everything you need.<br/>Nothing you don't.</div>
+      <div class="section-desc">
+        Moor is a thin layer over Docker. You stay in control &mdash;
+        it just gives you a UI, cron, logs, and a terminal.
+      </div>
+      <div class="features-grid">
+        <div class="feature">
+          <div class="feature-title">Git-based builds</div>
+          <div class="feature-desc">Connect a GitHub repo, pick a branch and Dockerfile. Moor builds and deploys your image.</div>
+        </div>
+        <div class="feature">
+          <div class="feature-title">Cron jobs</div>
+          <div class="feature-desc">Schedule commands inside your containers. View history, output, and trigger manually.</div>
+        </div>
+        <div class="feature">
+          <div class="feature-title">Web terminal</div>
+          <div class="feature-desc">Open a shell in your containers or on the host directly from the browser.</div>
+        </div>
+        <div class="feature">
+          <div class="feature-title">Environment variables</div>
+          <div class="feature-desc">Manage env vars per project. Injected on the next container start.</div>
+        </div>
+        <div class="feature">
+          <div class="feature-title">Live logs</div>
+          <div class="feature-desc">Stream build output and container logs in real time.</div>
+        </div>
+        <div class="feature">
+          <div class="feature-title">Server monitoring</div>
+          <div class="feature-desc">CPU, memory, disk, and container stats at a glance.</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 5. Get started: I'm sold, how? -->
+    <section class="section get-started" id="get-started">
+      <div class="section-label">Get started</div>
+      <div class="section-title">Running in seconds.</div>
+      <div class="section-desc">One install script. One command. That's it.</div>
       <div class="install-block">
-        <div><span class="comment"># create a compose file and run</span></div>
-        <div><span class="prompt">$</span> curl -fsSL moor.sh/install | sh</div>
-        <div><span class="prompt">$</span> docker compose up -d</div>
+        <div class="install-code">
+          <span><span class="prompt">$</span> curl -fsSL moor.sh/install | sh</span>
+          <span><span class="prompt">$</span> docker compose up -d</span>
+        </div>
+        <button class="install-copy" onclick="copyInstall(this)" title="Copy to clipboard">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+          </svg>
+        </button>
       </div>
     </section>
 
+    <!-- Footer -->
     <footer class="footer">
       <span class="footer-text">moor.sh</span>
       <div class="footer-links">
@@ -659,5 +669,19 @@
       </div>
     </footer>
   </div>
+
+  <script>
+    function copyInstall(btn) {
+      var text = "curl -fsSL moor.sh/install | sh\ndocker compose up -d";
+      navigator.clipboard.writeText(text).then(function() {
+        btn.classList.add("copied");
+        btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+        setTimeout(function() {
+          btn.classList.remove("copied");
+          btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+        }, 2000);
+      });
+    }
+  </script>
 </body>
 </html>
