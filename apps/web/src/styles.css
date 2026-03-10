@@ -659,6 +659,38 @@ code,
   width: auto;
 }
 
+/* Copy button */
+.copy-btn {
+  position: absolute;
+  top: 8px;
+  right: 20px;
+  z-index: 10;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition:
+    opacity 0.15s,
+    color 0.15s,
+    border-color 0.15s;
+}
+
+*:hover > .copy-btn,
+.copy-btn:focus-visible {
+  opacity: 1;
+}
+
+.copy-btn:hover {
+  color: var(--text);
+  border-color: var(--border);
+}
+
 /* Empty state hint */
 .log-empty {
   color: var(--text-dim);
