@@ -1,5 +1,7 @@
 # <img src="https://github.com/user-attachments/assets/a042df26-2839-415a-b38b-f0e969f4068c" width="32" height="32" alt="moor" /> moor
 
+[![GitHub release](https://img.shields.io/github/v/release/caiopizzol/moor?label=version)](https://github.com/caiopizzol/moor/releases)
+
 Self-hosted container management for a single VM. Deploy, monitor, and manage Docker containers through a clean web UI.
 
 ## What it does
