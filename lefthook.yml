@@ -1,7 +1,7 @@
 pre-commit:
   commands:
     lint:
-      glob: "*.{ts,tsx,js,jsx,json,css}"
+      glob: "*.{ts,tsx,js,jsx,css}"
       run: bunx biome check --write {staged_files} && git add {staged_files}
     typecheck-api:
       glob: "apps/api/**/*.ts"

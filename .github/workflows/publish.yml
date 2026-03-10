@@ -17,8 +17,28 @@ jobs:
       - run: bunx tsc --noEmit -p apps/api/tsconfig.json
       - run: cd apps/web && bunx tsc -b
 
-  publish:
+  release:
     needs: check
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      version: ${{ steps.semrel.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: bunx semantic-release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - id: semrel
+        run: echo "version=$(bun -e "console.log(require('./package.json').version)")" >> "$GITHUB_OUTPUT"
+
+  publish:
+    needs: [check, release]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
@@ -38,6 +58,6 @@ jobs:
           push: true
           tags: |
             ghcr.io/caiopizzol/moor:latest
-            ghcr.io/caiopizzol/moor:${{ github.sha }}
+            ghcr.io/caiopizzol/moor:${{ needs.release.outputs.version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
