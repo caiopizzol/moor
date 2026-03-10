@@ -16,6 +16,10 @@
       "name": "@moor/api",
       "version": "0.1.0",
     },
+    "apps/site": {
+      "name": "@moor/site",
+      "version": "0.0.0",
+    },
     "apps/web": {
       "name": "@moor/web",
       "version": "0.1.0",
@@ -165,6 +169,8 @@
     "@jridgewell/trace-mapping": ["@jridgewell/trace-mapping@0.3.31", "", { "dependencies": { "@jridgewell/resolve-uri": "^3.1.0", "@jridgewell/sourcemap-codec": "^1.4.14" } }, "sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw=="],
 
     "@moor/api": ["@moor/api@workspace:apps/api"],
+
+    "@moor/site": ["@moor/site@workspace:apps/site"],
 
     "@moor/web": ["@moor/web@workspace:apps/web"],
 
