@@ -32,7 +32,7 @@ export const hostTerminalHandlers = {
   open(ws: ServerWebSocket<WsData>) {
     console.log("[host-terminal] WebSocket opened");
 
-    const shell = process.env.SHELL || "/bin/sh";
+    const shell = process.env.SHELL || "/bin/bash";
 
     // Use `script` to allocate a PTY on Linux without native deps.
     const proc = spawn(["script", "-q", "/dev/null", "-c", shell], {
