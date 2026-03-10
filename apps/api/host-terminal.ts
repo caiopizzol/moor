@@ -1,9 +1,11 @@
-import { spawn } from "node:child_process";
 import type { ServerWebSocket } from "bun";
+import * as pty from "node-pty";
 
 type WsData = {
   type: "host";
 };
+
+type PtyProcess = pty.IPty;
 
 /** Upgrade an HTTP request to a host terminal WebSocket */
 export function upgradeHostTerminal(
@@ -27,55 +29,47 @@ export const hostTerminalHandlers = {
     console.log("[host-terminal] WebSocket opened");
 
     const shell = process.env.SHELL || "/bin/sh";
-    const pty = spawn(shell, ["-l"], {
-      stdio: ["pipe", "pipe", "pipe"],
-      env: { ...process.env, TERM: "xterm-256color" },
+    const proc = pty.spawn(shell, ["-l"], {
+      name: "xterm-256color",
+      cols: 80,
+      rows: 24,
+      env: process.env as Record<string, string>,
     });
 
-    (ws as unknown as { _proc: typeof pty })._proc = pty;
+    (ws as unknown as { _pty: PtyProcess })._pty = proc;
 
-    pty.stdout?.on("data", (data: Buffer) => {
+    proc.onData((data) => {
       try {
         ws.send(data);
       } catch {}
     });
 
-    pty.stderr?.on("data", (data: Buffer) => {
-      try {
-        ws.send(data);
-      } catch {}
-    });
-
-    pty.on("close", (code) => {
-      console.log(`[host-terminal] process exited with code ${code}`);
+    proc.onExit(({ exitCode }) => {
+      console.log(`[host-terminal] process exited with code ${exitCode}`);
       try {
         ws.close(1000, "Shell exited");
-      } catch {}
-    });
-
-    pty.on("error", (err) => {
-      console.error("[host-terminal] process error:", err.message);
-      try {
-        ws.close(1011, "Shell error");
       } catch {}
     });
   },
 
   message(ws: ServerWebSocket<WsData>, message: string | Buffer) {
-    const proc = (ws as unknown as { _proc: ReturnType<typeof spawn> })._proc;
-    if (!proc?.stdin?.writable) return;
+    const proc = (ws as unknown as { _pty: PtyProcess })._pty;
+    if (!proc) return;
 
     if (typeof message === "string" && message.startsWith('{"type":"resize"')) {
-      // Resize not supported with child_process — ignore
+      try {
+        const { cols, rows } = JSON.parse(message);
+        proc.resize(cols, rows);
+      } catch {}
       return;
     }
 
-    proc.stdin.write(message);
+    proc.write(typeof message === "string" ? message : message.toString());
   },
 
   close(ws: ServerWebSocket<WsData>) {
     console.log("[host-terminal] WebSocket closed");
-    const proc = (ws as unknown as { _proc: ReturnType<typeof spawn> })._proc;
+    const proc = (ws as unknown as { _pty: PtyProcess })._pty;
     if (proc) {
       proc.kill();
     }
