@@ -14,6 +14,7 @@
   --text-dim: #505050;
   --accent: #ffffff;
   --green: #4ade80;
+  --green-dim: #2d8a56;
   --red: #f87171;
   --yellow: #fbbf24;
 }
@@ -90,14 +91,23 @@ body,
 }
 
 .sidebar-title {
-  font-size: 16px;
-  font-weight: 600;
-  letter-spacing: -0.02em;
   background: none;
   border: none;
-  color: var(--text);
   cursor: pointer;
   padding: 0;
+}
+
+.logo {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.logo-name {
+  font-size: 16px;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  color: var(--text);
 }
 
 .sidebar-list {

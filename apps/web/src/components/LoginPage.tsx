@@ -1,5 +1,6 @@
 import { type FormEvent, useState } from "react";
 import { api } from "../lib/api";
+import { Logo } from "./Logo";
 
 type Props = {
   onSuccess: () => void;
@@ -27,7 +28,7 @@ export function LoginPage({ onSuccess }: Props) {
   return (
     <div className="auth-page">
       <form className="auth-card" onSubmit={handleSubmit}>
-        <h1>Moor</h1>
+        <Logo size={28} />
         <p className="auth-subtitle">Enter your password to continue</p>
         {error && <div className="auth-error">{error}</div>}
         <input

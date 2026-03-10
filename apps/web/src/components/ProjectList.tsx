@@ -1,4 +1,5 @@
 import type { Project } from "../lib/api";
+import { Logo } from "./Logo";
 
 type Props = {
   projects: Project[];
@@ -13,7 +14,7 @@ export function ProjectList({ projects, selectedId, onSelect, onCreate, onLogout
     <div className="sidebar">
       <div className="sidebar-header">
         <button type="button" className="sidebar-title" onClick={() => onSelect(null)}>
-          Moor
+          <Logo />
         </button>
         <div style={{ display: "flex", gap: 6 }}>
           <button type="button" className="btn btn-sm" onClick={onCreate}>
