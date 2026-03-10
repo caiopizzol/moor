@@ -1,14 +1,14 @@
-# Moor
+# moor
 
-Minimal self-hosted Docker management for a single VM. Manage containers, cron jobs, and environment variables through a clean web UI.
+Self-hosted container management for a single VM. Deploy, monitor, and manage Docker containers through a clean web UI.
 
 ## What it does
 
 - Build Docker images from GitHub repos
-- Start, stop, and monitor containers
-- Schedule cron jobs that run inside containers
+- Start, stop, restart, and rebuild containers
+- Stream build output and container logs in real time
+- Web terminal into running containers
 - Manage environment variables per project
-- View run history with logs and exit codes
 
 ## Quick Start
 
