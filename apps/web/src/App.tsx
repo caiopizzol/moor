@@ -111,6 +111,7 @@ export function App() {
       />
       {selected ? (
         <ProjectDetail
+          key={selected.id}
           project={selected}
           onUpdate={load}
           onEdit={() => setModal({ mode: "edit", project: selected })}
