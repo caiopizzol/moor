@@ -19,6 +19,7 @@ WORKDIR /app
 
 COPY package.json bun.lock* ./
 COPY apps/api/package.json apps/api/
+COPY apps/web/package.json apps/web/
 COPY apps/site/package.json apps/site/
 RUN bun install --frozen-lockfile --ignore-scripts --production
 
