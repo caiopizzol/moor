@@ -79,19 +79,30 @@ export function XTermPanel({ handle, interactive, onData, onResize }: Props) {
 
   const [copied, setCopied] = useState(false);
 
-  const handleCopy = useCallback(() => {
+  const handleCopy = useCallback(async () => {
     const term = termRef.current;
     if (!term) return;
-    // Get all lines from the buffer
     const buf = term.buffer.active;
     const lines: string[] = [];
     for (let i = 0; i < buf.length; i++) {
       const line = buf.getLine(i);
       if (line) lines.push(line.translateToString(true));
     }
-    // Trim trailing empty lines
     while (lines.length > 0 && lines[lines.length - 1].trim() === "") lines.pop();
-    navigator.clipboard.writeText(lines.join("\n"));
+    const text = lines.join("\n");
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      // Fallback for non-secure contexts (HTTP)
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+    }
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
   }, []);

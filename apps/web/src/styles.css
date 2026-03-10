@@ -604,6 +604,10 @@ code,
   color: var(--text-muted);
 }
 
+.tab-panel.hidden {
+  display: none;
+}
+
 /* Terminal */
 .terminal-box {
   background: var(--bg);
