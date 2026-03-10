@@ -56,6 +56,13 @@ export function App() {
     if (authState === "authenticated") load();
   }, [authState, load]);
 
+  // Poll project list to keep sidebar status dots up to date
+  useEffect(() => {
+    if (authState !== "authenticated") return;
+    const interval = setInterval(load, 3000);
+    return () => clearInterval(interval);
+  }, [authState, load]);
+
   const navigate = useCallback((id: number | null) => {
     setView(id ? { type: "project", id } : null);
     const path = id ? `/projects/${id}` : "/";
