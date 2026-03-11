@@ -1,10 +1,23 @@
 import type { ServerWebSocket } from "bun";
 import db from "./db";
-import { SOCKET as SOCKET_PATH } from "./docker";
+import { inspectExec, SOCKET as SOCKET_PATH } from "./docker";
+import {
+  markDetached,
+  setDockerSocket,
+  setLastCommand,
+  trackSession,
+  untrackSession,
+} from "./terminal-sessions";
 
 type WsData = {
   projectId: number;
   containerId: string;
+};
+
+type WsExt = {
+  _dockerSocket: { write: (data: string | Buffer) => void; end: () => void } | null;
+  _execId: string;
+  _cmdBuffer: string;
 };
 
 /** Upgrade an HTTP request to a terminal WebSocket */
@@ -14,10 +27,7 @@ export function upgradeTerminal(
 ): Response | true {
   const url = new URL(req.url);
   const match = url.pathname.match(/^\/api\/projects\/(\d+)\/terminal$/);
-  if (!match) {
-    console.log(`[terminal] upgrade: no match for ${url.pathname}`);
-    return new Response("Not found", { status: 404 });
-  }
+  if (!match) return new Response("Not found", { status: 404 });
 
   const projectId = Number(match[1]);
   const project = db.query("SELECT * FROM projects WHERE id = ?").get(projectId) as {
@@ -25,12 +35,7 @@ export function upgradeTerminal(
     status: string;
   } | null;
 
-  console.log(
-    `[terminal] upgrade: project=${projectId} status=${project?.status ?? "null"} container=${project?.container_id?.slice(0, 12) ?? "null"}`,
-  );
-
   if (!project?.container_id || project.status !== "running") {
-    console.log(`[terminal] upgrade rejected: container not running`);
     return new Response("Container is not running", { status: 400 });
   }
 
@@ -38,7 +43,6 @@ export function upgradeTerminal(
     data: { projectId, containerId: project.container_id },
   });
 
-  console.log(`[terminal] upgrade result: ${upgraded}`);
   if (upgraded) return true;
   return new Response("WebSocket upgrade failed", { status: 500 });
 }
@@ -84,47 +88,32 @@ function buildExecStartRequest(execId: string): string {
 
 export const terminalWebSocket = {
   async open(ws: ServerWebSocket<WsData>) {
-    const { containerId } = ws.data;
+    const { containerId, projectId } = ws.data;
     console.log(`[terminal] WebSocket opened for container ${containerId.slice(0, 12)}`);
 
+    let execId: string | undefined;
     try {
-      console.log(`[terminal] socket path: ${SOCKET_PATH}`);
-      console.log(`[terminal] socket exists: ${require("fs").existsSync(SOCKET_PATH)}`);
-
-      console.log(`[terminal] creating exec for container ${containerId}...`);
-      const execId = await createExec(containerId);
+      execId = await createExec(containerId);
       console.log(`[terminal] exec created: ${execId.slice(0, 12)}`);
+      trackSession(execId, projectId);
 
       // Open raw Unix socket to Docker and start the exec
       let headersParsed = false;
       let headerBuffer = "";
 
-      console.log(`[terminal] opening raw socket to ${SOCKET_PATH}...`);
       const dockerSocket = await Bun.connect({
         unix: SOCKET_PATH,
         socket: {
           data(_socket, data) {
-            // Skip HTTP response headers from the exec/start response
             if (!headersParsed) {
               headerBuffer += data.toString();
-              console.log(
-                `[terminal] raw header data: ${JSON.stringify(headerBuffer.slice(0, 200))}`,
-              );
               const headerEnd = headerBuffer.indexOf("\r\n\r\n");
-              if (headerEnd === -1) return; // still reading headers
+              if (headerEnd === -1) return;
               headersParsed = true;
-              console.log(
-                `[terminal] headers parsed, status: ${headerBuffer.slice(0, headerBuffer.indexOf("\r\n"))}`,
-              );
-              // Send any data after the headers
               const remaining = headerBuffer.slice(headerEnd + 4);
-              if (remaining.length > 0) {
-                console.log(`[terminal] sending initial data: ${remaining.length} bytes`);
-                ws.send(remaining);
-              }
+              if (remaining.length > 0) ws.send(remaining);
               return;
             }
-
             ws.send(data);
           },
           error(_socket, err) {
@@ -138,55 +127,78 @@ export const terminalWebSocket = {
         },
       });
 
-      // Store the socket + exec ID on the ws for use in message/close handlers
-      (ws as unknown as { _dockerSocket: typeof dockerSocket })._dockerSocket = dockerSocket;
-      (ws as unknown as { _execId: string })._execId = execId;
+      const wsAny = ws as unknown as WsExt;
+      wsAny._dockerSocket = dockerSocket;
+      wsAny._execId = execId;
+      wsAny._cmdBuffer = "";
 
-      // Send the exec/start request over the raw socket
+      setDockerSocket(execId, dockerSocket);
+
       dockerSocket.write(buildExecStartRequest(execId));
       console.log(`[terminal] exec started, streaming`);
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Unknown error";
-      const stack = e instanceof Error ? e.stack : "";
       console.error(`[terminal] setup failed: ${msg}`);
-      console.error(`[terminal] stack: ${stack}`);
+      if (execId) untrackSession(execId);
       ws.send(`\r\nError: ${msg}\r\n`);
       ws.close(1011, msg);
     }
   },
 
   message(ws: ServerWebSocket<WsData>, message: string | Buffer) {
-    console.log(
-      `[terminal] ws message received: ${typeof message === "string" ? message.length : (message as Buffer).length} bytes`,
-    );
-    const dockerSocket = (
-      ws as unknown as { _dockerSocket: { write: (data: string | Buffer) => void } }
-    )._dockerSocket;
-    if (dockerSocket) {
-      // Check for resize messages
-      if (typeof message === "string" && message.startsWith('{"type":"resize"')) {
-        try {
-          const { cols, rows } = JSON.parse(message);
-          // Resize the exec TTY via Docker API
-          fetch(
-            `http://localhost/v1.44/exec/${(ws as unknown as { _execId: string })._execId}/resize?h=${rows}&w=${cols}`,
-            {
-              method: "POST",
-              unix: SOCKET_PATH,
-            },
-          ).catch(() => {});
-          return;
-        } catch {}
-      }
-      dockerSocket.write(message);
+    const wsAny = ws as unknown as WsExt;
+    if (!wsAny._dockerSocket) return;
+
+    // Check for resize messages
+    if (typeof message === "string" && message.startsWith('{"type":"resize"')) {
+      try {
+        const { cols, rows } = JSON.parse(message);
+        fetch(`http://localhost/v1.44/exec/${wsAny._execId}/resize?h=${rows}&w=${cols}`, {
+          method: "POST",
+          unix: SOCKET_PATH,
+        }).catch(() => {});
+        return;
+      } catch {}
     }
+
+    // Track keystrokes to capture last command
+    const text = typeof message === "string" ? message : message.toString();
+    for (const ch of text) {
+      if (ch === "\r" || ch === "\n") {
+        const cmd = wsAny._cmdBuffer.trim();
+        if (cmd) setLastCommand(wsAny._execId, cmd);
+        wsAny._cmdBuffer = "";
+      } else if (ch === "\x7f" || ch === "\x08") {
+        wsAny._cmdBuffer = wsAny._cmdBuffer.slice(0, -1);
+      } else if (ch === "\x03") {
+        wsAny._cmdBuffer = "";
+      } else if (ch === "\x1b") {
+        // Escape sequence byte — ignored, not >= " "
+      } else if (ch >= " ") {
+        wsAny._cmdBuffer += ch;
+      }
+    }
+
+    wsAny._dockerSocket.write(message);
   },
 
   close(ws: ServerWebSocket<WsData>, code: number, reason: string) {
     console.log(`[terminal] WebSocket closed: ${code} ${reason}`);
-    const dockerSocket = (ws as unknown as { _dockerSocket: { end: () => void } })._dockerSocket;
-    if (dockerSocket) {
-      dockerSocket.end();
+    const wsAny = ws as unknown as WsExt;
+    const execId = wsAny._execId;
+
+    // Don't end the docker socket — keep it alive for detached sessions.
+    // The session tracker holds a reference and will end it on kill.
+
+    if (execId) {
+      setTimeout(async () => {
+        const data = await inspectExec(execId);
+        if (data?.Running) {
+          markDetached(execId);
+        } else {
+          untrackSession(execId);
+        }
+      }, 1000);
     }
   },
 };

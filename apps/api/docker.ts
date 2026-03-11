@@ -445,19 +445,28 @@ export async function inspectContainer(containerId: string): Promise<{ running: 
   return { running: data.State.Running };
 }
 
-export async function killExec(execId: string): Promise<void> {
+export async function inspectExec(
+  execId: string,
+): Promise<{ Running: boolean; Pid: number } | null> {
   try {
     const res = await dockerFetch(`/v1.44/exec/${execId}/json`);
-    if (!res.ok) return;
-    const data = (await res.json()) as { Running: boolean; Pid: number };
-    if (data.Running && data.Pid > 0) {
-      try {
-        process.kill(data.Pid, "SIGKILL");
-      } catch {
-        // Process already gone — safe to ignore
-      }
-    }
+    if (!res.ok) return null;
+    return (await res.json()) as { Running: boolean; Pid: number };
   } catch {
-    // Best effort — exec may already be gone
+    return null;
+  }
+}
+
+export async function killExec(execId: string): Promise<void> {
+  const data = await inspectExec(execId);
+  if (!data?.Running) return;
+  // Note: process.kill with the host PID only works when running outside Docker
+  // or with pid:host. Inside a container this is best-effort.
+  if (data.Pid > 0) {
+    try {
+      process.kill(data.Pid, "SIGKILL");
+    } catch {
+      // Process already gone or PID not visible from this namespace
+    }
   }
 }

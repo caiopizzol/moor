@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, type PortMapping, type Project, type Run } from "../lib/api";
+import { api, type PortMapping, type Project, type Run, type TerminalSession } from "../lib/api";
 import { BuildOutput } from "./BuildOutput";
 import { ContainerLogs } from "./ContainerLogs";
 import { CronJobs } from "./CronJobs";
@@ -16,11 +16,22 @@ type Props = {
 type Tab = "build" | "logs" | "terminal" | "env" | "cron";
 type Action = null | "stopping" | "restarting" | "rebuilding" | "building";
 
+function formatElapsed(iso: string) {
+  const seconds = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  const mins = Math.floor(seconds / 60);
+  if (mins < 60) return `${mins}m`;
+  const hours = Math.floor(mins / 60);
+  const remMins = mins % 60;
+  return `${hours}h ${remMins}m`;
+}
+
 export function ProjectDetail({ project, onUpdate, onEdit, onDelete }: Props) {
   const [action, setAction] = useState<Action>(null);
   const [tab, setTab] = useState<Tab>("build");
   const [streamingLines, setStreamingLines] = useState<string[] | undefined>(undefined);
   const [activeCronRuns, setActiveCronRuns] = useState<Run[]>([]);
+  const [terminalSessions, setTerminalSessions] = useState<TerminalSession[]>([]);
   const [ports, setPorts] = useState<PortMapping[]>([]);
 
   const loadActiveCrons = useCallback(async () => {
@@ -39,11 +50,24 @@ export function ProjectDetail({ project, onUpdate, onEdit, onDelete }: Props) {
     }
   }, [project.id]);
 
+  const loadTerminalSessions = useCallback(async () => {
+    try {
+      const { sessions } = await api.terminalSessions.list(project.id);
+      setTerminalSessions(sessions);
+    } catch {
+      // ignore
+    }
+  }, [project.id]);
+
   useEffect(() => {
     loadActiveCrons();
-    const interval = setInterval(loadActiveCrons, 5000);
+    loadTerminalSessions();
+    const interval = setInterval(() => {
+      loadActiveCrons();
+      loadTerminalSessions();
+    }, 5000);
     return () => clearInterval(interval);
-  }, [loadActiveCrons]);
+  }, [loadActiveCrons, loadTerminalSessions]);
 
   const loadPorts = useCallback(() => {
     api.ports
@@ -257,8 +281,22 @@ export function ProjectDetail({ project, onUpdate, onEdit, onDelete }: Props) {
             )}
           </div>
         </div>
-        {activeCronRuns.length > 0 && (
+        {(activeCronRuns.length > 0 || terminalSessions.length > 0) && (
           <div className="project-card-activity">
+            {terminalSessions.map((s) => (
+              <div key={s.execId} className="project-card-activity-item">
+                <span className="spinner" />
+                <span className="project-card-activity-name">{s.lastCommand || "/bin/sh"}</span>
+                <span className="project-card-activity-cmd">{formatElapsed(s.startedAt)}</span>
+                <button
+                  type="button"
+                  className="project-card-activity-stop"
+                  onClick={() => api.terminalSessions.kill(s.execId).then(loadTerminalSessions)}
+                >
+                  Kill
+                </button>
+              </div>
+            ))}
             {activeCronRuns.map((run) => (
               <div key={run.id} className="project-card-activity-item">
                 <span className="spinner" />
@@ -275,13 +313,15 @@ export function ProjectDetail({ project, onUpdate, onEdit, onDelete }: Props) {
                 </button>
               </div>
             ))}
-            <button
-              type="button"
-              className="project-card-activity-link"
-              onClick={() => setTab("cron")}
-            >
-              View runs &rarr;
-            </button>
+            {activeCronRuns.length > 0 && (
+              <button
+                type="button"
+                className="project-card-activity-link"
+                onClick={() => setTab("cron")}
+              >
+                View runs &rarr;
+              </button>
+            )}
           </div>
         )}
       </div>

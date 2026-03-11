@@ -15,7 +15,9 @@ import { handlePorts } from "./routes/ports";
 import { handleProjects } from "./routes/projects";
 import { handleRuns } from "./routes/runs";
 import { handleServer } from "./routes/server";
+import { handleTerminalSessions } from "./routes/terminal-sessions";
 import { terminalWebSocket, upgradeTerminal } from "./terminal";
+import { clearAllSessions, startSessionCleanup } from "./terminal-sessions";
 
 // Initialize DB (side-effect import runs migrations)
 import "./db";
@@ -79,6 +81,7 @@ const server = Bun.serve({
           (await handleEnvs(req, url)) ??
           (await handlePorts(req, url)) ??
           (await handleRuns(req, url)) ??
+          (await handleTerminalSessions(req, url)) ??
           (await handleServer(req, url));
 
         if (res) return res;
@@ -135,12 +138,14 @@ const server = Bun.serve({
 });
 
 startCronScheduler();
+startSessionCleanup();
 setInterval(cleanExpiredSessions, 3600_000);
 
 // Graceful shutdown
 const shutdown = () => {
   console.log("[moor] Shutting down...");
   interruptActiveRuns();
+  clearAllSessions();
   server.stop();
   process.exit(0);
 };

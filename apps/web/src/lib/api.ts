@@ -36,6 +36,13 @@ export type PortMapping = {
   protocol: string;
 };
 
+export type TerminalSession = {
+  execId: string;
+  projectId: number;
+  startedAt: string;
+  lastCommand: string;
+};
+
 export type Run = {
   id: number;
   cron_id: number | null;
@@ -192,5 +199,11 @@ export const api = {
       request<{ runs: Run[]; total: number }>(`/api/projects/${projectId}/runs?page=${page}`),
     get: (id: number) => request<Run>(`/api/runs/${id}`),
     stop: (id: number) => request<{ ok: boolean }>(`/api/runs/${id}/stop`, { method: "POST" }),
+  },
+  terminalSessions: {
+    list: (projectId: number) =>
+      request<{ sessions: TerminalSession[] }>(`/api/projects/${projectId}/terminal-sessions`),
+    kill: (execId: string) =>
+      request<{ ok: boolean }>(`/api/terminal-sessions/${execId}/kill`, { method: "POST" }),
   },
 };
