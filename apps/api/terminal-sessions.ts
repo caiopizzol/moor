@@ -47,6 +47,10 @@ export function setLastCommand(execId: string, command: string) {
   if (session) session.lastCommand = command;
 }
 
+export function getLastCommand(execId: string): string {
+  return sessions.get(execId)?.lastCommand ?? "";
+}
+
 export function markDetached(execId: string) {
   const session = sessions.get(execId);
   if (session) {

@@ -2,6 +2,7 @@ import type { ServerWebSocket } from "bun";
 import db from "./db";
 import { inspectExec, SOCKET as SOCKET_PATH } from "./docker";
 import {
+  getLastCommand,
   markDetached,
   setDockerSocket,
   setLastCommand,
@@ -201,7 +202,8 @@ export const terminalWebSocket = {
     if (execId) {
       setTimeout(async () => {
         const data = await inspectExec(execId);
-        if (data?.Running) {
+        if (data?.Running && getLastCommand(execId)) {
+          // Only keep sessions alive if the user actually ran a command
           markDetached(execId);
         } else {
           untrackSession(execId);
