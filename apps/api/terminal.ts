@@ -163,8 +163,18 @@ export const terminalWebSocket = {
 
     // Track keystrokes to capture last command
     const text = typeof message === "string" ? message : message.toString();
+    let inEscape = false;
     for (const ch of text) {
-      if (ch === "\r" || ch === "\n") {
+      if (inEscape) {
+        // Skip until final byte of escape sequence (a letter)
+        if ((ch >= "A" && ch <= "Z") || (ch >= "a" && ch <= "z")) {
+          inEscape = false;
+        }
+        continue;
+      }
+      if (ch === "\x1b") {
+        inEscape = true;
+      } else if (ch === "\r" || ch === "\n") {
         const cmd = wsAny._cmdBuffer.trim();
         if (cmd) setLastCommand(wsAny._execId, cmd);
         wsAny._cmdBuffer = "";
@@ -172,8 +182,6 @@ export const terminalWebSocket = {
         wsAny._cmdBuffer = wsAny._cmdBuffer.slice(0, -1);
       } else if (ch === "\x03") {
         wsAny._cmdBuffer = "";
-      } else if (ch === "\x1b") {
-        // Escape sequence byte — ignored, not >= " "
       } else if (ch >= " ") {
         wsAny._cmdBuffer += ch;
       }
