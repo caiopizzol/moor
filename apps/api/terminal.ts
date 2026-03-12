@@ -3,9 +3,11 @@ import db from "./db";
 import { inspectExec, SOCKET as SOCKET_PATH } from "./docker";
 import {
   getLastCommand,
+  hasRecentOutput,
   markDetached,
   setDockerSocket,
   setLastCommand,
+  touchOutput,
   trackSession,
   untrackSession,
 } from "./terminal-sessions";
@@ -115,6 +117,7 @@ export const terminalWebSocket = {
               if (remaining.length > 0) ws.send(remaining);
               return;
             }
+            if (execId) touchOutput(execId);
             ws.send(data);
           },
           error(_socket, err) {
@@ -202,8 +205,8 @@ export const terminalWebSocket = {
     if (execId) {
       setTimeout(async () => {
         const data = await inspectExec(execId);
-        if (data?.Running && getLastCommand(execId)) {
-          // Only keep sessions alive if the user actually ran a command
+        if (data?.Running && getLastCommand(execId) && hasRecentOutput(execId)) {
+          // Only keep sessions alive if the user ran a command and it's still producing output
           markDetached(execId);
         } else {
           untrackSession(execId);

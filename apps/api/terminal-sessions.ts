@@ -8,6 +8,7 @@ type TerminalSession = {
   startedAt: string;
   detached: boolean;
   lastCommand: string;
+  lastOutputAt: number;
   dockerSocket: DockerSocket | null;
 };
 
@@ -20,6 +21,7 @@ export function trackSession(execId: string, projectId: number) {
     startedAt: new Date().toISOString(),
     detached: false,
     lastCommand: "",
+    lastOutputAt: 0,
     dockerSocket: null,
   });
   console.log(`[sessions] tracking exec ${execId.slice(0, 12)} for project ${projectId}`);
@@ -49,6 +51,17 @@ export function setLastCommand(execId: string, command: string) {
 
 export function getLastCommand(execId: string): string {
   return sessions.get(execId)?.lastCommand ?? "";
+}
+
+export function touchOutput(execId: string) {
+  const session = sessions.get(execId);
+  if (session) session.lastOutputAt = Date.now();
+}
+
+export function hasRecentOutput(execId: string, thresholdMs = 3000): boolean {
+  const session = sessions.get(execId);
+  if (!session || !session.lastOutputAt) return false;
+  return Date.now() - session.lastOutputAt < thresholdMs;
 }
 
 export function markDetached(execId: string) {
