@@ -15,15 +15,11 @@ Self-hosted container management for a single VM. Deploy, monitor, and manage Do
 ## Quick Start
 
 ```bash
-curl -O https://raw.githubusercontent.com/caiopizzol/moor/main/docker-compose.yml
-docker compose pull && docker compose up -d
+curl -fsSL moor.sh/install | sh
+docker compose up -d
 ```
 
-Binds to `127.0.0.1:3000`. Access via SSH tunnel:
-
-```bash
-ssh -L 3000:localhost:3000 user@your-server
-```
+Moor runs behind Caddy (included) on ports 80/443. Edit the `Caddyfile` to replace `:80` with your domain for automatic HTTPS.
 
 ## Development
 
