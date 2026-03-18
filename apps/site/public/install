@@ -1,0 +1,32 @@
+#!/bin/sh
+set -e
+
+REPO="caiopizzol/moor"
+BRANCH="main"
+BASE="https://raw.githubusercontent.com/$REPO/$BRANCH"
+
+echo "Installing moor..."
+
+# Check dependencies
+if ! command -v docker >/dev/null 2>&1; then
+  echo "Error: docker is not installed." >&2
+  exit 1
+fi
+
+if ! docker compose version >/dev/null 2>&1; then
+  echo "Error: docker compose is not available." >&2
+  exit 1
+fi
+
+# Download files
+curl -fsSL "$BASE/docker-compose.yml" -o docker-compose.yml
+curl -fsSL "$BASE/Caddyfile" -o Caddyfile
+
+echo ""
+echo "Done! Files created:"
+echo "  - docker-compose.yml"
+echo "  - Caddyfile"
+echo ""
+echo "Next steps:"
+echo "  1. Edit Caddyfile — replace :80 with your domain for auto HTTPS"
+echo "  2. Run: docker compose up -d"
