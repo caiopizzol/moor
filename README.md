@@ -4,6 +4,8 @@
 
 Self-hosted container management for a single VM. Deploy, monitor, and manage Docker containers through a clean web UI.
 
+<img width="1280" height="720" alt="moor app" src="https://github.com/user-attachments/assets/c9aec88f-df93-4c40-9968-0a4cbb6df394" />
+
 ## What it does
 
 - Build Docker images from GitHub repos
