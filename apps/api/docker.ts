@@ -300,6 +300,19 @@ export async function createAndStartContainer(
 
   const { Id } = (await createRes.json()) as { Id: string };
 
+  // Connect to moor_default network so Caddy can reach the container
+  try {
+    await dockerFetch("/v1.44/networks/moor_default/connect", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ Container: Id }),
+    });
+    console.log(`[createContainer] connected ${name} to moor_default`);
+  } catch {
+    // Network may not exist in dev environments
+    console.warn("[createContainer] moor_default network connect skipped");
+  }
+
   const startRes = await dockerFetch(`/v1.44/containers/${Id}/start`, { method: "POST" });
   if (!startRes.ok && startRes.status !== 304) {
     const err = await startRes.text();

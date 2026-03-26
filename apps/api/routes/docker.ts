@@ -1,4 +1,4 @@
-import { connectToMoorNetwork, syncCaddyRoutes } from "../caddy";
+import { syncCaddyRoutes } from "../caddy";
 import db from "../db";
 import {
   buildImage,
@@ -193,9 +193,7 @@ async function handleRun(req: Request, project: Project): Promise<Response> {
           project.id,
         );
 
-        // Connect to moor_default network and sync Caddy if domain is configured
         if (project.domain) {
-          await connectToMoorNetwork(`moor-${project.name}`);
           await syncCaddyRoutes();
           send("log", `Route: ${project.domain} -> :${project.domain_port}\n`);
         }
@@ -346,7 +344,6 @@ async function handleStart(project: Project): Promise<Response> {
     );
 
     if (project.domain) {
-      await connectToMoorNetwork(`moor-${project.name}`);
       await syncCaddyRoutes();
     }
 

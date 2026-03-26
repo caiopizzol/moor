@@ -57,27 +57,6 @@ async function reloadCaddy(): Promise<void> {
 }
 
 /** Connect a container to the moor_default network so Caddy can reach it. */
-export async function connectToMoorNetwork(containerName: string): Promise<void> {
-  try {
-    const proc = Bun.spawn(["docker", "network", "connect", "moor_default", containerName], {
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const exitCode = await proc.exited;
-    if (exitCode !== 0) {
-      const stderr = await new Response(proc.stderr).text();
-      // "already exists" is fine — container may already be on the network
-      if (!stderr.includes("already exists")) {
-        console.error(`[caddy] network connect failed: ${stderr}`);
-      }
-    } else {
-      console.log(`[caddy] connected ${containerName} to moor_default`);
-    }
-  } catch (e) {
-    console.warn(`[caddy] network connect skipped: ${e instanceof Error ? e.message : e}`);
-  }
-}
-
 /** Ensure the moor-routes file exists (Caddy import fails if file is missing). */
 export async function ensureRoutesFile(): Promise<void> {
   const file = Bun.file(CADDY_ROUTES_PATH);
