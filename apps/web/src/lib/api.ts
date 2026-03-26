@@ -8,6 +8,8 @@ export type Project = {
   image_tag: string | null;
   container_id: string | null;
   status: string;
+  domain: string | null;
+  domain_port: number | null;
   created_at: string;
 };
 
@@ -180,6 +182,13 @@ export const api = {
     delete: (projectId: number, key: string) =>
       request<void>(`/api/projects/${projectId}/envs/${encodeURIComponent(key)}`, {
         method: "DELETE",
+      }),
+  },
+  dns: {
+    check: (domain: string) =>
+      request<{ resolves: boolean; ip: string | null; serverIp: string | null }>("/api/dns-check", {
+        method: "POST",
+        body: JSON.stringify({ domain }),
       }),
   },
   server: {

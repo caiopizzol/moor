@@ -80,4 +80,16 @@ try {
   // Column already exists
 }
 
+try {
+  db.exec("ALTER TABLE projects ADD COLUMN domain TEXT");
+} catch {
+  // Column already exists
+}
+
+try {
+  db.exec("ALTER TABLE projects ADD COLUMN domain_port INTEGER");
+} catch {
+  // Column already exists
+}
+
 export default db;

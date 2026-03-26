@@ -1,3 +1,4 @@
+import { syncCaddyRoutes } from "../caddy";
 import db from "../db";
 import { removeContainer, stopContainer } from "../docker";
 
@@ -30,8 +31,9 @@ export async function handleProjects(req: Request, url: URL): Promise<Response |
 
   if (req.method === "DELETE" && id) {
     // Stop and remove the container before deleting the project
-    const project = db.query("SELECT container_id FROM projects WHERE id = ?").get(id) as {
+    const project = db.query("SELECT container_id, domain FROM projects WHERE id = ?").get(id) as {
       container_id: string | null;
+      domain: string | null;
     } | null;
     if (project?.container_id) {
       try {
@@ -41,7 +43,11 @@ export async function handleProjects(req: Request, url: URL): Promise<Response |
         // best effort — container may already be gone
       }
     }
+    const hadDomain = !!project?.domain;
     db.query("DELETE FROM projects WHERE id = ?").run(id);
+    if (hadDomain) {
+      syncCaddyRoutes().catch((e) => console.error("[projects] caddy sync failed:", e));
+    }
     return new Response(null, { status: 204 });
   }
 
@@ -50,9 +56,9 @@ export async function handleProjects(req: Request, url: URL): Promise<Response |
 
 async function handleCreate(req: Request): Promise<Response> {
   const body = await req.json();
-  const { name, github_url, docker_image, branch, dockerfile } = body;
+  const { name, github_url, docker_image, branch, dockerfile, domain, domain_port } = body;
   console.log(
-    `[projects] create: name=${name} github_url=${github_url} docker_image=${docker_image} branch=${branch || "main"} dockerfile=${dockerfile || "Dockerfile"}`,
+    `[projects] create: name=${name} github_url=${github_url} docker_image=${docker_image} branch=${branch || "main"} dockerfile=${dockerfile || "Dockerfile"} domain=${domain || ""} domain_port=${domain_port || ""}`,
   );
   if (!name) return new Response("name is required", { status: 400 });
   if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/.test(name)) {
@@ -68,7 +74,7 @@ async function handleCreate(req: Request): Promise<Response> {
 
   const result = db
     .query(
-      "INSERT INTO projects (name, github_url, docker_image, branch, dockerfile) VALUES (?, ?, ?, ?, ?) RETURNING *",
+      "INSERT INTO projects (name, github_url, docker_image, branch, dockerfile, domain, domain_port) VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING *",
     )
     .get(
       name,
@@ -76,7 +82,13 @@ async function handleCreate(req: Request): Promise<Response> {
       docker_image ?? null,
       branch ?? "main",
       dockerfile ?? "Dockerfile",
+      domain?.trim() || null,
+      domain_port ?? null,
     );
+
+  if (domain?.trim()) {
+    syncCaddyRoutes().catch((e) => console.error("[projects] caddy sync failed:", e));
+  }
 
   console.log("[projects] created:", JSON.stringify(result));
   return Response.json(result, { status: 201 });
@@ -85,12 +97,25 @@ async function handleCreate(req: Request): Promise<Response> {
 async function handleUpdate(req: Request, id: number): Promise<Response> {
   const body = await req.json();
   const fields: string[] = [];
-  const values: (string | number)[] = [];
+  const values: (string | number | null)[] = [];
 
-  for (const key of ["name", "github_url", "docker_image", "branch", "dockerfile"]) {
+  for (const key of [
+    "name",
+    "github_url",
+    "docker_image",
+    "branch",
+    "dockerfile",
+    "domain",
+    "domain_port",
+  ]) {
     if (key in body) {
       fields.push(`${key} = ?`);
-      values.push(body[key]);
+      // Normalize empty domain string to null
+      if (key === "domain") {
+        values.push(body[key]?.trim() || null);
+      } else {
+        values.push(body[key]);
+      }
     }
   }
 
@@ -98,12 +123,20 @@ async function handleUpdate(req: Request, id: number): Promise<Response> {
   if ("docker_image" in body && body.docker_image) {
     if (!fields.some((f) => f.startsWith("github_url"))) {
       fields.push("github_url = ?");
-      values.push(null as unknown as string);
+      values.push(null);
     }
   } else if ("github_url" in body && body.github_url) {
     if (!fields.some((f) => f.startsWith("docker_image"))) {
       fields.push("docker_image = ?");
-      values.push(null as unknown as string);
+      values.push(null);
+    }
+  }
+
+  // Clear domain_port when domain is removed
+  if ("domain" in body && !body.domain?.trim()) {
+    if (!fields.some((f) => f.startsWith("domain_port"))) {
+      fields.push("domain_port = ?");
+      values.push(null);
     }
   }
 
@@ -124,5 +157,11 @@ async function handleUpdate(req: Request, id: number): Promise<Response> {
     .get(...values);
 
   if (!row) return new Response("Not found", { status: 404 });
+
+  // Sync Caddy if domain-related fields changed
+  if ("domain" in body || "domain_port" in body) {
+    syncCaddyRoutes().catch((e) => console.error("[projects] caddy sync failed:", e));
+  }
+
   return Response.json(row);
 }

@@ -7,3 +7,6 @@
 	}
 	reverse_proxy moor:3000
 }
+
+# Domain routes managed by Moor — do not edit manually
+import /app/data/moor-routes

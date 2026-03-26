@@ -2,7 +2,7 @@
 
 [![GitHub release](https://img.shields.io/github/v/release/caiopizzol/moor?label=version)](https://github.com/caiopizzol/moor/releases)
 
-Self-hosted container management for a single VM. Deploy, monitor, and manage Docker containers through a clean web UI.
+Self-hosted Docker control panel for a single server. Build, deploy, and manage containers with cron, logs, and a web terminal.
 
 <img width="1280" height="720" alt="moor app" src="https://github.com/user-attachments/assets/c9aec88f-df93-4c40-9968-0a4cbb6df394" />
 
@@ -12,7 +12,9 @@ Self-hosted container management for a single VM. Deploy, monitor, and manage Do
 - Start, stop, restart, and rebuild containers
 - Stream build output and container logs in real time
 - Web terminal into running containers
+- Schedule cron jobs inside containers
 - Manage environment variables per project
+- Route custom domains to containers with HTTPS
 
 ## Quick Start
 

@@ -2,6 +2,7 @@
   "branches": ["main"],
   "plugins": [
     "@semantic-release/commit-analyzer",
+    "semantic-release-ai-notes",
     ["@semantic-release/npm", { "npmPublish": false }],
     ["@semantic-release/github", { "successComment": false, "releasedLabels": false }],
     [

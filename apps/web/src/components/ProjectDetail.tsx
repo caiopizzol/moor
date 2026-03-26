@@ -235,6 +235,16 @@ export function ProjectDetail({ project, onUpdate, onEdit, onDelete }: Props) {
                 :{p.host_port}
               </span>
             ))}
+            {project.domain && (
+              <a
+                className="domain-badge"
+                href={`https://${project.domain}`}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                {project.domain}
+              </a>
+            )}
           </div>
           <div className="btn-group">
             {actionLoading ? (

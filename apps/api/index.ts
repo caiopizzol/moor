@@ -5,9 +5,11 @@ import {
   getSessionFromCookie,
   validateSession,
 } from "./auth";
+import { ensureRoutesFile } from "./caddy";
 import { interruptActiveRuns, startCronScheduler } from "./cron";
 import { hostTerminalHandlers, isHostTerminal, upgradeHostTerminal } from "./host-terminal";
 import { handleAuth } from "./routes/auth";
+import { handleCaddy } from "./routes/caddy";
 import { handleCrons } from "./routes/crons";
 import { handleDocker } from "./routes/docker";
 import { handleEnvs } from "./routes/envs";
@@ -23,6 +25,7 @@ import { clearAllSessions, startSessionCleanup } from "./terminal-sessions";
 import "./db";
 
 checkPasswordReset();
+ensureRoutesFile();
 
 const PORT = Number(process.env.PORT || 3000);
 const clientDist = join(import.meta.dir, "..", "web", "dist");
@@ -82,6 +85,7 @@ const server = Bun.serve({
           (await handlePorts(req, url)) ??
           (await handleRuns(req, url)) ??
           (await handleTerminalSessions(req, url)) ??
+          (await handleCaddy(req, url)) ??
           (await handleServer(req, url));
 
         if (res) return res;

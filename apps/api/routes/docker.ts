@@ -1,3 +1,4 @@
+import { connectToMoorNetwork, syncCaddyRoutes } from "../caddy";
 import db from "../db";
 import {
   buildImage,
@@ -20,6 +21,8 @@ type Project = {
   image_tag: string | null;
   container_id: string | null;
   status: string;
+  domain: string | null;
+  domain_port: number | null;
 };
 
 function validateGithubUrl(url: string): string | null {
@@ -189,6 +192,14 @@ async function handleRun(req: Request, project: Project): Promise<Response> {
           containerId,
           project.id,
         );
+
+        // Connect to moor_default network and sync Caddy if domain is configured
+        if (project.domain) {
+          await connectToMoorNetwork(`moor-${project.name}`);
+          await syncCaddyRoutes();
+          send("log", `Route: ${project.domain} -> :${project.domain_port}\n`);
+        }
+
         send("done", "Container started");
       } catch (e) {
         db.query("UPDATE projects SET status = 'error' WHERE id = ?").run(project.id);
@@ -333,6 +344,12 @@ async function handleStart(project: Project): Promise<Response> {
       containerId,
       project.id,
     );
+
+    if (project.domain) {
+      await connectToMoorNetwork(`moor-${project.name}`);
+      await syncCaddyRoutes();
+    }
+
     return Response.json({ message: "Container started" });
   } catch (e) {
     db.query("UPDATE projects SET status = 'error' WHERE id = ?").run(project.id);

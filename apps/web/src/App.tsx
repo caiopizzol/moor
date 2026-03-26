@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { LoginPage } from "./components/LoginPage";
+import { Logo } from "./components/Logo";
 import { ProjectDetail } from "./components/ProjectDetail";
 import { ProjectList } from "./components/ProjectList";
 import { ProjectModal } from "./components/ProjectModal";
@@ -104,7 +105,7 @@ export function App() {
     return (
       <div className="auth-page">
         <div className="auth-card">
-          <h1>Moor</h1>
+          <Logo size={28} />
         </div>
       </div>
     );

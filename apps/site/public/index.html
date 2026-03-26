@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>moor — self-hosted Docker management</title>
-  <meta name="description" content="A simpler alternative to Coolify. Deploy, manage, and monitor Docker containers with full control and zero complexity." />
+  <title>moor — Docker control for a single server</title>
+  <meta name="description" content="Self-hosted Docker control panel. Build, deploy, and manage containers with cron, logs, and a web terminal." />
   <meta name="theme-color" content="#0a0a0a" />
   <link rel="icon" type="image/x-icon" href="/favicon.ico" />
   <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
@@ -501,15 +501,16 @@
       <div class="header-links">
         <a href="https://github.com/caiopizzol/moor">GitHub</a>
         <a href="https://github.com/caiopizzol/moor#readme">Docs</a>
+        <a href="https://github.com/caiopizzol/moor/releases">Changelog</a>
       </div>
     </header>
 
     <!-- 1. Hero: What is this? -->
     <section class="hero">
-      <h1>Deploy Docker containers<br/><span class="accent">without the complexity.</span></h1>
+      <h1>Docker control<br/><span class="accent">for a single server.</span></h1>
       <p>
-        A self-hosted dashboard to build, run, and manage your Docker containers.
-        Connect a repo, pick a Dockerfile, and you're live.
+        A self-hosted control panel to build, run, and manage your Docker containers.
+        Connect a repo, pick a Dockerfile, and it's running.
       </p>
       <a href="#get-started" class="hero-cta">
         Get Started
@@ -639,6 +640,10 @@
           <div class="feature-desc">Stream build output and container logs in real time.</div>
         </div>
         <div class="feature">
+          <div class="feature-title">Domain routing</div>
+          <div class="feature-desc">Point a domain at your server, set it in the UI. Caddy provisions the TLS certificate and routes traffic to the container.</div>
+        </div>
+        <div class="feature">
           <div class="feature-title">Server monitoring</div>
           <div class="feature-desc">CPU, memory, disk, and container stats at a glance.</div>
         </div>
@@ -649,7 +654,7 @@
     <section class="section get-started" id="get-started">
       <div class="section-label">Get started</div>
       <div class="section-title">Running in seconds.</div>
-      <div class="section-desc">One install script. One command. That's it.</div>
+      <div class="section-desc">Two commands. That's it.</div>
       <div class="install-block">
         <div class="install-code">
           <span><span class="prompt">$</span> curl -fsSL moor.sh/install | sh</span>
@@ -669,7 +674,7 @@
       <span class="footer-text">moor.sh</span>
       <div class="footer-links">
         <a href="https://github.com/caiopizzol/moor">GitHub</a>
-        <a href="https://github.com/caiopizzol/moor/releases">Releases</a>
+        <a href="https://github.com/caiopizzol/moor/releases">Changelog</a>
       </div>
     </footer>
   </div>
