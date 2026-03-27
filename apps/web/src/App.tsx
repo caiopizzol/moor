@@ -26,6 +26,17 @@ export function App() {
   const [modal, setModal] = useState<
     { mode: "create" } | { mode: "edit"; project: Project } | null
   >(null);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(
+    () => localStorage.getItem("moor:sidebar-collapsed") === "true",
+  );
+
+  const toggleSidebar = useCallback(() => {
+    setSidebarCollapsed((prev) => {
+      const next = !prev;
+      localStorage.setItem("moor:sidebar-collapsed", String(next));
+      return next;
+    });
+  }, []);
 
   const checkAuth = useCallback(async () => {
     try {
@@ -125,6 +136,7 @@ export function App() {
         projects={projects}
         selectedId={selectedId}
         serverSelected={serverSelected}
+        collapsed={sidebarCollapsed}
         onSelect={navigate}
         onServerSelect={navigateServer}
         onCreate={() => setModal({ mode: "create" })}
@@ -132,6 +144,7 @@ export function App() {
           await api.auth.logout();
           setAuthState("login");
         }}
+        onToggleCollapse={toggleSidebar}
       />
       {serverSelected ? (
         <ServerView />
