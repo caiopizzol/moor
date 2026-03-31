@@ -198,7 +198,7 @@ export function ProjectDetail({ project, onUpdate, onEdit, onDelete }: Props) {
               ) : project.github_url ? (
                 <>
                   <span className="source-badge github-badge">
-                    {project.github_url.replace(/^https?:\/\//, "")}
+                    {new URL(project.github_url).host + new URL(project.github_url).pathname}
                   </span>
                   <span>
                     {project.branch} &middot; {project.dockerfile}
