@@ -225,15 +225,16 @@ async function handleRun(req: Request, project: Project): Promise<Response> {
 
 async function handleLogs(project: Project, url: URL): Promise<Response> {
   if (!project.container_id) {
-    return Response.json({ logs: "" });
+    return Response.json({ logs: "", lastTimestamp: 0 });
   }
 
-  const tail = Number(url.searchParams.get("tail") || "100");
+  const sinceParam = url.searchParams.get("since");
   try {
-    const logs = await getContainerLogs(project.container_id, tail);
-    return Response.json({ logs });
+    const opts = sinceParam ? { since: Number(sinceParam) } : {};
+    const { logs, lastTimestamp } = await getContainerLogs(project.container_id, opts);
+    return Response.json({ logs, lastTimestamp });
   } catch {
-    return Response.json({ logs: "" });
+    return Response.json({ logs: "", lastTimestamp: 0 });
   }
 }
 

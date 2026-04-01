@@ -424,12 +424,17 @@ export async function getImageExposedPorts(imageTag: string): Promise<number[]> 
   }
 }
 
-export async function getContainerLogs(containerId: string, tail: number): Promise<string> {
+export async function getContainerLogs(
+  containerId: string,
+  opts: { tail?: number; since?: number } = {},
+): Promise<{ logs: string; lastTimestamp: number }> {
   const params = new URLSearchParams({
     stdout: "true",
     stderr: "true",
-    tail: String(tail),
+    timestamps: "true",
   });
+  if (opts.tail !== undefined) params.set("tail", String(opts.tail));
+  if (opts.since !== undefined) params.set("since", String(opts.since));
   const res = await dockerFetch(`/v1.44/containers/${containerId}/logs?${params}`);
   if (!res.ok) {
     const body = await res.text();
@@ -448,7 +453,22 @@ export async function getContainerLogs(containerId: string, tail: number): Promi
     output += decoder.decode(raw.slice(offset, offset + size));
     offset += size;
   }
-  return output;
+
+  // Strip Docker timestamps from each line and track the latest one
+  let lastTimestamp = opts.since || 0;
+  const lines = output.split("\n");
+  const cleaned = lines.map((line) => {
+    // Docker timestamp format: 2024-01-01T00:00:00.000000000Z <log>
+    const match = line.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z)\s(.*)/);
+    if (match) {
+      const ts = Math.ceil(new Date(match[1]).getTime() / 1000);
+      if (ts > lastTimestamp) lastTimestamp = ts;
+      return match[2];
+    }
+    return line;
+  });
+
+  return { logs: cleaned.join("\n"), lastTimestamp };
 }
 
 export async function inspectContainer(containerId: string): Promise<{ running: boolean }> {

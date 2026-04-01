@@ -9,15 +9,22 @@ type Props = {
 
 export function ContainerLogs({ projectId, running }: Props) {
   const xtermRef = useRef<XTermHandle>(null);
-  const prevLogsRef = useRef("");
+  const lastTimestampRef = useRef(0);
+  const initializedRef = useRef(false);
 
   const load = useCallback(async () => {
     try {
-      const data = await api.projects.logs(projectId);
-      if (data.logs && data.logs !== prevLogsRef.current) {
-        prevLogsRef.current = data.logs;
-        xtermRef.current?.clear();
+      const since = initializedRef.current ? lastTimestampRef.current : undefined;
+      const data = await api.projects.logs(projectId, since);
+      if (data.logs) {
+        if (!initializedRef.current) {
+          xtermRef.current?.clear();
+          initializedRef.current = true;
+        }
         xtermRef.current?.write(data.logs);
+      }
+      if (data.lastTimestamp) {
+        lastTimestampRef.current = data.lastTimestamp;
       }
     } catch {
       // ignore
@@ -25,6 +32,10 @@ export function ContainerLogs({ projectId, running }: Props) {
   }, [projectId]);
 
   useEffect(() => {
+    // Reset state when project changes
+    lastTimestampRef.current = 0;
+    initializedRef.current = false;
+    xtermRef.current?.clear();
     load();
     if (!running) return;
     const interval = setInterval(load, 5000);

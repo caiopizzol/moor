@@ -147,8 +147,10 @@ export const api = {
         }
       }
     },
-    logs: (id: number, tail = 100) =>
-      request<{ logs: string }>(`/api/projects/${id}/logs?tail=${tail}`),
+    logs: (id: number, since?: number) =>
+      request<{ logs: string; lastTimestamp: number }>(
+        `/api/projects/${id}/logs${since ? `?since=${since}` : ""}`,
+      ),
     exec: (id: number, command: string) =>
       request<{ exitCode: number; stdout: string; stderr: string }>(`/api/projects/${id}/exec`, {
         method: "POST",
