@@ -23,6 +23,7 @@ type Project = {
   status: string;
   domain: string | null;
   domain_port: number | null;
+  restart_policy: string;
 };
 
 function validateGithubUrl(url: string): string | null {
@@ -185,7 +186,13 @@ async function handleRun(req: Request, project: Project): Promise<Response> {
         const ports = getProjectPorts(project.id);
 
         send("log", "Starting container...\n");
-        const containerId = await createAndStartContainer(tag, `moor-${project.name}`, envs, ports);
+        const containerId = await createAndStartContainer(
+          tag,
+          `moor-${project.name}`,
+          envs,
+          ports,
+          project.restart_policy,
+        );
         console.log(`[run] container started: ${containerId}`);
 
         db.query("UPDATE projects SET container_id = ?, status = 'running' WHERE id = ?").run(
@@ -337,6 +344,7 @@ async function handleStart(project: Project): Promise<Response> {
       `moor-${project.name}`,
       envs,
       ports,
+      project.restart_policy,
     );
     console.log(`[start] container started: ${containerId}`);
     db.query("UPDATE projects SET container_id = ?, status = 'running' WHERE id = ?").run(

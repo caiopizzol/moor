@@ -10,6 +10,7 @@ export type Project = {
   status: string;
   domain: string | null;
   domain_port: number | null;
+  restart_policy: string;
   created_at: string;
 };
 

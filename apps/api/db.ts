@@ -92,4 +92,10 @@ try {
   // Column already exists
 }
 
+try {
+  db.exec("ALTER TABLE projects ADD COLUMN restart_policy TEXT DEFAULT 'unless-stopped'");
+} catch {
+  // Column already exists
+}
+
 export default db;

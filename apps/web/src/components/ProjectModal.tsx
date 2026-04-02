@@ -12,6 +12,7 @@ type ProjectData = {
   dockerfile?: string;
   domain?: string | null;
   domain_port?: number | null;
+  restart_policy?: string;
 };
 
 type Props = {
@@ -42,6 +43,7 @@ export function ProjectModal({ project, onClose, onSave }: Props) {
   const [dockerImage, setDockerImage] = useState(project?.docker_image ?? "");
   const [domain, setDomain] = useState(project?.domain ?? "");
   const [domainPort, setDomainPort] = useState(project?.domain_port?.toString() ?? "");
+  const [restartPolicy, setRestartPolicy] = useState(project?.restart_policy ?? "unless-stopped");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [dns, setDns] = useState<DnsStatus>({ checking: false });
@@ -93,6 +95,7 @@ export function ProjectModal({ project, onClose, onSave }: Props) {
           github_url: null,
           domain: domainValue,
           domain_port: portValue,
+          restart_policy: restartPolicy,
         });
       } else {
         await onSave({
@@ -103,6 +106,7 @@ export function ProjectModal({ project, onClose, onSave }: Props) {
           dockerfile: dockerfile.trim() || "Dockerfile",
           domain: domainValue,
           domain_port: portValue,
+          restart_policy: restartPolicy,
         });
       }
     } catch (err) {
@@ -260,6 +264,48 @@ export function ProjectModal({ project, onClose, onSave }: Props) {
               disabled={!domain.trim()}
             />
           </label>
+        </div>
+
+        {/* Container section */}
+        <div
+          style={{
+            height: 1,
+            background: "var(--border)",
+            margin: "18px 0",
+          }}
+        />
+        <div
+          style={{
+            fontSize: 10,
+            fontWeight: 600,
+            textTransform: "uppercase",
+            letterSpacing: "0.1em",
+            color: "var(--text-dim)",
+            marginBottom: 14,
+          }}
+        >
+          Container
+        </div>
+
+        <div className="field">
+          <label>
+            Restart Policy
+            <select value={restartPolicy} onChange={(e) => setRestartPolicy(e.target.value)}>
+              <option value="no">No</option>
+              <option value="on-failure">On failure</option>
+              <option value="always">Always</option>
+              <option value="unless-stopped">Unless stopped</option>
+            </select>
+          </label>
+          <div style={{ fontSize: 11, color: "var(--text-dim)", marginTop: 4, lineHeight: 1.4 }}>
+            {restartPolicy === "no" && "Never restart the container automatically."}
+            {restartPolicy === "on-failure" &&
+              "Restart only when the container exits with a non-zero status."}
+            {restartPolicy === "always" &&
+              "Always restart the container, including after daemon restarts."}
+            {restartPolicy === "unless-stopped" &&
+              "Restart automatically unless explicitly stopped. Default."}
+          </div>
         </div>
 
         {error && <div style={{ color: "var(--red, #e55)", fontSize: "0.9em" }}>{error}</div>}

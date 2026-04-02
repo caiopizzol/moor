@@ -56,7 +56,16 @@ export async function handleProjects(req: Request, url: URL): Promise<Response |
 
 async function handleCreate(req: Request): Promise<Response> {
   const body = await req.json();
-  const { name, github_url, docker_image, branch, dockerfile, domain, domain_port } = body;
+  const {
+    name,
+    github_url,
+    docker_image,
+    branch,
+    dockerfile,
+    domain,
+    domain_port,
+    restart_policy,
+  } = body;
   console.log(
     `[projects] create: name=${name} github_url=${github_url} docker_image=${docker_image} branch=${branch || "main"} dockerfile=${dockerfile || "Dockerfile"} domain=${domain || ""} domain_port=${domain_port || ""}`,
   );
@@ -72,9 +81,12 @@ async function handleCreate(req: Request): Promise<Response> {
     return new Response("A project with this name already exists", { status: 409 });
   }
 
+  const validPolicies = ["no", "on-failure", "always", "unless-stopped"];
+  const policy = validPolicies.includes(restart_policy) ? restart_policy : "unless-stopped";
+
   const result = db
     .query(
-      "INSERT INTO projects (name, github_url, docker_image, branch, dockerfile, domain, domain_port) VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING *",
+      "INSERT INTO projects (name, github_url, docker_image, branch, dockerfile, domain, domain_port, restart_policy) VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING *",
     )
     .get(
       name,
@@ -84,6 +96,7 @@ async function handleCreate(req: Request): Promise<Response> {
       dockerfile ?? "Dockerfile",
       domain?.trim() || null,
       domain_port ?? null,
+      policy,
     );
 
   if (domain?.trim()) {
@@ -99,6 +112,8 @@ async function handleUpdate(req: Request, id: number): Promise<Response> {
   const fields: string[] = [];
   const values: (string | number | null)[] = [];
 
+  const validPolicies = ["no", "on-failure", "always", "unless-stopped"];
+
   for (const key of [
     "name",
     "github_url",
@@ -107,12 +122,14 @@ async function handleUpdate(req: Request, id: number): Promise<Response> {
     "dockerfile",
     "domain",
     "domain_port",
+    "restart_policy",
   ]) {
     if (key in body) {
       fields.push(`${key} = ?`);
-      // Normalize empty domain string to null
       if (key === "domain") {
         values.push(body[key]?.trim() || null);
+      } else if (key === "restart_policy") {
+        values.push(validPolicies.includes(body[key]) ? body[key] : "unless-stopped");
       } else {
         values.push(body[key]);
       }

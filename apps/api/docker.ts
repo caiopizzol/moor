@@ -256,6 +256,7 @@ export async function createAndStartContainer(
   name: string,
   envVars: { key: string; value: string }[],
   ports: { host_port: number; container_port: number }[] = [],
+  restartPolicy = "unless-stopped",
 ): Promise<string> {
   console.log(
     `[createContainer] image=${imageTag} name=${name} envVars=${envVars.length} ports=${ports.length}`,
@@ -282,7 +283,7 @@ export async function createAndStartContainer(
     Env: envVars.map((e) => `${e.key}=${e.value}`),
     ExposedPorts: exposedPorts,
     HostConfig: {
-      RestartPolicy: { Name: "unless-stopped" },
+      RestartPolicy: { Name: restartPolicy },
       PortBindings: portBindings,
     },
   };
