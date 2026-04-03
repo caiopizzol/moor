@@ -16,6 +16,7 @@ function generateRoutes(projects: DomainProject[]): string {
   if (projects.length === 0) return "# No domain routes configured\n";
 
   return projects
+    .filter((p) => p.domain_port != null)
     .map((p) => `${p.domain} {\n\treverse_proxy moor-${p.name}:${p.domain_port}\n}`)
     .join("\n\n")
     .concat("\n");
@@ -25,7 +26,10 @@ function generateRoutes(projects: DomainProject[]): string {
 export async function syncCaddyRoutes(): Promise<void> {
   const projects = db
     .query(
-      "SELECT id, name, domain, domain_port FROM projects WHERE domain IS NOT NULL AND domain != ''",
+      `SELECT id, name, domain,
+              COALESCE(domain_port, (SELECT container_port FROM port_mappings WHERE project_id = projects.id ORDER BY container_port LIMIT 1)) AS domain_port
+       FROM projects
+       WHERE domain IS NOT NULL AND domain != ''`,
     )
     .all() as DomainProject[];
 
