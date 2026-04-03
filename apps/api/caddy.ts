@@ -8,8 +8,25 @@ type DomainProject = {
   domain_port: number;
 };
 
-const CADDY_ROUTES_PATH = resolve(import.meta.dir, "..", "..", "data", "moor-routes");
+const DATA_DIR = resolve(import.meta.dir, "..", "..", "data");
+const CADDY_ROUTES_PATH = resolve(DATA_DIR, "moor-routes");
+const CADDY_CONFIG_PATH = resolve(DATA_DIR, "Caddyfile");
 const CADDY_CONTAINER = "moor-caddy-1";
+
+const DEFAULT_CADDYFILE = `\
+# Replace :80 with your domain (e.g. moor.example.com) to enable auto HTTPS
+:80 {
+\theader {
+\t\tX-Content-Type-Options "nosniff"
+\t\tX-Frame-Options "DENY"
+\t\tReferrer-Policy "strict-origin-when-cross-origin"
+\t}
+\treverse_proxy moor:3000
+}
+
+# Domain routes managed by Moor — do not edit manually
+import /app/data/moor-routes
+`;
 
 /** Generate a Caddyfile snippet from all projects with domains configured. */
 function generateRoutes(projects: DomainProject[]): string {
@@ -44,7 +61,7 @@ export async function syncCaddyRoutes(): Promise<void> {
 async function reloadCaddy(): Promise<void> {
   try {
     const proc = Bun.spawn(
-      ["docker", "exec", CADDY_CONTAINER, "caddy", "reload", "--config", "/etc/caddy/Caddyfile"],
+      ["docker", "exec", CADDY_CONTAINER, "caddy", "reload", "--config", "/app/data/Caddyfile"],
       { stdout: "pipe", stderr: "pipe" },
     );
     const exitCode = await proc.exited;
@@ -60,13 +77,18 @@ async function reloadCaddy(): Promise<void> {
   }
 }
 
-/** Connect a container to the moor_default network so Caddy can reach it. */
-/** Ensure the moor-routes file exists (Caddy import fails if file is missing). */
+/** Ensure the Caddyfile and moor-routes exist in the data volume. */
 export async function ensureRoutesFile(): Promise<void> {
-  const file = Bun.file(CADDY_ROUTES_PATH);
-  if (!(await file.exists())) {
+  const routesFile = Bun.file(CADDY_ROUTES_PATH);
+  if (!(await routesFile.exists())) {
     await Bun.write(CADDY_ROUTES_PATH, "# No domain routes configured\n");
     console.log("[caddy] created empty moor-routes file");
+  }
+
+  const caddyFile = Bun.file(CADDY_CONFIG_PATH);
+  if (!(await caddyFile.exists())) {
+    await Bun.write(CADDY_CONFIG_PATH, DEFAULT_CADDYFILE);
+    console.log("[caddy] created default Caddyfile");
   }
 }
 
