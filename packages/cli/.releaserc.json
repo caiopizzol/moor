@@ -4,7 +4,12 @@
   "tagFormat": "cli-v${version}",
   "plugins": [
     "@semantic-release/commit-analyzer",
-    ["@semantic-release/npm", { "npmPublish": false }],
+    [
+      "@semantic-release/exec",
+      {
+        "prepareCmd": "jq '.version = \"${nextRelease.version}\"' package.json > tmp.json && mv tmp.json package.json"
+      }
+    ],
     ["@semantic-release/github", { "successComment": false, "releasedLabels": false }],
     [
       "@semantic-release/git",
