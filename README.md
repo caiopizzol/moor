@@ -15,6 +15,7 @@ Self-hosted Docker control panel for a single server. Build, deploy, and manage 
 - Schedule cron jobs inside containers
 - Manage environment variables per project
 - Route custom domains to containers with HTTPS
+- CLI and MCP server for AI agent integration
 
 ## Quick Start
 
@@ -31,6 +32,52 @@ Moor runs behind Caddy (included) on ports 80/443. Edit the `Caddyfile` to repla
 bun install
 bun run dev:api   # API with hot reload
 bun run dev:web   # Vite dev server
+```
+
+## CLI
+
+Manage your server from the terminal or let AI agents control it programmatically.
+
+```bash
+export MOOR_URL=https://moor.example.com
+export MOOR_API_KEY=your-api-key
+
+moor status                          # list all projects
+moor logs <project> [-f] [-n 100]    # view container logs
+moor rebuild <project>               # rebuild from source
+moor restart <project>               # stop + start
+moor exec <project> <command>        # run command in container
+moor env list <project>              # list env vars
+moor env set <project> KEY=VALUE     # set env vars + restart
+moor stats                           # server resource usage
+```
+
+Enable API key auth by setting `MOOR_API_KEY` in your `docker-compose.yml`:
+
+```yaml
+services:
+  moor:
+    environment:
+      - MOOR_API_KEY=your-secret-key
+```
+
+## MCP Server
+
+Connect any MCP-compatible AI agent (Claude Code, Cursor, etc.) to manage your projects.
+
+```json
+{
+  "mcpServers": {
+    "moor": {
+      "command": "bun",
+      "args": ["run", "packages/mcp/src/index.ts"],
+      "env": {
+        "MOOR_URL": "https://moor.example.com",
+        "MOOR_API_KEY": "your-api-key"
+      }
+    }
+  }
+}
 ```
 
 ## Stack
