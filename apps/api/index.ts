@@ -3,6 +3,7 @@ import {
   checkPasswordReset,
   cleanExpiredSessions,
   getSessionFromCookie,
+  validateBearerToken,
   validateSession,
 } from "./auth";
 import { ensureRoutesFile } from "./caddy";
@@ -50,9 +51,11 @@ const server = Bun.serve({
         const authRes = await handleAuth(req, url);
         if (authRes) return authRes;
 
-        // All other API routes require authentication
-        const token = getSessionFromCookie(req);
-        if (!token || !validateSession(token)) {
+        // All other API routes require authentication (session cookie or API key)
+        const sessionToken = getSessionFromCookie(req);
+        const isAuthed =
+          (sessionToken && validateSession(sessionToken)) || validateBearerToken(req);
+        if (!isAuthed) {
           return Response.json({ error: "Unauthorized" }, { status: 401 });
         }
 

@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "node:crypto";
 import db from "./db";
 
 const SESSION_DURATION_HOURS = 72;
@@ -73,6 +74,20 @@ export function buildSessionCookie(token: string, req: Request): string {
 
 export function buildClearCookie(): string {
   return "moor_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0";
+}
+
+export function validateBearerToken(req: Request): boolean {
+  const apiKey = process.env.MOOR_API_KEY;
+  if (!apiKey) return false;
+
+  const authHeader = req.headers.get("authorization");
+  if (!authHeader?.startsWith("Bearer ")) return false;
+
+  const token = authHeader.slice(7);
+  if (token.length !== apiKey.length) return false;
+
+  const encoder = new TextEncoder();
+  return timingSafeEqual(encoder.encode(token), encoder.encode(apiKey));
 }
 
 export function checkPasswordReset(): void {

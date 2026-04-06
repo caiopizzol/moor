@@ -236,8 +236,11 @@ async function handleLogs(project: Project, url: URL): Promise<Response> {
   }
 
   const sinceParam = url.searchParams.get("since");
+  const tailParam = url.searchParams.get("tail");
   try {
-    const opts = sinceParam ? { since: Number(sinceParam) } : {};
+    const opts: { since?: number; tail?: number } = {};
+    if (sinceParam) opts.since = Number(sinceParam);
+    if (tailParam) opts.tail = Number(tailParam);
     const { logs, lastTimestamp } = await getContainerLogs(project.container_id, opts);
     return Response.json({ logs, lastTimestamp });
   } catch {
