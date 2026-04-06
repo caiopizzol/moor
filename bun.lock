@@ -6,6 +6,8 @@
       "name": "moor",
       "devDependencies": {
         "@biomejs/biome": "^2.4.5",
+        "@cfworker/json-schema": "^4.1.1",
+        "@modelcontextprotocol/server": "^2.0.0-alpha.2",
         "@semantic-release/exec": "^7.1.0",
         "@semantic-release/git": "^10.0.1",
         "@types/bun": "latest",
@@ -13,6 +15,7 @@
         "semantic-release": "^25.0.3",
         "semantic-release-ai-notes": "^0.2.3",
         "semantic-release-monorepo": "^8.0.2",
+        "zod": "^4.3.6",
       },
     },
     "apps/api": {
@@ -43,6 +46,10 @@
     },
     "packages/cli": {
       "name": "@moor/cli",
+      "version": "0.0.0",
+    },
+    "packages/mcp": {
+      "name": "@moor/mcp",
       "version": "0.0.0",
     },
   },
@@ -112,6 +119,8 @@
     "@biomejs/cli-win32-arm64": ["@biomejs/cli-win32-arm64@2.4.6", "", { "os": "win32", "cpu": "arm64" }, "sha512-xzThn87Pf3YrOGTEODFGONmqXpTwUNxovQb72iaUOdcw8sBSY3+3WD8Hm9IhMYLnPi0n32s3L3NWU6+eSjfqFg=="],
 
     "@biomejs/cli-win32-x64": ["@biomejs/cli-win32-x64@2.4.6", "", { "os": "win32", "cpu": "x64" }, "sha512-7++XhnsPlr1HDbor5amovPjOH6vsrFOCdp93iKXhFn6bcMUI6soodj3WWKfgEO6JosKU1W5n3uky3WW9RlRjTg=="],
+
+    "@cfworker/json-schema": ["@cfworker/json-schema@4.1.1", "", {}, "sha512-gAmrUZSGtKc3AiBL71iNWxDsyUC5uMaKKGdvzYsBoTW/xi42JQHl7eKV2OYzCUqvc+D2RCcf7EXY2iCyFIk6og=="],
 
     "@colors/colors": ["@colors/colors@1.5.0", "", {}, "sha512-ooWCrlZP11i8GImSjTHYHLkvFDP48nS4+204nGb1RiX/WXYHmJA2III9/e2DWVabCESdW7hBAEzHRqUn9OUVvQ=="],
 
@@ -209,9 +218,13 @@
 
     "@jridgewell/trace-mapping": ["@jridgewell/trace-mapping@0.3.31", "", { "dependencies": { "@jridgewell/resolve-uri": "^3.1.0", "@jridgewell/sourcemap-codec": "^1.4.14" } }, "sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw=="],
 
+    "@modelcontextprotocol/server": ["@modelcontextprotocol/server@2.0.0-alpha.2", "", { "dependencies": { "zod": "^4.0" }, "peerDependencies": { "@cfworker/json-schema": "^4.1.1" }, "optionalPeers": ["@cfworker/json-schema"] }, "sha512-gmLgdHzlYM8L7Aw/+VE0kxjT25WKamtUSLNhdOgrJq5CrESvqVSoAfWSJJeNPUXNTluQ+dYDGFbKVitdsJtbPA=="],
+
     "@moor/api": ["@moor/api@workspace:apps/api"],
 
     "@moor/cli": ["@moor/cli@workspace:packages/cli"],
+
+    "@moor/mcp": ["@moor/mcp@workspace:packages/mcp"],
 
     "@moor/site": ["@moor/site@workspace:apps/site"],
 
