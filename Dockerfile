@@ -6,6 +6,7 @@ COPY package.json bun.lock* ./
 COPY apps/api/package.json apps/api/
 COPY apps/web/package.json apps/web/
 COPY apps/site/package.json apps/site/
+COPY packages/cli/package.json packages/cli/
 RUN bun install --frozen-lockfile --ignore-scripts
 
 # Build client
@@ -21,6 +22,7 @@ COPY package.json bun.lock* ./
 COPY apps/api/package.json apps/api/
 COPY apps/web/package.json apps/web/
 COPY apps/site/package.json apps/site/
+COPY packages/cli/package.json packages/cli/
 RUN bun install --frozen-lockfile --ignore-scripts --production
 
 # Copy built client and server source
