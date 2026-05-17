@@ -73,6 +73,17 @@ docker compose exec caddy caddy reload --config /app/data/Caddyfile --adapter ca
 
 Caddy auto-provisions a Let's Encrypt certificate on the first request to the domain.
 
+### Project port exposure
+
+When moor deploys a project container, the container's `EXPOSE`d ports are also published on the host, but bound to `127.0.0.1` (loopback) only. The public path is always Caddy on 80/443 reaching the container over the internal Docker network. Host ports exist for local debugging from inside the VM:
+
+```bash
+ssh your-server
+curl http://localhost:8080  # the host port shown for the project in the moor admin
+```
+
+Your network firewall should keep direct project port ranges closed regardless. Caddy is the only intended public entry point.
+
 ## Development
 
 ```bash
