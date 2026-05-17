@@ -29,7 +29,15 @@ curl -fsSL "$BASE/docker-compose.yml" -o docker-compose.yml
 
 # Pin the compose project name so moor's hardcoded container/network references resolve.
 touch .env
-grep -q "^COMPOSE_PROJECT_NAME=" .env || echo "COMPOSE_PROJECT_NAME=moor" >> .env
+existing=$(grep -E "^COMPOSE_PROJECT_NAME=" .env | head -1 | cut -d= -f2)
+if [ -z "$existing" ]; then
+  echo "COMPOSE_PROJECT_NAME=moor" >> .env
+elif [ "$existing" != "moor" ]; then
+  echo "Error: .env already has COMPOSE_PROJECT_NAME=$existing." >&2
+  echo "Moor requires COMPOSE_PROJECT_NAME=moor (hardcoded container/network names)." >&2
+  echo "Remove or change that line in .env and re-run." >&2
+  exit 1
+fi
 
 echo ""
 echo "Done! Files created/updated:"
@@ -37,9 +45,11 @@ echo "  - docker-compose.yml"
 echo "  - .env (COMPOSE_PROJECT_NAME=moor)"
 echo ""
 echo "Next steps:"
-echo "  1. Review docker-compose.yml. For first-boot setup, consider binding"
-echo "     Caddy ports to 127.0.0.1 and reaching the admin via SSH tunnel."
+echo "  1. Before first boot on a public server, bind Caddy to 127.0.0.1 in"
+echo "     docker-compose.yml or restrict ports 80/443 with a cloud firewall."
+echo "     The setup-password page is unauthenticated until the password is set,"
+echo "     and moor mounts /var/run/docker.sock. See README first-boot security."
 echo "  2. Run: docker compose up -d"
-echo "  3. Open the admin, set the initial password."
+echo "  3. Open the admin and set the initial password."
 echo ""
 echo "Custom domain for the admin UI is configured post-boot. See the README."
