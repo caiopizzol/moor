@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 import db from "./db";
-import { dockerFetch } from "./docker";
+import { execInContainer } from "./docker";
 
 type DomainProject = {
   id: number;
@@ -60,44 +60,22 @@ export async function syncCaddyRoutes(): Promise<void> {
 
 /** Reload Caddy by exec'ing `caddy reload` in the Caddy container via the Docker Engine API.
  *  The moor production image does not ship the `docker` CLI, so shell-out doesn't work.
- *  Throws on failure so callers can surface the error. */
+ *  Throws on failure so callers can surface the error. Set MOOR_SKIP_CADDY_RELOAD=1 to bypass
+ *  (e.g. for `bun run dev:api` where there's no Caddy container). */
 async function reloadCaddy(): Promise<void> {
-  const createRes = await dockerFetch(`/v1.44/containers/${CADDY_CONTAINER}/exec`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      AttachStdout: true,
-      AttachStderr: true,
-      Cmd: ["caddy", "reload", "--config", "/app/data/Caddyfile", "--adapter", "caddyfile"],
-    }),
-  });
-  if (createRes.status === 404) {
-    console.warn(`[caddy] reload skipped: container ${CADDY_CONTAINER} not found (dev mode?)`);
+  if (process.env.MOOR_SKIP_CADDY_RELOAD === "1") {
+    console.warn("[caddy] reload skipped: MOOR_SKIP_CADDY_RELOAD=1");
     return;
   }
-  if (!createRes.ok) {
-    throw new Error(`caddy exec create failed: ${createRes.status} ${createRes.statusText}`);
-  }
-  const { Id } = (await createRes.json()) as { Id: string };
 
-  const startRes = await dockerFetch(`/v1.44/exec/${Id}/start`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ Detach: false, Tty: false }),
-  });
-  if (!startRes.ok) {
-    throw new Error(`caddy exec start failed: ${startRes.status} ${startRes.statusText}`);
-  }
-  // Drain the multiplexed stdout/stderr stream so the exec actually completes
-  await startRes.arrayBuffer();
+  const { exitCode, stdout, stderr } = await execInContainer(
+    CADDY_CONTAINER,
+    "caddy reload --config /app/data/Caddyfile --adapter caddyfile",
+  );
 
-  const inspectRes = await dockerFetch(`/v1.44/exec/${Id}/json`);
-  if (!inspectRes.ok) {
-    throw new Error(`caddy exec inspect failed: ${inspectRes.status}`);
-  }
-  const { ExitCode } = (await inspectRes.json()) as { ExitCode: number | null };
-  if (ExitCode !== 0) {
-    throw new Error(`caddy reload exited ${ExitCode}`);
+  if (exitCode !== 0) {
+    const detail = stderr.trim() || stdout.trim() || "no output";
+    throw new Error(`caddy reload exited ${exitCode}: ${detail}`);
   }
   console.log("[caddy] reloaded successfully");
 }
