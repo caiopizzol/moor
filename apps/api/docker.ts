@@ -269,13 +269,16 @@ export async function createAndStartContainer(
     console.log("[createContainer] no existing container to remove");
   }
 
-  // Build port bindings for Docker API
+  // Build port bindings for Docker API. Bind to loopback so project containers
+  // are reachable from inside the VM for local debugging but not from the public
+  // internet. Caddy reaches them over the internal moor_default network using
+  // Docker DNS, not via host ports, so this does not affect domain routing.
   const exposedPorts: Record<string, object> = {};
-  const portBindings: Record<string, { HostPort: string }[]> = {};
+  const portBindings: Record<string, { HostIp: string; HostPort: string }[]> = {};
   for (const { host_port, container_port } of ports) {
     const key = `${container_port}/tcp`;
     exposedPorts[key] = {};
-    portBindings[key] = [{ HostPort: String(host_port) }];
+    portBindings[key] = [{ HostIp: "127.0.0.1", HostPort: String(host_port) }];
   }
 
   const body = {
