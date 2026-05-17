@@ -4,7 +4,8 @@
 
 Self-hosted Docker control panel for a single server. Build, deploy, and manage containers with cron, logs, and a web terminal.
 
-<img width="1280" height="720" alt="moor app" src="https://github.com/user-attachments/assets/c9aec88f-df93-4c40-9968-0a4cbb6df394" />
+<img width="1063" height="698" alt="image" src="https://github.com/user-attachments/assets/4b47d9ba-817f-47a4-bee5-ce35a45ea410" />
+
 
 ## What it does
 
