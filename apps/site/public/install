@@ -10,23 +10,36 @@ echo "Installing moor..."
 # Check dependencies
 if ! command -v docker >/dev/null 2>&1; then
   echo "Error: docker is not installed." >&2
+  echo "" >&2
+  echo "Install Docker Engine 25.0+ from the official repository:" >&2
+  echo "  https://docs.docker.com/engine/install/" >&2
+  echo "" >&2
+  echo "Required packages: docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin" >&2
   exit 1
 fi
 
 if ! docker compose version >/dev/null 2>&1; then
-  echo "Error: docker compose is not available." >&2
+  echo "Error: docker compose v2 plugin is not available." >&2
+  echo "Install: https://docs.docker.com/compose/install/" >&2
   exit 1
 fi
 
-# Download files
+# Download compose file
 curl -fsSL "$BASE/docker-compose.yml" -o docker-compose.yml
-curl -fsSL "$BASE/Caddyfile" -o Caddyfile
+
+# Pin the compose project name so moor's hardcoded container/network references resolve.
+touch .env
+grep -q "^COMPOSE_PROJECT_NAME=" .env || echo "COMPOSE_PROJECT_NAME=moor" >> .env
 
 echo ""
-echo "Done! Files created:"
+echo "Done! Files created/updated:"
 echo "  - docker-compose.yml"
-echo "  - Caddyfile"
+echo "  - .env (COMPOSE_PROJECT_NAME=moor)"
 echo ""
 echo "Next steps:"
-echo "  1. Edit Caddyfile — replace :80 with your domain for auto HTTPS"
+echo "  1. Review docker-compose.yml. For first-boot setup, consider binding"
+echo "     Caddy ports to 127.0.0.1 and reaching the admin via SSH tunnel."
 echo "  2. Run: docker compose up -d"
+echo "  3. Open the admin, set the initial password."
+echo ""
+echo "Custom domain for the admin UI is configured post-boot. See the README."

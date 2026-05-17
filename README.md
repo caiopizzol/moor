@@ -17,6 +17,11 @@ Self-hosted Docker control panel for a single server. Build, deploy, and manage 
 - Route custom domains to containers with HTTPS
 - CLI and MCP server for AI agent integration
 
+## Prerequisites
+
+- Docker Engine 25.0+ and the Compose v2 plugin. Moor uses the Docker Engine API at version `v1.44`, which was introduced in Engine 25.0. Install from Docker's official repository: <https://docs.docker.com/engine/install/>.
+- A Linux host you control. Moor mounts `/var/run/docker.sock`, so the moor admin is effectively root on the host. Treat the login like SSH access.
+
 ## Quick Start
 
 ```bash
@@ -24,7 +29,48 @@ curl -fsSL moor.sh/install | sh
 docker compose up -d
 ```
 
-Moor runs behind Caddy (included) on ports 80/443. Edit the `Caddyfile` to replace `:80` with your domain for automatic HTTPS.
+The installer fetches `docker-compose.yml` and writes a `.env` pinning the Compose project name. Moor runs behind Caddy on ports 80/443.
+
+### First-boot security
+
+On first boot, moor exposes an unauthenticated setup page for the initial password. Do not expose the admin publicly until that password is set. Two safe options:
+
+- **SSH tunnel (simplest).** Before `docker compose up -d`, bind Caddy to loopback in `docker-compose.yml`:
+
+  ```yaml
+  ports:
+    - "127.0.0.1:80:80"
+    - "127.0.0.1:443:443"
+    - "127.0.0.1:443:443/udp"
+  ```
+
+  Then from your laptop: `ssh -L 8080:localhost:80 your-server`, open `http://localhost:8080`, set the password. Revert the binds after the domain is configured.
+
+- **Network firewall allowlist.** If your provider offers a cloud firewall (Hetzner, AWS, etc.), restrict TCP 80/443 to your IP for setup. Host-level UFW does not work for this: Docker programs iptables directly and bypasses UFW's `INPUT` chain. See <https://docs.docker.com/engine/network/packet-filtering-firewalls/>.
+
+### Custom domain for the admin UI
+
+The moor admin and project routes use the same Caddyfile but are managed differently. Project domains are added through the UI (they're written to `/app/data/moor-routes`). The admin's own site address lives at the top of `/app/data/Caddyfile` and must be edited directly. After DNS points at your server:
+
+```bash
+docker compose exec -T moor sh -c 'cat > /app/data/Caddyfile' <<'EOF'
+moor.example.com {
+  header {
+    X-Content-Type-Options "nosniff"
+    X-Frame-Options "DENY"
+    Referrer-Policy "strict-origin-when-cross-origin"
+  }
+  reverse_proxy moor:3000
+}
+
+# Domain routes managed by Moor - do not edit manually
+import /app/data/moor-routes
+EOF
+
+docker compose exec caddy caddy reload --config /app/data/Caddyfile --adapter caddyfile
+```
+
+Caddy auto-provisions a Let's Encrypt certificate on the first request to the domain.
 
 ## Development
 
