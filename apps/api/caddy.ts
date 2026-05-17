@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
 import db from "./db";
+import { execInContainer } from "./docker";
 
 type DomainProject = {
   id: number;
@@ -57,24 +58,26 @@ export async function syncCaddyRoutes(): Promise<void> {
   await reloadCaddy();
 }
 
-/** Reload Caddy config via docker exec. */
+/** Reload Caddy by exec'ing `caddy reload` in the Caddy container via the Docker Engine API.
+ *  The moor production image does not ship the `docker` CLI, so shell-out doesn't work.
+ *  Throws on failure so callers can surface the error. Set MOOR_SKIP_CADDY_RELOAD=1 to bypass
+ *  (e.g. for `bun run dev:api` where there's no Caddy container). */
 async function reloadCaddy(): Promise<void> {
-  try {
-    const proc = Bun.spawn(
-      ["docker", "exec", CADDY_CONTAINER, "caddy", "reload", "--config", "/app/data/Caddyfile"],
-      { stdout: "pipe", stderr: "pipe" },
-    );
-    const exitCode = await proc.exited;
-    if (exitCode !== 0) {
-      const stderr = await new Response(proc.stderr).text();
-      console.error(`[caddy] reload failed (exit ${exitCode}): ${stderr}`);
-    } else {
-      console.log("[caddy] reloaded successfully");
-    }
-  } catch (e) {
-    // Caddy container may not exist in dev environments
-    console.warn(`[caddy] reload skipped: ${e instanceof Error ? e.message : e}`);
+  if (process.env.MOOR_SKIP_CADDY_RELOAD === "1") {
+    console.warn("[caddy] reload skipped: MOOR_SKIP_CADDY_RELOAD=1");
+    return;
   }
+
+  const { exitCode, stdout, stderr } = await execInContainer(
+    CADDY_CONTAINER,
+    "caddy reload --config /app/data/Caddyfile --adapter caddyfile",
+  );
+
+  if (exitCode !== 0) {
+    const detail = stderr.trim() || stdout.trim() || "no output";
+    throw new Error(`caddy reload exited ${exitCode}: ${detail}`);
+  }
+  console.log("[caddy] reloaded successfully");
 }
 
 /** Ensure the Caddyfile and moor-routes exist in the data volume. */
