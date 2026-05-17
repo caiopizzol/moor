@@ -4,9 +4,11 @@ services:
     # build: .  # uncomment for local dev
     expose:
       - "3000"
-    # Uncomment to access directly without Caddy (e.g. local dev):
-    # ports:
-    #   - "3000:3000"
+    # Admin UI bound to loopback. Reach it via SSH tunnel:
+    #   ssh -L 8080:127.0.0.1:3000 your-server
+    # Change to "3000:3000" to expose publicly (not recommended without auth).
+    ports:
+      - "127.0.0.1:3000:3000"
     volumes:
       - moor-data:/app/data
       - /var/run/docker.sock:/var/run/docker.sock
