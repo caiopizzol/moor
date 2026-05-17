@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
 import db from "./db";
+import { dockerFetch } from "./docker";
 
 type DomainProject = {
   id: number;
@@ -57,24 +58,48 @@ export async function syncCaddyRoutes(): Promise<void> {
   await reloadCaddy();
 }
 
-/** Reload Caddy config via docker exec. */
+/** Reload Caddy by exec'ing `caddy reload` in the Caddy container via the Docker Engine API.
+ *  The moor production image does not ship the `docker` CLI, so shell-out doesn't work.
+ *  Throws on failure so callers can surface the error. */
 async function reloadCaddy(): Promise<void> {
-  try {
-    const proc = Bun.spawn(
-      ["docker", "exec", CADDY_CONTAINER, "caddy", "reload", "--config", "/app/data/Caddyfile"],
-      { stdout: "pipe", stderr: "pipe" },
-    );
-    const exitCode = await proc.exited;
-    if (exitCode !== 0) {
-      const stderr = await new Response(proc.stderr).text();
-      console.error(`[caddy] reload failed (exit ${exitCode}): ${stderr}`);
-    } else {
-      console.log("[caddy] reloaded successfully");
-    }
-  } catch (e) {
-    // Caddy container may not exist in dev environments
-    console.warn(`[caddy] reload skipped: ${e instanceof Error ? e.message : e}`);
+  const createRes = await dockerFetch(`/v1.44/containers/${CADDY_CONTAINER}/exec`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      AttachStdout: true,
+      AttachStderr: true,
+      Cmd: ["caddy", "reload", "--config", "/app/data/Caddyfile", "--adapter", "caddyfile"],
+    }),
+  });
+  if (createRes.status === 404) {
+    console.warn(`[caddy] reload skipped: container ${CADDY_CONTAINER} not found (dev mode?)`);
+    return;
   }
+  if (!createRes.ok) {
+    throw new Error(`caddy exec create failed: ${createRes.status} ${createRes.statusText}`);
+  }
+  const { Id } = (await createRes.json()) as { Id: string };
+
+  const startRes = await dockerFetch(`/v1.44/exec/${Id}/start`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ Detach: false, Tty: false }),
+  });
+  if (!startRes.ok) {
+    throw new Error(`caddy exec start failed: ${startRes.status} ${startRes.statusText}`);
+  }
+  // Drain the multiplexed stdout/stderr stream so the exec actually completes
+  await startRes.arrayBuffer();
+
+  const inspectRes = await dockerFetch(`/v1.44/exec/${Id}/json`);
+  if (!inspectRes.ok) {
+    throw new Error(`caddy exec inspect failed: ${inspectRes.status}`);
+  }
+  const { ExitCode } = (await inspectRes.json()) as { ExitCode: number | null };
+  if (ExitCode !== 0) {
+    throw new Error(`caddy reload exited ${ExitCode}`);
+  }
+  console.log("[caddy] reloaded successfully");
 }
 
 /** Ensure the Caddyfile and moor-routes exist in the data volume. */

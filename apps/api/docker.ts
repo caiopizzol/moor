@@ -13,7 +13,7 @@ export const SOCKET = findSocket();
 
 const BUILD_TIMEOUT = 1_800_000; // 30 minutes
 
-async function dockerFetch(
+export async function dockerFetch(
   path: string,
   opts?: RequestInit & { timeout?: number },
 ): Promise<Response> {
