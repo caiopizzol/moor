@@ -28,6 +28,7 @@ export function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(
     () => localStorage.getItem("moor:sidebar-collapsed") === "true",
   );
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const toggleSidebar = useCallback(() => {
     setSidebarCollapsed((prev) => {
@@ -173,7 +174,11 @@ MOOR_INITIAL_PASSWORD=your-strong-password`}</pre>
           onUpdate={load}
           onEdit={() => setModal({ mode: "edit", project: selected })}
           onDelete={async () => {
-            await api.projects.delete(selected.id);
+            try {
+              await api.projects.delete(selected.id);
+            } catch (err) {
+              setActionError(err instanceof Error ? err.message : "Delete failed");
+            }
             navigate(null);
             await load();
           }}
@@ -196,6 +201,46 @@ MOOR_INITIAL_PASSWORD=your-strong-password`}</pre>
             setModal(null);
           }}
         />
+      )}
+      {actionError && (
+        <div
+          style={{
+            position: "fixed",
+            top: 16,
+            right: 16,
+            maxWidth: 420,
+            background: "var(--surface-raised, #141414)",
+            border: "1px solid var(--red, #f87171)",
+            borderLeft: "3px solid var(--red, #f87171)",
+            color: "var(--text, #e0e0e0)",
+            padding: "12px 14px",
+            fontSize: "0.85em",
+            fontFamily: "var(--font-mono, monospace)",
+            whiteSpace: "pre-wrap",
+            zIndex: 1000,
+            display: "flex",
+            alignItems: "flex-start",
+            gap: 12,
+          }}
+        >
+          <span style={{ flex: 1 }}>{actionError}</span>
+          <button
+            type="button"
+            onClick={() => setActionError(null)}
+            style={{
+              background: "none",
+              border: "none",
+              color: "var(--text-muted, #707070)",
+              cursor: "pointer",
+              fontSize: "1.2em",
+              padding: 0,
+              lineHeight: 1,
+            }}
+            aria-label="Dismiss"
+          >
+            ×
+          </button>
+        </div>
       )}
     </div>
   );
