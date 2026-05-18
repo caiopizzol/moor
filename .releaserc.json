@@ -2,7 +2,15 @@
   "branches": ["main"],
   "tagFormat": "v${version}",
   "plugins": [
-    "@semantic-release/commit-analyzer",
+    [
+      "@semantic-release/commit-analyzer",
+      {
+        "releaseRules": [
+          { "scope": "cli", "release": false },
+          { "scope": "mcp", "release": false }
+        ]
+      }
+    ],
     "semantic-release-ai-notes",
     ["@semantic-release/npm", { "npmPublish": false }],
     ["@semantic-release/github", { "successComment": false, "releasedLabels": false }],
