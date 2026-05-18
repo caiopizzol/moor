@@ -32,22 +32,17 @@ docker compose up -d
 
 The installer fetches `docker-compose.yml` and writes a `.env` pinning the Compose project name. Moor runs behind Caddy on ports 80/443.
 
-### First-boot security
+### Accessing the admin
 
-On first boot, moor exposes an unauthenticated setup page for the initial password. Do not expose the admin publicly until that password is set. Two safe options:
+The admin UI is bound to the host's loopback interface (`127.0.0.1:3000`) by default. Caddy serves only project domains on 80/443. To reach the admin, open an SSH tunnel:
 
-- **SSH tunnel (simplest).** Before `docker compose up -d`, bind Caddy to loopback in `docker-compose.yml`:
+```bash
+ssh -L 8080:127.0.0.1:3000 your-server
+```
 
-  ```yaml
-  ports:
-    - "127.0.0.1:80:80"
-    - "127.0.0.1:443:443"
-    - "127.0.0.1:443:443/udp"
-  ```
+Then open `http://localhost:8080` in your browser. The first request shows a setup page where you set the initial admin password. Until that password is set, the page is unauthenticated — keep it off the public network by leaving the default loopback bind in place.
 
-  Then from your laptop: `ssh -L 8080:localhost:80 your-server`, open `http://localhost:8080`, set the password. Revert the binds after the domain is configured.
-
-- **Network firewall allowlist.** If your provider offers a cloud firewall (Hetzner, AWS, etc.), restrict TCP 80/443 to your IP for setup. Host-level UFW does not work for this: Docker programs iptables directly and bypasses UFW's `INPUT` chain. See <https://docs.docker.com/engine/network/packet-filtering-firewalls/>.
+To expose the admin publicly later, either change `127.0.0.1:3000:3000` to `3000:3000` in `docker-compose.yml` (not recommended without an external auth proxy), or add an explicit admin domain block to `/app/data/Caddyfile` (see "Custom domain for the admin UI" below).
 
 ### Custom domain for the admin UI
 
@@ -55,6 +50,10 @@ The moor admin and project routes use the same Caddyfile but are managed differe
 
 ```bash
 docker compose exec -T moor sh -c 'cat > /app/data/Caddyfile' <<'EOF'
+:80 {
+  respond 421
+}
+
 moor.example.com {
   header {
     X-Content-Type-Options "nosniff"

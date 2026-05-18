@@ -14,18 +14,17 @@ const CADDY_ROUTES_PATH = resolve(DATA_DIR, "moor-routes");
 const CADDY_CONFIG_PATH = resolve(DATA_DIR, "Caddyfile");
 const CADDY_CONTAINER = "moor-caddy-1";
 
+// Default Caddyfile shipped on first boot. The admin UI is intentionally NOT
+// reverse-proxied here. Public exposure of the admin requires an explicit
+// admin domain (added by editing this file or via project routes). Until then,
+// admin is reachable on the host's loopback-bound moor:3000 via SSH tunnel.
+// Unmatched hosts on :80 get a 421 (Misdirected Request).
 const DEFAULT_CADDYFILE = `\
-# Replace :80 with your domain (e.g. moor.example.com) to enable auto HTTPS
 :80 {
-\theader {
-\t\tX-Content-Type-Options "nosniff"
-\t\tX-Frame-Options "DENY"
-\t\tReferrer-Policy "strict-origin-when-cross-origin"
-\t}
-\treverse_proxy moor:3000
+\trespond 421
 }
 
-# Domain routes managed by Moor — do not edit manually
+# Domain routes managed by Moor - do not edit manually
 import /app/data/moor-routes
 `;
 
