@@ -323,7 +323,7 @@ export async function createAndStartContainer(
 
   // Build port bindings for Docker API. Bind to loopback so project containers
   // are reachable from inside the VM for local debugging but not from the public
-  // internet. Caddy reaches them over the internal moor_default network using
+  // internet. Caddy reaches them over the internal compose default network using
   // Docker DNS, not via host ports, so this does not affect domain routing.
   const exposedPorts: Record<string, object> = {};
   const portBindings: Record<string, { HostIp: string; HostPort: string }[]> = {};
@@ -357,10 +357,25 @@ export async function createAndStartContainer(
   const { Id } = (await createRes.json()) as { Id: string };
 
   // Connect to the compose default network so Caddy can reach the container.
-  // Network is resolved by compose labels, not hardcoded - works regardless of
-  // install directory or COMPOSE_PROJECT_NAME.
+  // Resolved by compose labels (not hardcoded).
+  //
+  // Dev mode (running moor outside compose): network lookup throws; we warn
+  // and continue without attaching. Caddy will not be able to reach the
+  // container, which is expected outside compose.
+  //
+  // Production: any failure after the network is found - including a real
+  // attach error from Docker - propagates as an exception so the caller knows
+  // the container is not reachable from Caddy.
+  let networkName: string | null = null;
   try {
-    const networkName = await findDefaultNetworkName();
+    networkName = await findDefaultNetworkName();
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.warn(
+      `[createContainer] compose default network not found; skipping connect (dev mode?): ${msg}`,
+    );
+  }
+  if (networkName) {
     const connectRes = await dockerFetch(
       `/v1.44/networks/${encodeURIComponent(networkName)}/connect`,
       {
@@ -369,15 +384,18 @@ export async function createAndStartContainer(
         body: JSON.stringify({ Container: Id }),
       },
     );
-    if (!connectRes.ok && connectRes.status !== 403) {
-      // 403 means already connected; treat as success
-      throw new Error(`status ${connectRes.status}`);
+    if (!connectRes.ok) {
+      const detail = await connectRes.text();
+      // Docker returns 403 with "endpoint with name X already exists" or
+      // "Container already attached" when the container is already on this
+      // network. Treat that case as success; everything else is a real error.
+      const alreadyConnected =
+        connectRes.status === 403 && /already|endpoint .* exists/i.test(detail);
+      if (!alreadyConnected) {
+        throw new Error(`Network connect failed (${connectRes.status}): ${detail}`);
+      }
     }
     console.log(`[createContainer] connected ${name} to ${networkName}`);
-  } catch (e) {
-    // Network may not exist outside compose (e.g. `bun run dev:api` on the host)
-    const msg = e instanceof Error ? e.message : String(e);
-    console.warn(`[createContainer] compose network connect skipped: ${msg}`);
   }
 
   const startRes = await dockerFetch(`/v1.44/containers/${Id}/start`, { method: "POST" });
