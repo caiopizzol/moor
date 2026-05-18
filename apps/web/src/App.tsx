@@ -128,13 +128,12 @@ export function App() {
           <Logo />
           <h1>Configuration required</h1>
           <p>
-            No admin password is configured. Set <code>MOOR_INITIAL_PASSWORD</code> in your{" "}
-            <code>docker-compose.yml</code> and restart the container.
+            No admin password is configured. Set <code>MOOR_INITIAL_PASSWORD</code> in the{" "}
+            <code>.env</code> file next to <code>docker-compose.yml</code> and restart the
+            container.
           </p>
-          <pre>{`services:
-  moor:
-    environment:
-      - MOOR_INITIAL_PASSWORD=your-strong-password`}</pre>
+          <pre>{`# .env
+MOOR_INITIAL_PASSWORD=your-strong-password`}</pre>
           <p>
             Once an admin exists, this page becomes the login page. The env var is create-only -
             ignored on every subsequent boot - so it is safe to leave in place. Remove it after

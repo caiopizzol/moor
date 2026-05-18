@@ -55,7 +55,7 @@ const server = Bun.serve({
         return Response.json(
           {
             error:
-              "Admin password is not configured. Set MOOR_INITIAL_PASSWORD in docker-compose.yml and restart.",
+              "Admin password is not configured. Set MOOR_INITIAL_PASSWORD in .env and restart.",
           },
           { status: 503 },
         );
