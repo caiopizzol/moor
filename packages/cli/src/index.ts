@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { envCommand } from "./commands/env";
 import { execCommand } from "./commands/exec";
 import { logsCommand } from "./commands/logs";
+import { mcpCommand } from "./commands/mcp";
 import { rebuildCommand } from "./commands/rebuild";
 import { restartCommand } from "./commands/restart";
 import { statsCommand } from "./commands/stats";
@@ -33,6 +34,7 @@ Commands:
   env list <project>              List environment variables
   env set <project> K=V [K=V ...] Set environment variables
   stats                           Show server resource usage
+  mcp config --client <name>      Generate MCP client config snippet
 
 Environment:
   MOOR_URL      Server URL (e.g. https://moor.example.com)
@@ -63,6 +65,9 @@ switch (command) {
     break;
   case "stats":
     await statsCommand();
+    break;
+  case "mcp":
+    mcpCommand(args.slice(1));
     break;
   case "--help":
   case "-h":

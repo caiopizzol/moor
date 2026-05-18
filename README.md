@@ -122,6 +122,7 @@ moor exec <project> <command>        # run command in container
 moor env list <project>              # list env vars
 moor env set <project> KEY=VALUE     # set env vars + restart
 moor stats                           # server resource usage
+moor mcp config --client claude      # generate MCP client config (claude, claude-code, codex)
 ```
 
 Both modes read `MOOR_URL` and `MOOR_API_KEY` from the shell env. Don't use `bunx moor` (without the scope) — `moor` on npm is an unrelated package.
@@ -195,7 +196,7 @@ Requires [Bun](https://bun.sh) installed on the machine running the MCP client. 
 
    `-fN` runs ssh backgrounded with no remote command. The tunnel must stay up while the MCP client is in use. Skip this step if moor is on the same machine as the client.
 
-4. **Configure the MCP client** by pasting one of the snippets below into its config file.
+4. **Configure the MCP client** by pasting one of the snippets below into its config file. If you have `@moor-sh/cli` installed, `moor mcp config --client claude` (or `--client claude-code` / `--client codex`) prints the snippet for you - reads `MOOR_API_KEY` from `MOOR_API_KEY` env, then cwd `.env`, falling back to a placeholder.
 
    **Claude Code** (`~/.claude.json`):
 
