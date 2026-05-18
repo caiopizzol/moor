@@ -27,8 +27,9 @@ fi
 # Download compose file
 curl -fsSL "$BASE/docker-compose.yml" -o docker-compose.yml
 
-# Pin the compose project name so moor's hardcoded container/network references resolve.
 touch .env
+
+# Pin the compose project name so moor's hardcoded container/network references resolve.
 existing=$(grep -E "^COMPOSE_PROJECT_NAME=" .env | head -1 | cut -d= -f2)
 if [ -z "$existing" ]; then
   echo "COMPOSE_PROJECT_NAME=moor" >> .env
@@ -39,20 +40,33 @@ elif [ "$existing" != "moor" ]; then
   exit 1
 fi
 
+# Generate a random initial admin password if one isn't already set.
+# Moor will use this on first boot to create the admin user. The variable is
+# create-only: ignored once an admin exists, so it's safe to leave in .env.
+if grep -q "^MOOR_INITIAL_PASSWORD=" .env; then
+  INITIAL_PASSWORD=$(grep "^MOOR_INITIAL_PASSWORD=" .env | head -1 | cut -d= -f2-)
+  PASSWORD_NOTE="reusing existing MOOR_INITIAL_PASSWORD from .env"
+else
+  INITIAL_PASSWORD=$(head -c 24 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 24)
+  echo "MOOR_INITIAL_PASSWORD=$INITIAL_PASSWORD" >> .env
+  PASSWORD_NOTE="generated new MOOR_INITIAL_PASSWORD in .env"
+fi
+
 echo ""
 echo "Done! Files created/updated:"
 echo "  - docker-compose.yml"
-echo "  - .env (COMPOSE_PROJECT_NAME=moor)"
+echo "  - .env ($PASSWORD_NOTE)"
+echo ""
+echo "Initial admin password (also stored in .env):"
+echo "  $INITIAL_PASSWORD"
 echo ""
 echo "Next steps:"
-echo "  1. Edit docker-compose.yml and replace MOOR_INITIAL_PASSWORD's value"
-echo "     with a strong password (8+ chars). Moor will fail-closed without it."
-echo "  2. Run: docker compose up -d"
-echo "  3. Open an SSH tunnel from your laptop:"
+echo "  1. Run: docker compose up -d"
+echo "  2. Open an SSH tunnel from your laptop:"
 echo "       ssh -L 8080:127.0.0.1:3000 your-server"
-echo "  4. Open http://localhost:8080 and log in with the password you set."
-echo "  5. Optionally remove MOOR_INITIAL_PASSWORD from docker-compose.yml."
+echo "  3. Open http://localhost:8080 and log in with the password above."
+echo "  4. Optionally remove MOOR_INITIAL_PASSWORD from .env after first login."
 echo ""
-echo "The admin UI ships bound to 127.0.0.1:3000 by default; Caddy on 80/443"
+echo "The admin UI is bound to 127.0.0.1:3000 by default; Caddy on 80/443"
 echo "serves only project domains you add later. See the README for putting"
 echo "the admin on a public domain."

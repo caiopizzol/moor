@@ -34,16 +34,9 @@ The installer fetches `docker-compose.yml` and writes a `.env` pinning the Compo
 
 ### First boot
 
-Before `docker compose up -d`, set the initial admin password in `docker-compose.yml`:
+The installer generates a random `MOOR_INITIAL_PASSWORD` and writes it to `.env` on the host. It also prints the password at the end of the install output. Save that password; you will need it for the first login.
 
-```yaml
-services:
-  moor:
-    environment:
-      - MOOR_INITIAL_PASSWORD=your-strong-password
-```
-
-Moor fails closed when no admin password is configured (every API route returns 503), so this step is required. If an admin already exists, the env var is ignored with a warning - it is safe to leave in place or remove after first boot.
+Moor fails closed when no admin password is configured (every API route returns 503 except `/api/health`), so the env var is required on a fresh install. The variable is create-only: once an admin exists, it is ignored with a warning, so leaving it in `.env` is safe. If you prefer to set the password yourself, edit `.env` before `docker compose up -d`.
 
 To reach the admin, open an SSH tunnel from your laptop:
 

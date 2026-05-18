@@ -136,8 +136,9 @@ export function App() {
     environment:
       - MOOR_INITIAL_PASSWORD=your-strong-password`}</pre>
           <p>
-            Once an admin exists, this page becomes the login page. Remove the env var afterwards so
-            future restarts do not silently re-seed the password.
+            Once an admin exists, this page becomes the login page. The env var is create-only -
+            ignored on every subsequent boot - so it is safe to leave in place. Remove it after
+            first login only if you want to keep the password out of the host's compose env.
           </p>
         </div>
       </div>
