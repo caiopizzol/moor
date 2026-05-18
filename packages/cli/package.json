@@ -8,7 +8,7 @@
     "url": "https://github.com/caiopizzol/moor.git",
     "directory": "packages/cli"
   },
-  "homepage": "https://github.com/caiopizzol/moor#cli",
+  "homepage": "https://github.com/caiopizzol/moor/tree/main/packages/cli",
   "bugs": "https://github.com/caiopizzol/moor/issues",
   "keywords": ["moor", "cli", "docker"],
   "type": "module",
