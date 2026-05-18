@@ -10,12 +10,20 @@
   },
   "homepage": "https://github.com/caiopizzol/moor#mcp-server",
   "bugs": "https://github.com/caiopizzol/moor/issues",
-  "keywords": ["moor", "mcp", "docker", "claude", "ai-agent"],
+  "keywords": [
+    "moor",
+    "mcp",
+    "docker",
+    "claude",
+    "ai-agent"
+  ],
   "type": "module",
   "bin": {
     "moor-mcp": "src/index.ts"
   },
-  "files": ["src/"],
+  "files": [
+    "src/"
+  ],
   "publishConfig": {
     "access": "public"
   },
