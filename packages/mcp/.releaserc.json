@@ -5,7 +5,13 @@
   "plugins": [
     "@semantic-release/commit-analyzer",
     "@semantic-release/release-notes-generator",
-    "@semantic-release/npm",
+    [
+      "@semantic-release/exec",
+      {
+        "prepareCmd": "node -e 'const fs=require(\"fs\"); const p=JSON.parse(fs.readFileSync(\"package.json\",\"utf8\")); p.version=\"${nextRelease.version}\"; fs.writeFileSync(\"package.json\", JSON.stringify(p,null,2)+\"\\n\")'",
+        "publishCmd": "npm publish --access public --provenance"
+      }
+    ],
     ["@semantic-release/github", { "successComment": false, "releasedLabels": false }]
   ]
 }

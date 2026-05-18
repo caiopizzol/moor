@@ -87,12 +87,6 @@ jobs:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           NPM_CONFIG_PROVENANCE: "true"
-          # Disable npm workspace resolution. The repo is a bun monorepo with a
-          # workspaces field in root package.json; when @semantic-release/npm
-          # runs `npm version` in packages/mcp, npm tries to resolve the
-          # workspace context from root and crashes with
-          # "Cannot read properties of null (reading 'matches')".
-          npm_config_workspaces: "false"
 
   publish:
     needs: [check, release]
