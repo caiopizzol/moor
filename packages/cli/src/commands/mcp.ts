@@ -61,15 +61,17 @@ function configFor(client: Client, url: string, apiKey: string): string {
       2,
     );
   }
-  // codex TOML
+  // codex TOML. TOML basic-string escape rules (" and \) are a subset of
+  // JSON's, so JSON.stringify produces a valid quoted TOML string for any
+  // value - including URLs/keys that contain quotes or backslashes.
   return [
     "[mcp_servers.moor]",
     'command = "bunx"',
     'args = ["@moor-sh/mcp"]',
     "",
     "[mcp_servers.moor.env]",
-    `MOOR_URL = "${url}"`,
-    `MOOR_API_KEY = "${apiKey}"`,
+    `MOOR_URL = ${JSON.stringify(url)}`,
+    `MOOR_API_KEY = ${JSON.stringify(apiKey)}`,
   ].join("\n");
 }
 
