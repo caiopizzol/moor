@@ -9,17 +9,23 @@ export type PortMapping = {
   protocol: string;
 };
 
+/** Host ports moor itself binds (see docker-compose.yml). Never allocate these
+ *  to project containers, even though they aren't tracked in port_mappings. */
+const RESERVED_HOST_PORTS = new Set<number>([3000]);
+
 /**
  * Find an available host port starting from containerPort.
- * Checks ALL existing mappings (including same project) to avoid UNIQUE constraint violations.
+ * Checks port_mappings AND moor's own reserved bindings.
  */
 export function findAvailableHostPort(containerPort: number): number {
   let port = containerPort;
   for (let i = 0; i < 100; i++) {
-    const existing = db
-      .query("SELECT id FROM port_mappings WHERE host_port = ? AND protocol = 'tcp'")
-      .get(port);
-    if (!existing) return port;
+    if (!RESERVED_HOST_PORTS.has(port)) {
+      const existing = db
+        .query("SELECT id FROM port_mappings WHERE host_port = ? AND protocol = 'tcp'")
+        .get(port);
+      if (!existing) return port;
+    }
     port++;
   }
   throw new Error(`No available host port found starting from ${containerPort}`);

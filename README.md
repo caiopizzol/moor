@@ -50,6 +50,10 @@ The moor admin and project routes use the same Caddyfile but are managed differe
 
 ```bash
 docker compose exec -T moor sh -c 'cat > /app/data/Caddyfile' <<'EOF'
+:80 {
+  respond 421
+}
+
 moor.example.com {
   header {
     X-Content-Type-Options "nosniff"
