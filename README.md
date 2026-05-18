@@ -156,6 +156,8 @@ Old key stops working immediately on container restart. Update any CLI/MCP confi
 
 Connect any MCP-compatible AI agent (Claude Code, Cursor, etc.) to manage your moor projects via stdio. The server ships as a standalone npm package - no repo clone needed.
 
+Requires [Bun](https://bun.sh) installed on the machine running the MCP client. `bunx` fetches and runs `@moor-sh/mcp` directly; no install step.
+
 ### Setup
 
 1. **Generate or set `MOOR_API_KEY` on your moor server.** Easiest path is the installer's opt-in flag, which writes a strong random key into `.env` and prints it once:
@@ -219,7 +221,7 @@ Connect any MCP-compatible AI agent (Claude Code, Cursor, etc.) to manage your m
    MOOR_URL=http://127.0.0.1:8080 MOOR_API_KEY=your-api-key bunx @moor-sh/mcp < /dev/null
    ```
 
-   Silence means it connected, authenticated, and is waiting for an MCP client on stdio (the process won't print anything else). Any stderr line tells you what's wrong:
+   Exit 0 with no output means it connected and authenticated - stdin closed immediately so the stdio transport shut down cleanly. Any stderr line plus non-zero exit tells you what's wrong:
 
    - `Cannot reach moor at ...` - URL unreachable or tunnel is down.
    - `Authentication failed` - `MOOR_API_KEY` doesn't match the server.
