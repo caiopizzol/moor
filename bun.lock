@@ -45,8 +45,11 @@
       },
     },
     "packages/cli": {
-      "name": "@moor/cli",
-      "version": "0.0.0",
+      "name": "@moor-sh/cli",
+      "version": "0.0.0-development",
+      "bin": {
+        "moor": "src/index.ts",
+      },
     },
     "packages/mcp": {
       "name": "@moor-sh/mcp",
@@ -228,11 +231,11 @@
 
     "@modelcontextprotocol/server": ["@modelcontextprotocol/server@2.0.0-alpha.2", "", { "dependencies": { "zod": "^4.0" }, "peerDependencies": { "@cfworker/json-schema": "^4.1.1" }, "optionalPeers": ["@cfworker/json-schema"] }, "sha512-gmLgdHzlYM8L7Aw/+VE0kxjT25WKamtUSLNhdOgrJq5CrESvqVSoAfWSJJeNPUXNTluQ+dYDGFbKVitdsJtbPA=="],
 
+    "@moor-sh/cli": ["@moor-sh/cli@workspace:packages/cli"],
+
     "@moor-sh/mcp": ["@moor-sh/mcp@workspace:packages/mcp"],
 
     "@moor/api": ["@moor/api@workspace:apps/api"],
-
-    "@moor/cli": ["@moor/cli@workspace:packages/cli"],
 
     "@moor/site": ["@moor/site@workspace:apps/site"],
 

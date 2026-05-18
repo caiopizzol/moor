@@ -97,11 +97,22 @@ bun run dev:web   # Vite dev server
 
 ## CLI
 
-Manage your server from the terminal or let AI agents control it programmatically.
+Manage your server from the terminal or let AI agents control it programmatically. Ships as `@moor-sh/cli` on npm with a `moor` binary. Requires [Bun](https://bun.sh).
+
+**One-shot** (no install):
 
 ```bash
 export MOOR_URL=https://moor.example.com
 export MOOR_API_KEY=your-api-key
+
+bunx @moor-sh/cli status
+bunx @moor-sh/cli logs <project> -f
+```
+
+**Frequent use** (install globally so the `moor` command is on PATH):
+
+```bash
+bun add -g @moor-sh/cli
 
 moor status                          # list all projects
 moor logs <project> [-f] [-n 100]    # view container logs
@@ -112,6 +123,8 @@ moor env list <project>              # list env vars
 moor env set <project> KEY=VALUE     # set env vars + restart
 moor stats                           # server resource usage
 ```
+
+Both modes read `MOOR_URL` and `MOOR_API_KEY` from the shell env. Don't use `bunx moor` (without the scope) — `moor` on npm is an unrelated package.
 
 ### API key
 

@@ -1,8 +1,24 @@
 {
-  "name": "@moor/cli",
-  "version": "0.0.0",
-  "private": true,
+  "name": "@moor-sh/cli",
+  "version": "0.0.0-development",
+  "description": "Command-line interface for moor - manage your moor server's projects, logs, env vars, and container lifecycle.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/caiopizzol/moor.git",
+    "directory": "packages/cli"
+  },
+  "homepage": "https://github.com/caiopizzol/moor#cli",
+  "bugs": "https://github.com/caiopizzol/moor/issues",
+  "keywords": ["moor", "cli", "docker"],
   "type": "module",
+  "bin": {
+    "moor": "src/index.ts"
+  },
+  "files": ["src/"],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "dev": "bun run src/index.ts",
     "build": "bun build src/index.ts --compile --outfile moor"
