@@ -30,6 +30,58 @@ async function dockerFetch(
   return res;
 }
 
+/** Resolve the compose project name by inspecting moor's own container labels.
+ *  Docker sets HOSTNAME to the container short ID by default. Cached lazily. */
+let cachedProject: string | null = null;
+export async function getComposeProject(): Promise<string> {
+  if (cachedProject) return cachedProject;
+  const hostname = process.env.HOSTNAME;
+  if (!hostname) throw new Error("HOSTNAME env var is empty - cannot self-inspect");
+  const res = await dockerFetch(`/v1.44/containers/${hostname}/json`);
+  if (!res.ok) {
+    throw new Error(`Self-inspect failed (status ${res.status}); not running under compose?`);
+  }
+  const data = (await res.json()) as { Config?: { Labels?: Record<string, string> } };
+  const project = data.Config?.Labels?.["com.docker.compose.project"];
+  if (!project) {
+    throw new Error("com.docker.compose.project label missing on self");
+  }
+  cachedProject = project;
+  return project;
+}
+
+/** Find the Caddy container by compose labels for the current project.
+ *  Returns the container ID. Throws if not found. */
+export async function findCaddyContainerId(): Promise<string> {
+  const project = await getComposeProject();
+  const filters = JSON.stringify({
+    label: [`com.docker.compose.project=${project}`, "com.docker.compose.service=caddy"],
+  });
+  const res = await dockerFetch(`/v1.44/containers/json?filters=${encodeURIComponent(filters)}`);
+  if (!res.ok) throw new Error(`Container list failed: ${res.status}`);
+  const containers = (await res.json()) as Array<{ Id: string }>;
+  if (containers.length === 0) {
+    throw new Error(`No caddy container found for compose project "${project}"`);
+  }
+  return containers[0].Id;
+}
+
+/** Find the default compose network for the current project.
+ *  Returns the network name (suitable for /networks/{name}/connect). */
+export async function findDefaultNetworkName(): Promise<string> {
+  const project = await getComposeProject();
+  const filters = JSON.stringify({
+    label: [`com.docker.compose.project=${project}`, "com.docker.compose.network=default"],
+  });
+  const res = await dockerFetch(`/v1.44/networks?filters=${encodeURIComponent(filters)}`);
+  if (!res.ok) throw new Error(`Network list failed: ${res.status}`);
+  const networks = (await res.json()) as Array<{ Name: string }>;
+  if (networks.length === 0) {
+    throw new Error(`No default compose network found for project "${project}"`);
+  }
+  return networks[0].Name;
+}
+
 /** Parse a single Docker JSON build line into clean text. Returns null if nothing to display. */
 function parseBuildLine(line: string): { text: string; error?: boolean } | null {
   try {
@@ -304,17 +356,28 @@ export async function createAndStartContainer(
 
   const { Id } = (await createRes.json()) as { Id: string };
 
-  // Connect to moor_default network so Caddy can reach the container
+  // Connect to the compose default network so Caddy can reach the container.
+  // Network is resolved by compose labels, not hardcoded - works regardless of
+  // install directory or COMPOSE_PROJECT_NAME.
   try {
-    await dockerFetch("/v1.44/networks/moor_default/connect", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ Container: Id }),
-    });
-    console.log(`[createContainer] connected ${name} to moor_default`);
-  } catch {
-    // Network may not exist in dev environments
-    console.warn("[createContainer] moor_default network connect skipped");
+    const networkName = await findDefaultNetworkName();
+    const connectRes = await dockerFetch(
+      `/v1.44/networks/${encodeURIComponent(networkName)}/connect`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ Container: Id }),
+      },
+    );
+    if (!connectRes.ok && connectRes.status !== 403) {
+      // 403 means already connected; treat as success
+      throw new Error(`status ${connectRes.status}`);
+    }
+    console.log(`[createContainer] connected ${name} to ${networkName}`);
+  } catch (e) {
+    // Network may not exist outside compose (e.g. `bun run dev:api` on the host)
+    const msg = e instanceof Error ? e.message : String(e);
+    console.warn(`[createContainer] compose network connect skipped: ${msg}`);
   }
 
   const startRes = await dockerFetch(`/v1.44/containers/${Id}/start`, { method: "POST" });
