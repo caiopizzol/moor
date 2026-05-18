@@ -24,11 +24,12 @@ Docker Engine 25.0+ with the Compose v2 plugin. Install from <https://docs.docke
 ## Quick start
 
 ```bash
+mkdir -p moor && cd moor
 curl -fsSL moor.sh/install | sh
 docker compose up -d
 ```
 
-The installer downloads `docker-compose.yml` and writes a random `MOOR_INITIAL_PASSWORD` into `.env`. The password is printed at the end of the install output - save it for the first login.
+The installer writes `docker-compose.yml` and a random `MOOR_INITIAL_PASSWORD` in `.env` into the current directory. The password is printed at the end of the install output - save it for the first login.
 
 ## First login
 

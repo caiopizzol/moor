@@ -78,7 +78,7 @@ Exit 0 with no output means the MCP connected, authenticated, and shut down clea
 The MCP server exposes:
 
 - `moor_status` - list all projects with status, source, and domain
-- `moor_logs` - stream container logs for a project
+- `moor_logs` - get recent container logs for a project (with tail length)
 - `moor_rebuild` - rebuild a project from source
 - `moor_restart` - stop and start a project's container
 - `moor_exec` - run a command inside a project's container

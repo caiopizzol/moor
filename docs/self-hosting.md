@@ -139,7 +139,16 @@ In practice: treat the moor admin password and `MOOR_API_KEY` with the same care
 
 ## Persistent tunnel
 
-For tunnels that survive laptop sleep and reboots, use a launchd LaunchAgent on macOS:
+The quick path is `autossh` (auto-reconnects on network blips, but dies on reboot):
+
+```bash
+brew install autossh
+autossh -M 0 -fNL 8080:127.0.0.1:3000 \
+  -o ServerAliveInterval=60 -o ServerAliveCountMax=3 \
+  -o ExitOnForwardFailure=yes your-server
+```
+
+For tunnels that survive laptop sleep AND reboots, use a launchd LaunchAgent on macOS:
 
 ```bash
 mkdir -p ~/Library/LaunchAgents ~/Library/Logs
