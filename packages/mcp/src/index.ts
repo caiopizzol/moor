@@ -1,3 +1,4 @@
+#!/usr/bin/env bun
 import { McpServer, StdioServerTransport } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
@@ -9,6 +10,39 @@ const apiKey = process.env.MOOR_API_KEY || "";
 if (!baseUrl || !apiKey) {
   console.error("MOOR_URL and MOOR_API_KEY environment variables are required");
   process.exit(1);
+}
+
+// --- Startup probe ---
+// Fail closed: verify URL is reachable AND the bearer token authenticates before
+// registering tools. Misconfigs surface here with a clear stderr message instead
+// of later as opaque tool-call failures inside the MCP client.
+{
+  let probeRes: Response;
+  try {
+    probeRes = await fetch(`${baseUrl}/api/projects`, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+      signal: AbortSignal.timeout(5000),
+    });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error(`Cannot reach moor at ${baseUrl}: ${msg}`);
+    console.error("Check MOOR_URL and that moor is running (and tunneled, if remote).");
+    process.exit(1);
+  }
+  if (probeRes.status === 401) {
+    console.error(`Authentication failed against ${baseUrl}.`);
+    console.error("Check MOOR_API_KEY matches the value in moor's .env on the server.");
+    process.exit(1);
+  }
+  if (probeRes.status === 503) {
+    console.error(`moor at ${baseUrl} returned 503.`);
+    console.error("Likely cause: MOOR_INITIAL_PASSWORD not configured. Set it and restart moor.");
+    process.exit(1);
+  }
+  if (!probeRes.ok) {
+    console.error(`moor at ${baseUrl} returned ${probeRes.status} on startup probe.`);
+    process.exit(1);
+  }
 }
 
 // --- HTTP client ---

@@ -154,22 +154,46 @@ Old key stops working immediately on container restart. Update any CLI/MCP confi
 
 ## MCP Server
 
-Connect any MCP-compatible AI agent (Claude Code, Cursor, etc.) to manage your projects.
+Connect any MCP-compatible AI agent (Claude Code, Cursor, etc.) to manage your projects. The MCP server ships as a standalone npm package - no need to clone this repo.
+
+**Claude Code** (`~/.claude.json`):
 
 ```json
 {
   "mcpServers": {
     "moor": {
-      "command": "bun",
-      "args": ["run", "packages/mcp/src/index.ts"],
+      "command": "bunx",
+      "args": ["@moor-sh/mcp"],
       "env": {
-        "MOOR_URL": "https://moor.example.com",
+        "MOOR_URL": "http://127.0.0.1:8080",
         "MOOR_API_KEY": "your-api-key"
       }
     }
   }
 }
 ```
+
+**Codex** (`~/.codex/config.toml`):
+
+```toml
+[mcp_servers.moor]
+command = "bunx"
+args = ["@moor-sh/mcp"]
+
+[mcp_servers.moor.env]
+MOOR_URL = "http://127.0.0.1:8080"
+MOOR_API_KEY = "your-api-key"
+```
+
+`MOOR_API_KEY` must match the value in moor's `.env` on the server. See [API key](#api-key) for how to generate one.
+
+For a remote moor with the admin on loopback, open an SSH tunnel from your laptop before starting the MCP client:
+
+```bash
+ssh -fNL 8080:127.0.0.1:3000 your-server
+```
+
+`MOOR_URL=http://127.0.0.1:8080` matches the laptop side of that tunnel. The MCP runs a startup probe against `MOOR_URL` + `MOOR_API_KEY` and exits with a clear error if either is wrong or the server is unreachable - misconfigs surface immediately instead of as opaque tool failures inside the AI client.
 
 ## Stack
 
