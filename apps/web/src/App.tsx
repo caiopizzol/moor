@@ -5,10 +5,9 @@ import { ProjectDetail } from "./components/ProjectDetail";
 import { ProjectList } from "./components/ProjectList";
 import { ProjectModal } from "./components/ProjectModal";
 import { ServerView } from "./components/ServerView";
-import { SetupPage } from "./components/SetupPage";
 import { api, type Project } from "./lib/api";
 
-type AuthState = "loading" | "setup" | "login" | "authenticated";
+type AuthState = "loading" | "needs-setup" | "login" | "authenticated";
 
 type View = { type: "project"; id: number } | { type: "server" } | null;
 
@@ -40,9 +39,9 @@ export function App() {
 
   const checkAuth = useCallback(async () => {
     try {
-      const { setup, authenticated } = await api.auth.status();
-      if (!setup) setAuthState("setup");
-      else if (!authenticated) setAuthState("login");
+      const result = await api.auth.status();
+      if (result.needsSetup) setAuthState("needs-setup");
+      else if (!result.authenticated) setAuthState("login");
       else setAuthState("authenticated");
     } catch {
       setAuthState("login");
@@ -122,8 +121,27 @@ export function App() {
     );
   }
 
-  if (authState === "setup") {
-    return <SetupPage onSuccess={() => setAuthState("authenticated")} />;
+  if (authState === "needs-setup") {
+    return (
+      <div className="auth-page">
+        <div className="auth-card">
+          <Logo />
+          <h1>Configuration required</h1>
+          <p>
+            No admin password is configured. Set <code>MOOR_INITIAL_PASSWORD</code> in the{" "}
+            <code>.env</code> file next to <code>docker-compose.yml</code> and restart the
+            container.
+          </p>
+          <pre>{`# .env
+MOOR_INITIAL_PASSWORD=your-strong-password`}</pre>
+          <p>
+            Once an admin exists, this page becomes the login page. The env var is create-only -
+            ignored on every subsequent boot - so it is safe to leave in place. Remove it after
+            first login only if you want to keep the password out of the host's compose env.
+          </p>
+        </div>
+      </div>
+    );
   }
 
   if (authState === "login") {

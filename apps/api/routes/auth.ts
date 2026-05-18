@@ -5,7 +5,6 @@ import {
   deleteSession,
   getSessionFromCookie,
   isSetupComplete,
-  setupPassword,
   validateSession,
   verifyPassword,
 } from "../auth";
@@ -19,34 +18,15 @@ export async function handleAuth(req: Request, url: URL): Promise<Response | nul
   if (!url.pathname.startsWith("/api/auth")) return null;
 
   if (url.pathname === "/api/auth/status" && req.method === "GET") {
-    const setup = isSetupComplete();
     const token = getSessionFromCookie(req);
     const authenticated = token ? validateSession(token) : false;
-    return Response.json({ setup, authenticated });
-  }
-
-  if (url.pathname === "/api/auth/setup" && req.method === "POST") {
-    if (isSetupComplete()) {
-      return Response.json({ error: "Already configured" }, { status: 400 });
-    }
-    const body = (await req.json()) as { password?: string };
-    if (!body.password || body.password.length < 8) {
-      return Response.json({ error: "Password must be at least 8 characters" }, { status: 400 });
-    }
-    await setupPassword(body.password);
-    const token = createSession();
-    return new Response(JSON.stringify({ ok: true }), {
-      status: 201,
-      headers: {
-        "Content-Type": "application/json",
-        "Set-Cookie": buildSessionCookie(token, req),
-      },
-    });
+    return Response.json({ authenticated });
   }
 
   if (url.pathname === "/api/auth/login" && req.method === "POST") {
     if (!isSetupComplete()) {
-      return Response.json({ error: "Setup required" }, { status: 400 });
+      // Should not be reachable: the 503 guard in index.ts blocks /api/* when no admin exists.
+      return Response.json({ error: "Admin password not configured" }, { status: 503 });
     }
     // Rate limiting
     const now = Date.now();

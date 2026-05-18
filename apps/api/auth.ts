@@ -7,14 +7,6 @@ export function isSetupComplete(): boolean {
   return db.query("SELECT id FROM auth WHERE id = 1").get() !== null;
 }
 
-export async function setupPassword(password: string): Promise<void> {
-  if (isSetupComplete()) {
-    throw new Error("Password already configured");
-  }
-  const hash = await Bun.password.hash(password, { algorithm: "argon2id" });
-  db.query("INSERT INTO auth (id, password_hash) VALUES (1, ?)").run(hash);
-}
-
 export async function verifyPassword(password: string): Promise<boolean> {
   const row = db.query("SELECT password_hash FROM auth WHERE id = 1").get() as {
     password_hash: string;
@@ -90,11 +82,44 @@ export function validateBearerToken(req: Request): boolean {
   return timingSafeEqual(encoder.encode(token), encoder.encode(apiKey));
 }
 
+/** Process MOOR_INITIAL_PASSWORD on startup. Create-only: warns and skips if an admin
+ *  already exists, so leaving it set in compose is not destructive. */
+export function checkInitialPassword(): void {
+  const initial = process.env.MOOR_INITIAL_PASSWORD;
+  if (!initial) return;
+
+  if (process.env.MOOR_RESET_PASSWORD) {
+    throw new Error(
+      "Both MOOR_INITIAL_PASSWORD and MOOR_RESET_PASSWORD are set. " +
+        "Pick one - they have different semantics (create vs reset). Aborting startup.",
+    );
+  }
+
+  if (isSetupComplete()) {
+    console.warn(
+      "[auth] MOOR_INITIAL_PASSWORD is set but an admin already exists. " +
+        "Ignoring (use MOOR_RESET_PASSWORD to reset).",
+    );
+    delete process.env.MOOR_INITIAL_PASSWORD;
+    return;
+  }
+
+  if (initial.length < 8) {
+    throw new Error("MOOR_INITIAL_PASSWORD must be at least 8 characters");
+  }
+
+  console.log("[auth] MOOR_INITIAL_PASSWORD detected - creating initial admin");
+  const hash = Bun.password.hashSync(initial, { algorithm: "argon2id" });
+  db.query("INSERT INTO auth (id, password_hash) VALUES (1, ?)").run(hash);
+  delete process.env.MOOR_INITIAL_PASSWORD;
+  console.log("[auth] Initial admin created.");
+}
+
 export function checkPasswordReset(): void {
   const newPassword = process.env.MOOR_RESET_PASSWORD;
   if (!newPassword) return;
 
-  console.log("[auth] MOOR_RESET_PASSWORD detected — resetting password");
+  console.log("[auth] MOOR_RESET_PASSWORD detected - resetting password");
   const hash = Bun.password.hashSync(newPassword, { algorithm: "argon2id" });
   db.query("DELETE FROM auth WHERE id = 1").run();
   db.query("INSERT INTO auth (id, password_hash) VALUES (1, ?)").run(hash);

@@ -18,8 +18,14 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
-    # environment:
-    #   - MOOR_RESET_PASSWORD=your-new-password
+    environment:
+      # Read from .env on the host. The installer generates a random
+      # MOOR_INITIAL_PASSWORD on first run. Create-only: ignored once an
+      # admin exists, so the line is safe to leave in place.
+      - MOOR_INITIAL_PASSWORD
+      # Uncomment to reset an existing admin's password (also clears sessions).
+      # Use one or the other, not both - moor refuses to start if both are set.
+      # - MOOR_RESET_PASSWORD
 
   caddy:
     image: caddy:2-alpine
