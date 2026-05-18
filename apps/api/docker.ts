@@ -359,23 +359,20 @@ export async function createAndStartContainer(
   // Connect to the compose default network so Caddy can reach the container.
   // Resolved by compose labels (not hardcoded).
   //
-  // Dev mode (running moor outside compose): network lookup throws; we warn
-  // and continue without attaching. Caddy will not be able to reach the
-  // container, which is expected outside compose.
-  //
-  // Production: any failure after the network is found - including a real
-  // attach error from Docker - propagates as an exception so the caller knows
-  // the container is not reachable from Caddy.
-  let networkName: string | null = null;
+  // We only soft-skip the dev-mode case (moor running outside compose, so
+  // self-inspect fails). Once we know moor IS under compose, any failure in
+  // the network list or the attach itself is a real production error and
+  // propagates - otherwise we'd be starting a container Caddy cannot reach.
+  let underCompose = false;
   try {
-    networkName = await findDefaultNetworkName();
+    await getComposeProject();
+    underCompose = true;
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    console.warn(
-      `[createContainer] compose default network not found; skipping connect (dev mode?): ${msg}`,
-    );
+    console.warn(`[createContainer] not running under compose; skipping network attach: ${msg}`);
   }
-  if (networkName) {
+  if (underCompose) {
+    const networkName = await findDefaultNetworkName();
     const connectRes = await dockerFetch(
       `/v1.44/networks/${encodeURIComponent(networkName)}/connect`,
       {
