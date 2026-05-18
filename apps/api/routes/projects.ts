@@ -2,6 +2,24 @@ import { syncCaddyRoutes } from "../caddy";
 import db from "../db";
 import { removeContainer, stopContainer } from "../docker";
 
+/** Run Caddy sync. On failure, return a 500 with a clear message that the DB write
+ *  succeeded but the route is not active, plus the manual recovery command. The
+ *  DB state is intentionally preserved: it captures the operator's intent and a
+ *  retry will be idempotent. Returns null on success so callers can continue. */
+async function applyCaddySync(action: string): Promise<Response | null> {
+  try {
+    await syncCaddyRoutes();
+    return null;
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return new Response(
+      `${action} saved, but Caddy route apply failed: ${msg}\n` +
+        "Manual recovery: docker compose exec caddy caddy reload --config /app/data/Caddyfile --adapter caddyfile",
+      { status: 500 },
+    );
+  }
+}
+
 export async function handleProjects(req: Request, url: URL): Promise<Response | null> {
   const match = url.pathname.match(/^\/api\/projects(?:\/(\d+))?$/);
   if (!match) return null;
@@ -46,7 +64,8 @@ export async function handleProjects(req: Request, url: URL): Promise<Response |
     const hadDomain = !!project?.domain;
     db.query("DELETE FROM projects WHERE id = ?").run(id);
     if (hadDomain) {
-      syncCaddyRoutes().catch((e) => console.error("[projects] caddy sync failed:", e));
+      const failed = await applyCaddySync("Project deletion");
+      if (failed) return failed;
     }
     return new Response(null, { status: 204 });
   }
@@ -100,7 +119,8 @@ async function handleCreate(req: Request): Promise<Response> {
     );
 
   if (domain?.trim()) {
-    syncCaddyRoutes().catch((e) => console.error("[projects] caddy sync failed:", e));
+    const failed = await applyCaddySync("Project");
+    if (failed) return failed;
   }
 
   console.log("[projects] created:", JSON.stringify(result));
@@ -177,7 +197,8 @@ async function handleUpdate(req: Request, id: number): Promise<Response> {
 
   // Sync Caddy if domain-related fields changed
   if ("domain" in body || "domain_port" in body) {
-    syncCaddyRoutes().catch((e) => console.error("[projects] caddy sync failed:", e));
+    const failed = await applyCaddySync("Project");
+    if (failed) return failed;
   }
 
   return Response.json(row);
