@@ -154,46 +154,80 @@ Old key stops working immediately on container restart. Update any CLI/MCP confi
 
 ## MCP Server
 
-Connect any MCP-compatible AI agent (Claude Code, Cursor, etc.) to manage your projects. The MCP server ships as a standalone npm package - no need to clone this repo.
+Connect any MCP-compatible AI agent (Claude Code, Cursor, etc.) to manage your moor projects via stdio. The server ships as a standalone npm package - no repo clone needed.
 
-**Claude Code** (`~/.claude.json`):
+### Setup
 
-```json
-{
-  "mcpServers": {
-    "moor": {
-      "command": "bunx",
-      "args": ["@moor-sh/mcp"],
-      "env": {
-        "MOOR_URL": "http://127.0.0.1:8080",
-        "MOOR_API_KEY": "your-api-key"
-      }
-    }
-  }
-}
-```
+1. **Generate or set `MOOR_API_KEY` on your moor server.** Easiest path is the installer's opt-in flag, which writes a strong random key into `.env` and prints it once:
 
-**Codex** (`~/.codex/config.toml`):
+   ```bash
+   curl -fsSL moor.sh/install | sh -s -- --with-api-key
+   ```
 
-```toml
-[mcp_servers.moor]
-command = "bunx"
-args = ["@moor-sh/mcp"]
+   Or add `MOOR_API_KEY=<random>` to `.env` manually. See [API key](#api-key) for the full reference. Treat the value like SSH access - it grants full admin control of the host.
 
-[mcp_servers.moor.env]
-MOOR_URL = "http://127.0.0.1:8080"
-MOOR_API_KEY = "your-api-key"
-```
+2. **Restart moor** so the new env var is picked up:
 
-`MOOR_API_KEY` must match the value in moor's `.env` on the server. See [API key](#api-key) for how to generate one.
+   ```bash
+   docker compose up -d
+   ```
 
-For a remote moor with the admin on loopback, open an SSH tunnel from your laptop before starting the MCP client:
+3. **For a remote moor with private admin** (the default), open an SSH tunnel from the laptop running your MCP client:
 
-```bash
-ssh -fNL 8080:127.0.0.1:3000 your-server
-```
+   ```bash
+   ssh -fNL 8080:127.0.0.1:3000 your-server
+   ```
 
-`MOOR_URL=http://127.0.0.1:8080` matches the laptop side of that tunnel. The MCP runs a startup probe against `MOOR_URL` + `MOOR_API_KEY` and exits with a clear error if either is wrong or the server is unreachable - misconfigs surface immediately instead of as opaque tool failures inside the AI client.
+   `-fN` runs ssh backgrounded with no remote command. The tunnel must stay up while the MCP client is in use. Skip this step if moor is on the same machine as the client.
+
+4. **Configure the MCP client** by pasting one of the snippets below into its config file.
+
+   **Claude Code** (`~/.claude.json`):
+
+   ```json
+   {
+     "mcpServers": {
+       "moor": {
+         "command": "bunx",
+         "args": ["@moor-sh/mcp"],
+         "env": {
+           "MOOR_URL": "http://127.0.0.1:8080",
+           "MOOR_API_KEY": "your-api-key"
+         }
+       }
+     }
+   }
+   ```
+
+   **Codex** (`~/.codex/config.toml`):
+
+   ```toml
+   [mcp_servers.moor]
+   command = "bunx"
+   args = ["@moor-sh/mcp"]
+
+   [mcp_servers.moor.env]
+   MOOR_URL = "http://127.0.0.1:8080"
+   MOOR_API_KEY = "your-api-key"
+   ```
+
+   For a moor running on the same machine as the client, change `MOOR_URL` to `http://localhost:3000` and skip step 3.
+
+5. **Smoke-test auth and connectivity** before relying on the integration:
+
+   ```bash
+   MOOR_URL=http://127.0.0.1:8080 MOOR_API_KEY=your-api-key bunx @moor-sh/mcp < /dev/null
+   ```
+
+   Silence means it connected, authenticated, and is waiting for an MCP client on stdio (the process won't print anything else). Any stderr line tells you what's wrong:
+
+   - `Cannot reach moor at ...` - URL unreachable or tunnel is down.
+   - `Authentication failed` - `MOOR_API_KEY` doesn't match the server.
+   - `moor at ... returned 503` - admin password not configured (see [First boot](#first-boot)).
+
+   Restart your MCP client after a successful smoke test for it to pick up the new config.
+
+6. **Rotate or remove the key.** Rotating `MOOR_API_KEY` on the server means updating every MCP client config that uses it - the bearer is checked on every request, including each MCP-server startup. To revoke MCP access entirely, remove the `MOOR_API_KEY=` line from the server's `.env` and `docker compose up -d`. Bearer auth disables; the web UI keeps working through session cookies.
 
 ## Stack
 
