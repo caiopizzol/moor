@@ -29,15 +29,12 @@ curl -fsSL "$BASE/docker-compose.yml" -o docker-compose.yml
 
 touch .env
 
-# Pin the compose project name so moor's hardcoded container/network references resolve.
+# Default compose project name to "moor" for predictable container names in
+# docker ps output. Moor resolves the actual project from compose labels at
+# runtime, so a different value here works too - this is just for naming.
 existing=$(grep -E "^COMPOSE_PROJECT_NAME=" .env | head -1 | cut -d= -f2)
 if [ -z "$existing" ]; then
   echo "COMPOSE_PROJECT_NAME=moor" >> .env
-elif [ "$existing" != "moor" ]; then
-  echo "Error: .env already has COMPOSE_PROJECT_NAME=$existing." >&2
-  echo "Moor requires COMPOSE_PROJECT_NAME=moor (hardcoded container/network names)." >&2
-  echo "Remove or change that line in .env and re-run." >&2
-  exit 1
 fi
 
 # Generate a random initial admin password if one isn't already set.

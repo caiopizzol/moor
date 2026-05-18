@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 import db from "./db";
-import { execInContainer } from "./docker";
+import { execInContainer, findCaddyContainerId } from "./docker";
 
 type DomainProject = {
   id: number;
@@ -12,7 +12,6 @@ type DomainProject = {
 const DATA_DIR = resolve(import.meta.dir, "..", "..", "data");
 const CADDY_ROUTES_PATH = resolve(DATA_DIR, "moor-routes");
 const CADDY_CONFIG_PATH = resolve(DATA_DIR, "Caddyfile");
-const CADDY_CONTAINER = "moor-caddy-1";
 
 // Default Caddyfile shipped on first boot. The admin UI is intentionally NOT
 // reverse-proxied here. Public exposure of the admin requires an explicit
@@ -67,8 +66,9 @@ async function reloadCaddy(): Promise<void> {
     return;
   }
 
+  const caddyContainerId = await findCaddyContainerId();
   const { exitCode, stdout, stderr } = await execInContainer(
-    CADDY_CONTAINER,
+    caddyContainerId,
     "caddy reload --config /app/data/Caddyfile --adapter caddyfile",
   );
 
