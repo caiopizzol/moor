@@ -65,12 +65,18 @@ fi
 API_KEY=""
 API_KEY_NOTE=""
 if [ "$WITH_API_KEY" = "1" ]; then
-  if grep -q "^MOOR_API_KEY=" .env; then
-    API_KEY=$(grep "^MOOR_API_KEY=" .env | head -1 | cut -d= -f2-)
+  API_KEY=$(grep "^MOOR_API_KEY=" .env | head -1 | cut -d= -f2-)
+  if [ -n "$API_KEY" ]; then
     API_KEY_NOTE="reusing existing MOOR_API_KEY from .env"
   else
     API_KEY=$(head -c 80 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 40)
-    echo "MOOR_API_KEY=$API_KEY" >> .env
+    if grep -q "^MOOR_API_KEY=" .env; then
+      # Existing empty value (e.g. `MOOR_API_KEY=`) - replace in-place so we
+      # don't leave duplicate lines that confuse compose.
+      sed -i.bak "s|^MOOR_API_KEY=.*|MOOR_API_KEY=$API_KEY|" .env && rm -f .env.bak
+    else
+      echo "MOOR_API_KEY=$API_KEY" >> .env
+    fi
     API_KEY_NOTE="generated new MOOR_API_KEY in .env"
   fi
 fi
