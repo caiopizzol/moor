@@ -8,7 +8,7 @@
     "url": "https://github.com/caiopizzol/moor.git",
     "directory": "packages/mcp"
   },
-  "homepage": "https://github.com/caiopizzol/moor#mcp-server",
+  "homepage": "https://github.com/caiopizzol/moor/tree/main/packages/mcp",
   "bugs": "https://github.com/caiopizzol/moor/issues",
   "keywords": [
     "moor",
