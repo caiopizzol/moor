@@ -32,17 +32,28 @@ docker compose up -d
 
 The installer fetches `docker-compose.yml` and writes a `.env` pinning the Compose project name. Moor runs behind Caddy on ports 80/443.
 
-### Accessing the admin
+### First boot
 
-The admin UI is bound to the host's loopback interface (`127.0.0.1:3000`) by default. Caddy serves only project domains on 80/443. To reach the admin, open an SSH tunnel:
+Before `docker compose up -d`, set the initial admin password in `docker-compose.yml`:
+
+```yaml
+services:
+  moor:
+    environment:
+      - MOOR_INITIAL_PASSWORD=your-strong-password
+```
+
+Moor fails closed when no admin password is configured (every API route returns 503), so this step is required. If an admin already exists, the env var is ignored with a warning - it is safe to leave in place or remove after first boot.
+
+To reach the admin, open an SSH tunnel from your laptop:
 
 ```bash
 ssh -L 8080:127.0.0.1:3000 your-server
 ```
 
-Then open `http://localhost:8080` in your browser. The first request shows a setup page where you set the initial admin password. Until that password is set, the page is unauthenticated — keep it off the public network by leaving the default loopback bind in place.
+Then open `http://localhost:8080` and log in with the password you set. The admin is bound to `127.0.0.1:3000` by default; Caddy on 80/443 serves only project domains. To expose the admin publicly later, either change `127.0.0.1:3000:3000` to `3000:3000` in `docker-compose.yml` (not recommended without an external auth proxy), or add an explicit admin domain block to `/app/data/Caddyfile` (see "Custom domain for the admin UI" below).
 
-To expose the admin publicly later, either change `127.0.0.1:3000:3000` to `3000:3000` in `docker-compose.yml` (not recommended without an external auth proxy), or add an explicit admin domain block to `/app/data/Caddyfile` (see "Custom domain for the admin UI" below).
+To reset a forgotten admin password, set `MOOR_RESET_PASSWORD` instead of `MOOR_INITIAL_PASSWORD` and restart. That env var clears all sessions in addition to rewriting the password. Don't set both at the same time - moor refuses to start.
 
 ### Custom domain for the admin UI
 

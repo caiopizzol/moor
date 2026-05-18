@@ -1,8 +1,10 @@
 import { join } from "node:path";
 import {
+  checkInitialPassword,
   checkPasswordReset,
   cleanExpiredSessions,
   getSessionFromCookie,
+  isSetupComplete,
   validateBearerToken,
   validateSession,
 } from "./auth";
@@ -25,6 +27,7 @@ import { clearAllSessions, startSessionCleanup } from "./terminal-sessions";
 // Initialize DB (side-effect import runs migrations)
 import "./db";
 
+checkInitialPassword();
 checkPasswordReset();
 ensureRoutesFile();
 
@@ -46,6 +49,17 @@ const server = Bun.serve({
 
     // API routes
     if (url.pathname.startsWith("/api/")) {
+      // Fail closed if no admin password is configured. Health is intentionally
+      // unaffected so the Docker healthcheck can still mark the container ready.
+      if (!isSetupComplete()) {
+        return Response.json(
+          {
+            error:
+              "Admin password is not configured. Set MOOR_INITIAL_PASSWORD in docker-compose.yml and restart.",
+          },
+          { status: 503 },
+        );
+      }
       try {
         // Auth routes are always accessible
         const authRes = await handleAuth(req, url);

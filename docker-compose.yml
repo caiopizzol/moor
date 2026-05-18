@@ -18,8 +18,14 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
-    # environment:
-    #   - MOOR_RESET_PASSWORD=your-new-password
+    environment:
+      # Required on first boot. If no admin exists, moor creates one with this
+      # password. If an admin already exists, this is ignored with a warning.
+      # Pick a strong value, boot once, then optionally remove this line.
+      - MOOR_INITIAL_PASSWORD=change-me-before-first-boot
+      # Uncomment to reset an existing admin's password (also clears sessions).
+      # Use one or the other, not both.
+      # - MOOR_RESET_PASSWORD=your-new-password
 
   caddy:
     image: caddy:2-alpine

@@ -79,12 +79,16 @@ async function request<T>(path: string, opts?: RequestInit): Promise<T> {
 
 export const api = {
   auth: {
-    status: () => request<{ setup: boolean; authenticated: boolean }>("/api/auth/status"),
-    setup: (password: string) =>
-      request<{ ok: boolean }>("/api/auth/setup", {
-        method: "POST",
-        body: JSON.stringify({ password }),
-      }),
+    status: async (): Promise<{ authenticated: boolean; needsSetup?: true }> => {
+      try {
+        return await request<{ authenticated: boolean }>("/api/auth/status");
+      } catch (err) {
+        if (err instanceof Error && err.message.startsWith("503:")) {
+          return { authenticated: false, needsSetup: true };
+        }
+        throw err;
+      }
+    },
     login: (password: string) =>
       request<{ ok: boolean }>("/api/auth/login", {
         method: "POST",
