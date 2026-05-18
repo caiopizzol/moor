@@ -1,3 +1,6 @@
+#!/usr/bin/env bun
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { envCommand } from "./commands/env";
 import { execCommand } from "./commands/exec";
 import { logsCommand } from "./commands/logs";
@@ -6,7 +9,15 @@ import { restartCommand } from "./commands/restart";
 import { statsCommand } from "./commands/stats";
 import { statusCommand } from "./commands/status";
 
-const VERSION = "0.1.0";
+// Read version from package.json at runtime so the binary always reports the
+// real shipped version. import.meta.dir resolves to packages/cli/src in this
+// repo and to <install-root>/src in a published install; ../package.json is
+// the package root in both cases.
+const VERSION = (
+  JSON.parse(readFileSync(join(import.meta.dir, "..", "package.json"), "utf8")) as {
+    version: string;
+  }
+).version;
 
 function printHelp() {
   console.log(`moor - CLI for Moor server management
