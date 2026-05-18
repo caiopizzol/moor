@@ -1,8 +1,8 @@
 name: CI
 
+# PRs only. Pushes to main are validated by each release-*.yml workflow's
+# own check job; running ci.yml again here would be duplicate work.
 on:
-  push:
-    branches: [main]
   pull_request:
     branches: [main]
 
