@@ -23,6 +23,11 @@ services:
       # MOOR_INITIAL_PASSWORD on first run. Create-only: ignored once an
       # admin exists, so the line is safe to leave in place.
       - MOOR_INITIAL_PASSWORD
+      # Optional. Set MOOR_API_KEY=<value> in .env to enable bearer-token
+      # access for the CLI, MCP, and external tooling. Treat the value like
+      # SSH access: it grants full admin rights. The installer can generate
+      # this for you with `--with-api-key`. Unset = bearer auth disabled.
+      - MOOR_API_KEY
       # Uncomment to reset an existing admin's password (also clears sessions).
       # Use one or the other, not both - moor refuses to start if both are set.
       # - MOOR_RESET_PASSWORD

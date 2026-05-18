@@ -113,14 +113,44 @@ moor env set <project> KEY=VALUE     # set env vars + restart
 moor stats                           # server resource usage
 ```
 
-Enable API key auth by setting `MOOR_API_KEY` in your `docker-compose.yml`:
+### API key
 
-```yaml
-services:
-  moor:
-    environment:
-      - MOOR_API_KEY=your-secret-key
+`MOOR_API_KEY` enables bearer-token access for the CLI, MCP, and any external tooling. **Treat the value like SSH access** - moor mounts `/var/run/docker.sock`, so a valid bearer token grants full root-equivalent control of the host. The web UI is unaffected; it uses session cookies and an admin password.
+
+The shipped `docker-compose.yml` already references `MOOR_API_KEY` from `.env`, so enabling it is a `.env` edit, not a compose change.
+
+**Generate at install time** (opt-in flag):
+
+```bash
+curl -fsSL moor.sh/install | sh -s -- --with-api-key
 ```
+
+The installer writes a random 40-character key to `.env` and prints it once.
+
+**Enable on an existing install**:
+
+```bash
+echo "MOOR_API_KEY=$(head -c 80 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 40)" >> .env
+docker compose up -d
+```
+
+**Verify**:
+
+```bash
+KEY=$(grep '^MOOR_API_KEY=' .env | cut -d= -f2-)
+curl -i -H "Authorization: Bearer $KEY" http://127.0.0.1:3000/api/projects
+```
+
+`200` means the key works. `401` with the bearer means the value in `.env` doesn't match what the container is using - check that `docker compose up -d` ran after the `.env` edit.
+
+**Rotate**:
+
+```bash
+sed -i "s|^MOOR_API_KEY=.*|MOOR_API_KEY=$(head -c 80 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 40)|" .env
+docker compose up -d
+```
+
+Old key stops working immediately on container restart. Update any CLI/MCP configs with the new value.
 
 ## MCP Server
 

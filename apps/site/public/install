@@ -5,6 +5,13 @@ REPO="caiopizzol/moor"
 BRANCH="main"
 BASE="https://raw.githubusercontent.com/$REPO/$BRANCH"
 
+WITH_API_KEY=0
+for arg in "$@"; do
+  case "$arg" in
+    --with-api-key) WITH_API_KEY=1 ;;
+  esac
+done
+
 echo "Installing moor..."
 
 # Check dependencies
@@ -52,13 +59,44 @@ else
   PASSWORD_NOTE="generated new MOOR_INITIAL_PASSWORD in .env"
 fi
 
+# Optional: generate a MOOR_API_KEY for CLI/MCP/bearer-token access.
+# Opt-in via --with-api-key. Grants full admin (Docker socket) access -
+# treat the value like SSH access.
+API_KEY=""
+API_KEY_NOTE=""
+if [ "$WITH_API_KEY" = "1" ]; then
+  API_KEY=$(grep "^MOOR_API_KEY=" .env | head -1 | cut -d= -f2-)
+  if [ -n "$API_KEY" ]; then
+    API_KEY_NOTE="reusing existing MOOR_API_KEY from .env"
+  else
+    API_KEY=$(head -c 80 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 40)
+    if grep -q "^MOOR_API_KEY=" .env; then
+      # Existing empty value (e.g. `MOOR_API_KEY=`) - replace in-place so we
+      # don't leave duplicate lines that confuse compose.
+      sed -i.bak "s|^MOOR_API_KEY=.*|MOOR_API_KEY=$API_KEY|" .env && rm -f .env.bak
+    else
+      echo "MOOR_API_KEY=$API_KEY" >> .env
+    fi
+    API_KEY_NOTE="generated new MOOR_API_KEY in .env"
+  fi
+fi
+
 echo ""
 echo "Done! Files created/updated:"
 echo "  - docker-compose.yml"
 echo "  - .env ($PASSWORD_NOTE)"
+if [ -n "$API_KEY_NOTE" ]; then
+  echo "  - .env ($API_KEY_NOTE)"
+fi
 echo ""
 echo "Initial admin password (also stored in .env):"
 echo "  $INITIAL_PASSWORD"
+if [ -n "$API_KEY" ]; then
+  echo ""
+  echo "MOOR_API_KEY (also stored in .env, grants full admin access):"
+  echo "  $API_KEY"
+  echo "  CLI / MCP setup: https://github.com/caiopizzol/moor#cli"
+fi
 echo ""
 echo "Next steps:"
 echo "  1. Run: docker compose up -d"
@@ -67,6 +105,11 @@ echo "       ssh -L 8080:127.0.0.1:3000 your-server"
 echo "  3. Open http://localhost:8080 and log in with the password above."
 echo "  4. Optionally remove MOOR_INITIAL_PASSWORD from .env after first login."
 echo ""
+if [ -z "$API_KEY" ]; then
+  echo "To enable CLI/MCP later, add MOOR_API_KEY=<random> to .env and run"
+  echo "docker compose up -d. See the README for details."
+  echo ""
+fi
 echo "The admin UI is bound to 127.0.0.1:3000 by default; Caddy on 80/443"
 echo "serves only project domains you add later. See the README for putting"
 echo "the admin on a public domain."
