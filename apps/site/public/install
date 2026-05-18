@@ -47,7 +47,10 @@ if grep -q "^MOOR_INITIAL_PASSWORD=" .env; then
   INITIAL_PASSWORD=$(grep "^MOOR_INITIAL_PASSWORD=" .env | head -1 | cut -d= -f2-)
   PASSWORD_NOTE="reusing existing MOOR_INITIAL_PASSWORD from .env"
 else
-  INITIAL_PASSWORD=$(head -c 24 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 24)
+  # Read more random bytes than needed so the alphanumeric filter has plenty
+  # of input to draw from. 48 bytes → ~64 base64 chars → ~60 after stripping
+  # +/=, head -c 24 always succeeds with comfortable margin.
+  INITIAL_PASSWORD=$(head -c 48 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 24)
   echo "MOOR_INITIAL_PASSWORD=$INITIAL_PASSWORD" >> .env
   PASSWORD_NOTE="generated new MOOR_INITIAL_PASSWORD in .env"
 fi
