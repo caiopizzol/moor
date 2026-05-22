@@ -1,3 +1,4 @@
+import { promises as dns } from "node:dns";
 import { resolve } from "node:path";
 import db from "./db";
 import { execInContainer, findCaddyContainerId } from "./docker";
@@ -94,37 +95,57 @@ export async function ensureRoutesFile(): Promise<void> {
   }
 }
 
+// #31: the previous implementation shelled out to `dig` and `curl` via Bun.spawn.
+// Neither binary ships in the moor container image, so checkDns silently returned
+// nulls for every domain. Switching to node:dns/promises and fetch removes the
+// host-binary dependency and keeps the response shape unchanged.
+
+const IPV4 = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/;
+const DNS_TIMEOUT_MS = 3000;
+const SERVER_IP_TIMEOUT_MS = 3000;
+
+/** Look up the first IPv4 A record for `domain`. ENOTFOUND, ENODATA, SERVFAIL,
+ *  and timeouts all collapse to a null result, matching the existing contract
+ *  ("the domain doesn't resolve"). The resolver is injectable for tests. */
+export async function lookupA(
+  domain: string,
+  resolve4: (host: string) => Promise<string[]> = (host) => dns.resolve4(host),
+): Promise<string | null> {
+  try {
+    const addrs = await withTimeout(resolve4(domain), DNS_TIMEOUT_MS);
+    const first = addrs?.find((a) => IPV4.test(a));
+    return first ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Fetch the server's public IPv4 from api.ipify.org. Returns null on any
+ *  failure (timeout, network error, non-2xx, malformed body). Never throws. */
+export async function getServerIp(fetchFn: typeof fetch = fetch): Promise<string | null> {
+  try {
+    const res = await fetchFn("https://api.ipify.org", {
+      signal: AbortSignal.timeout(SERVER_IP_TIMEOUT_MS),
+    });
+    if (!res.ok) return null;
+    const text = (await res.text()).trim();
+    return IPV4.test(text) ? text : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Check if a domain's DNS resolves and optionally matches the server's IP. */
 export async function checkDns(
   domain: string,
 ): Promise<{ resolves: boolean; ip: string | null; serverIp: string | null }> {
-  let ip: string | null = null;
-  let serverIp: string | null = null;
-
-  try {
-    const proc = Bun.spawn(["dig", "+short", domain], { stdout: "pipe", stderr: "pipe" });
-    await proc.exited;
-    const output = (await new Response(proc.stdout).text()).trim();
-    // dig may return multiple lines; take the first A record (IPv4)
-    const firstIp = output.split("\n").find((line) => /^\d+\.\d+\.\d+\.\d+$/.test(line));
-    ip = firstIp || null;
-  } catch {
-    // dig not available
-  }
-
-  try {
-    const proc = Bun.spawn(["curl", "-s", "-4", "https://ifconfig.me"], {
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    await proc.exited;
-    const output = (await new Response(proc.stdout).text()).trim();
-    if (/^\d+\.\d+\.\d+\.\d+$/.test(output)) {
-      serverIp = output;
-    }
-  } catch {
-    // curl not available
-  }
-
+  const [ip, serverIp] = await Promise.all([lookupA(domain), getServerIp()]);
   return { resolves: ip !== null, ip, serverIp };
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) => setTimeout(() => reject(new Error(`timeout after ${ms}ms`)), ms)),
+  ]);
 }
