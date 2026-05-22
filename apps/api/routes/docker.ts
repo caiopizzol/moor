@@ -6,6 +6,7 @@ import {
   createAndStartContainer,
   EXEC_TIMEOUT_MAX_MS,
   EXEC_TIMEOUT_MIN_MS,
+  ExecTimeoutError,
   execInContainer,
   getContainerLogs,
   pullImageStreaming,
@@ -288,6 +289,23 @@ async function handleExec(req: Request, project: Project): Promise<Response> {
     );
     return Response.json(result);
   } catch (e) {
+    if (e instanceof ExecTimeoutError) {
+      console.error(`[exec] TIMEOUT: ${e.message}`);
+      return Response.json(
+        {
+          error: "timeout",
+          timeout_ms: e.timeout_ms,
+          // `killed` is the strict success signal: a target was located AND no
+          // descendants survived in a live state. Zombies are excluded from
+          // `live_remaining` since the container's PID 1 may not reap them.
+          killed: e.killSentTo !== null && e.liveAfterKill === 0,
+          killed_pid: e.killSentTo,
+          live_remaining: e.liveAfterKill,
+          message: e.message,
+        },
+        { status: 504 },
+      );
+    }
     const message = e instanceof Error ? e.message : "Unknown error";
     console.error(`[exec] FAILED: ${message}`);
     return new Response(message, { status: 500 });

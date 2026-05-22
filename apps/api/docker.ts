@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
+import { buildKillScript, buildWrappedExecCmd, parseKillResult } from "./exec-kill";
 import { redactCredentials, redactDockerBuildPath } from "./redact";
 
 function findSocket(): string {
@@ -440,17 +441,53 @@ export const EXEC_TIMEOUT_DEFAULT_MS = 600_000;
 export const EXEC_TIMEOUT_MIN_MS = 1_000;
 export const EXEC_TIMEOUT_MAX_MS = 3_600_000;
 
-export async function execInContainer(
+// #34 Phase A.5: on timeout we must actually terminate the in-container process,
+// not just close the HTTP connection. The wrapper writes the container-local PID
+// to a tmp file so a sidecar exec can walk the descendant tree from that PID
+// and send signals to each. The map keeps containerId + pidFile available to
+// killExec, which is what cron's stopCronRun also relies on so both paths
+// benefit. Note: the descendant scan is a snapshot — children forked AFTER the
+// initial scan but during the grace window can escape. The post-kill /proc
+// re-read covers the scanned tree, not arbitrary later orphans.
+type ExecTracking = { containerId: string; pidFile: string };
+const trackedExecs = new Map<string, ExecTracking>();
+
+/** Custom error thrown by execInContainer on timeout. Surfaces the kill outcome
+ *  so callers (HTTP route, MCP tool) can tell the operator whether the workload
+ *  was actually stopped or just disconnected from. `live` is the count of
+ *  descendants still in a non-zombie state after the kill attempt — anything
+ *  greater than zero means the kill did not fully take effect. */
+export class ExecTimeoutError extends Error {
+  readonly timeout_ms: number;
+  readonly killSentTo: string | null;
+  readonly liveAfterKill: number;
+  constructor(timeout_ms: number, killSentTo: string | null, liveAfterKill: number) {
+    let detail: string;
+    if (killSentTo === null) {
+      detail =
+        "could not locate process to kill — workload may still be running inside the container";
+    } else if (liveAfterKill > 0) {
+      detail = `kill attempted on pid ${killSentTo} but ${liveAfterKill} descendant process(es) still running`;
+    } else {
+      detail = `process tree terminated (pid ${killSentTo})`;
+    }
+    super(`Exec timed out after ${timeout_ms}ms; ${detail}`);
+    this.name = "ExecTimeoutError";
+    this.timeout_ms = timeout_ms;
+    this.killSentTo = killSentTo;
+    this.liveAfterKill = liveAfterKill;
+  }
+}
+
+/** Run an unwrapped exec for internal housekeeping (kill, pidfile cleanup).
+ *  Bypasses execInContainer to avoid recursion through the wrapper and the
+ *  tracking map. Short timeout, no signal. */
+async function execRaw(
   containerId: string,
   command: string,
-  opts?: { signal?: AbortSignal; onExecId?: (id: string) => void; timeout_ms?: number },
-): Promise<{ exitCode: number; stdout: string; stderr: string }> {
-  const timeout = opts?.timeout_ms ?? EXEC_TIMEOUT_DEFAULT_MS;
-  console.log(
-    `[execInContainer] container=${containerId.slice(0, 12)} cmd="${command}" timeout_ms=${timeout}`,
-  );
-  // Create exec
-  const createRes = await dockerFetch(`/v1.44/containers/${containerId}/exec`, {
+  timeoutMs = 10_000,
+): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+  const create = await dockerFetch(`/v1.44/containers/${containerId}/exec`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -459,33 +496,24 @@ export async function execInContainer(
       AttachStderr: true,
     }),
   });
+  if (!create.ok) throw new Error(`Exec create failed: ${await create.text()}`);
+  const { Id } = (await create.json()) as { Id: string };
 
-  if (!createRes.ok) throw new Error(`Exec create failed: ${await createRes.text()}`);
-  const { Id } = (await createRes.json()) as { Id: string };
-
-  // Expose exec ID to caller before blocking start
-  opts?.onExecId?.(Id);
-
-  // Start exec
-  const startRes = await dockerFetch(`/v1.44/exec/${Id}/start`, {
+  const start = await dockerFetch(`/v1.44/exec/${Id}/start`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ Detach: false }),
-    timeout,
-    signal: opts?.signal,
+    timeout: timeoutMs,
   });
+  if (!start.ok) throw new Error(`Exec start failed: ${await start.text()}`);
 
-  if (!startRes.ok) throw new Error(`Exec start failed: ${await startRes.text()}`);
-
-  // Read multiplexed stream
-  const raw = new Uint8Array(await startRes.arrayBuffer());
+  const raw = new Uint8Array(await start.arrayBuffer());
   let stdout = "";
   let stderr = "";
   const decoder = new TextDecoder();
-
   let offset = 0;
   while (offset + 8 <= raw.length) {
-    const streamType = raw[offset]; // 1=stdout, 2=stderr
+    const streamType = raw[offset];
     const size =
       (raw[offset + 4] << 24) | (raw[offset + 5] << 16) | (raw[offset + 6] << 8) | raw[offset + 7];
     offset += 8;
@@ -495,11 +523,118 @@ export async function execInContainer(
     offset += size;
   }
 
-  // Inspect exec for exit code
-  const inspectRes = await dockerFetch(`/v1.44/exec/${Id}/json`);
-  const inspect = (await inspectRes.json()) as { ExitCode: number };
+  const inspect = (await (await dockerFetch(`/v1.44/exec/${Id}/json`)).json()) as {
+    ExitCode: number;
+  };
+  return { stdout, stderr, exitCode: inspect.ExitCode };
+}
 
-  return { exitCode: inspect.ExitCode, stdout, stderr };
+export async function execInContainer(
+  containerId: string,
+  command: string,
+  opts?: { signal?: AbortSignal; onExecId?: (id: string) => void; timeout_ms?: number },
+): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+  const timeout = opts?.timeout_ms ?? EXEC_TIMEOUT_DEFAULT_MS;
+  const killToken = crypto.randomUUID();
+  const pidFile = `/tmp/.moor-exec-${killToken}.pid`;
+  console.log(
+    `[execInContainer] container=${containerId.slice(0, 12)} cmd="${command}" timeout_ms=${timeout} kill_token=${killToken}`,
+  );
+
+  // Create exec with the PID-capturing wrapper
+  const createRes = await dockerFetch(`/v1.44/containers/${containerId}/exec`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      Cmd: buildWrappedExecCmd(command, pidFile),
+      AttachStdout: true,
+      AttachStderr: true,
+    }),
+  });
+
+  if (!createRes.ok) throw new Error(`Exec create failed: ${await createRes.text()}`);
+  const { Id } = (await createRes.json()) as { Id: string };
+
+  trackedExecs.set(Id, { containerId, pidFile });
+  opts?.onExecId?.(Id);
+
+  // Manage timeout ourselves so we can kill the in-container process BEFORE
+  // tearing down the HTTP connection. The user's AbortSignal still works.
+  const ac = new AbortController();
+  const userAbort = () => ac.abort();
+  opts?.signal?.addEventListener("abort", userAbort, { once: true });
+
+  let timedOut = false;
+  let killResult: { sentTo: string | null; live: number } = { sentTo: null, live: 0 };
+  const timeoutHandle = setTimeout(async () => {
+    timedOut = true;
+    try {
+      killResult = await runKill(containerId, pidFile);
+    } catch (e) {
+      console.warn("[execInContainer] kill on timeout failed:", e);
+    }
+    ac.abort();
+  }, timeout);
+
+  try {
+    const startRes = await dockerFetch(`/v1.44/exec/${Id}/start`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ Detach: false }),
+      signal: ac.signal,
+    });
+
+    if (!startRes.ok) {
+      if (timedOut) throw new ExecTimeoutError(timeout, killResult.sentTo, killResult.live);
+      throw new Error(`Exec start failed: ${await startRes.text()}`);
+    }
+
+    const raw = new Uint8Array(await startRes.arrayBuffer());
+    if (timedOut) throw new ExecTimeoutError(timeout, killResult.sentTo, killResult.live);
+
+    let stdout = "";
+    let stderr = "";
+    const decoder = new TextDecoder();
+    let offset = 0;
+    while (offset + 8 <= raw.length) {
+      const streamType = raw[offset]; // 1=stdout, 2=stderr
+      const size =
+        (raw[offset + 4] << 24) |
+        (raw[offset + 5] << 16) |
+        (raw[offset + 6] << 8) |
+        raw[offset + 7];
+      offset += 8;
+      const chunk = decoder.decode(raw.slice(offset, offset + size));
+      if (streamType === 1) stdout += chunk;
+      else if (streamType === 2) stderr += chunk;
+      offset += size;
+    }
+
+    const inspectRes = await dockerFetch(`/v1.44/exec/${Id}/json`);
+    const inspect = (await inspectRes.json()) as { ExitCode: number };
+    return { exitCode: inspect.ExitCode, stdout, stderr };
+  } catch (e) {
+    if (timedOut) throw new ExecTimeoutError(timeout, killResult.sentTo, killResult.live);
+    throw e;
+  } finally {
+    clearTimeout(timeoutHandle);
+    opts?.signal?.removeEventListener("abort", userAbort);
+    trackedExecs.delete(Id);
+    // Fire-and-forget cleanup of the pidfile so /tmp doesn't accumulate after
+    // normal completions. The kill path already does this on the cancel side.
+    if (!timedOut) {
+      execRaw(containerId, `rm -f ${pidFile}`, 5_000).catch(() => {});
+    }
+  }
+}
+
+async function runKill(
+  containerId: string,
+  pidFile: string,
+): Promise<{ sentTo: string | null; live: number }> {
+  // The kill script can take a few seconds (grace + verify). Give it room.
+  const { stdout } = await execRaw(containerId, buildKillScript(pidFile), 15_000);
+  return parseKillResult(stdout);
 }
 
 export async function getImageExposedPorts(imageTag: string): Promise<number[]> {
@@ -585,16 +720,29 @@ export async function inspectExec(
   }
 }
 
-export async function killExec(execId: string): Promise<void> {
-  const data = await inspectExec(execId);
-  if (!data?.Running) return;
-  // Note: process.kill with the host PID only works when running outside Docker
-  // or with pid:host. Inside a container this is best-effort.
-  if (data.Pid > 0) {
-    try {
-      process.kill(data.Pid, "SIGKILL");
-    } catch {
-      // Process already gone or PID not visible from this namespace
-    }
+/** Best-effort terminate of a running exec via a sidecar exec into the same
+ *  container. Replaces the old process.kill-on-host-PID approach, which never
+ *  worked from inside moor's container (no shared PID namespace) and silently
+ *  no-op'd. Returns whether a kill signal was actually delivered. */
+export async function killExec(
+  execId: string,
+): Promise<{ ok: boolean; sentTo: string | null; live: number }> {
+  const tracking = trackedExecs.get(execId);
+  if (!tracking) {
+    const data = await inspectExec(execId);
+    if (!data?.Running) return { ok: true, sentTo: null, live: 0 };
+    // Pre-A.5 exec or one started before this moor restart: we don't know the
+    // pidfile, so we can't kill cleanly. Report honestly.
+    return { ok: false, sentTo: null, live: 0 };
+  }
+  try {
+    const result = await runKill(tracking.containerId, tracking.pidFile);
+    return {
+      ok: result.sentTo !== null && result.live === 0,
+      sentTo: result.sentTo,
+      live: result.live,
+    };
+  } catch {
+    return { ok: false, sentTo: null, live: 0 };
   }
 }

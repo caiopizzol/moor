@@ -385,6 +385,28 @@ server.registerTool(
     const body: Record<string, unknown> = { command };
     if (timeout_ms !== undefined) body.timeout_ms = timeout_ms;
     const res = await apiPost(`/api/projects/${p.id}/exec`, body);
+    // The API returns 504 with a structured timeout body when the exec hit
+    // timeout_ms. Surface the kill outcome in the tool error so the agent can
+    // tell "the process was actually stopped" from "we just stopped waiting."
+    if (res.status === 504) {
+      const t = (await res.json()) as {
+        timeout_ms: number;
+        killed: boolean;
+        killed_pid: string | null;
+        live_remaining: number;
+        message: string;
+      };
+      let detail: string;
+      if (t.killed) {
+        detail = `Process tree terminated (container pid ${t.killed_pid}).`;
+      } else if (t.killed_pid !== null) {
+        detail = `Kill attempted on container pid ${t.killed_pid} but ${t.live_remaining} descendant process(es) still running inside the container.`;
+      } else {
+        detail =
+          "Process kill could not locate the running process — it may still be running inside the container.";
+      }
+      throw new Error(`Exec timed out after ${t.timeout_ms}ms. ${detail}`);
+    }
     if (!res.ok) throw new Error(`Failed: ${await res.text()}`);
     const result = (await res.json()) as {
       exitCode: number;
