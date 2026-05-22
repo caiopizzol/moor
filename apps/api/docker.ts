@@ -566,15 +566,31 @@ export async function execInContainer(
 
   let timedOut = false;
   let killResult: { sentTo: string | null; live: number } = { sentTo: null, live: 0 };
+  // Track when the timeout callback has finished computing the kill result.
+  // SIGTERM from the kill often closes the user's dockerFetch before
+  // `await runKill` resolves, so the main flow can reach `if (timedOut)`
+  // with killResult still at its initial value — that's the bug that caused
+  // "could not locate process" reports while the kill had actually worked.
+  let killDoneResolve: () => void = () => {};
+  const killDone = new Promise<void>((r) => {
+    killDoneResolve = r;
+  });
   const timeoutHandle = setTimeout(async () => {
     timedOut = true;
     try {
       killResult = await runKill(containerId, pidFile);
     } catch (e) {
       console.warn("[execInContainer] kill on timeout failed:", e);
+    } finally {
+      killDoneResolve();
+      ac.abort();
     }
-    ac.abort();
   }, timeout);
+
+  async function timeoutError(): Promise<ExecTimeoutError> {
+    await killDone;
+    return new ExecTimeoutError(timeout, killResult.sentTo, killResult.live);
+  }
 
   try {
     const startRes = await dockerFetch(`/v1.44/exec/${Id}/start`, {
@@ -585,12 +601,12 @@ export async function execInContainer(
     });
 
     if (!startRes.ok) {
-      if (timedOut) throw new ExecTimeoutError(timeout, killResult.sentTo, killResult.live);
+      if (timedOut) throw await timeoutError();
       throw new Error(`Exec start failed: ${await startRes.text()}`);
     }
 
     const raw = new Uint8Array(await startRes.arrayBuffer());
-    if (timedOut) throw new ExecTimeoutError(timeout, killResult.sentTo, killResult.live);
+    if (timedOut) throw await timeoutError();
 
     let stdout = "";
     let stderr = "";
@@ -614,7 +630,7 @@ export async function execInContainer(
     const inspect = (await inspectRes.json()) as { ExitCode: number };
     return { exitCode: inspect.ExitCode, stdout, stderr };
   } catch (e) {
-    if (timedOut) throw new ExecTimeoutError(timeout, killResult.sentTo, killResult.live);
+    if (timedOut) throw await timeoutError();
     throw e;
   } finally {
     clearTimeout(timeoutHandle);
