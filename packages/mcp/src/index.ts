@@ -364,15 +364,27 @@ server.registerTool(
   "moor_exec",
   {
     title: "Execute Command",
-    description: "Run a shell command inside a project's running container.",
+    description:
+      "Run a shell command inside a project's running container. Bounded by a per-call timeout (default 10 min, max 1 h). For jobs that may exceed an hour, wait for the async exec tools to ship.",
     inputSchema: z.object({
       project: z.string().describe("Project name or ID"),
       command: z.string().describe("Shell command to execute"),
+      timeout_ms: z
+        .number()
+        .int()
+        .min(1000)
+        .max(3_600_000)
+        .optional()
+        .describe(
+          "Max time in milliseconds before the exec is aborted. Default 600000 (10 min). Max 3600000 (1 h).",
+        ),
     }),
   },
-  async ({ project, command }) => {
+  async ({ project, command, timeout_ms }) => {
     const p = await resolveProject(project);
-    const res = await apiPost(`/api/projects/${p.id}/exec`, { command });
+    const body: Record<string, unknown> = { command };
+    if (timeout_ms !== undefined) body.timeout_ms = timeout_ms;
+    const res = await apiPost(`/api/projects/${p.id}/exec`, body);
     if (!res.ok) throw new Error(`Failed: ${await res.text()}`);
     const result = (await res.json()) as {
       exitCode: number;

@@ -4,6 +4,8 @@ import {
   buildImage,
   buildImageStreaming,
   createAndStartContainer,
+  EXEC_TIMEOUT_MAX_MS,
+  EXEC_TIMEOUT_MIN_MS,
   execInContainer,
   getContainerLogs,
   pullImageStreaming,
@@ -258,14 +260,29 @@ async function handleExec(req: Request, project: Project): Promise<Response> {
     return new Response("Container is not running", { status: 400 });
   }
 
-  const body = (await req.json()) as { command?: string };
+  const body = (await req.json()) as { command?: string; timeout_ms?: number };
   if (!body.command) {
     return new Response("Missing command", { status: 400 });
   }
 
-  console.log(`[exec] command: ${body.command}`);
+  let timeout_ms: number | undefined;
+  if (body.timeout_ms !== undefined) {
+    if (
+      !Number.isInteger(body.timeout_ms) ||
+      body.timeout_ms < EXEC_TIMEOUT_MIN_MS ||
+      body.timeout_ms > EXEC_TIMEOUT_MAX_MS
+    ) {
+      return new Response(
+        `timeout_ms must be an integer between ${EXEC_TIMEOUT_MIN_MS} and ${EXEC_TIMEOUT_MAX_MS}`,
+        { status: 400 },
+      );
+    }
+    timeout_ms = body.timeout_ms;
+  }
+
+  console.log(`[exec] command: ${body.command}${timeout_ms ? ` timeout_ms=${timeout_ms}` : ""}`);
   try {
-    const result = await execInContainer(project.container_id, body.command);
+    const result = await execInContainer(project.container_id, body.command, { timeout_ms });
     console.log(
       `[exec] exitCode=${result.exitCode} stdout=${result.stdout.length}chars stderr=${result.stderr.length}chars`,
     );
