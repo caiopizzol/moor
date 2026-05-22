@@ -1,7 +1,9 @@
 import { Database } from "bun:sqlite";
 import { join } from "node:path";
 
-const DB_PATH = join(import.meta.dir, "..", "..", "data", "moor.db");
+// Tests set MOOR_DB_PATH=":memory:" to run against a transient SQLite DB without
+// touching the dev/prod file. Default path is unchanged for normal startup.
+const DB_PATH = process.env.MOOR_DB_PATH ?? join(import.meta.dir, "..", "..", "data", "moor.db");
 
 const db = new Database(DB_PATH, { create: true });
 

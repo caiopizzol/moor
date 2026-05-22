@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
+import { redactCredentials, redactDockerBuildPath } from "./redact";
 
 function findSocket(): string {
   if (process.env.DOCKER_HOST) return process.env.DOCKER_HOST.replace("unix://", "");
@@ -20,7 +21,7 @@ async function dockerFetch(
   const { timeout = 30000, signal, ...init } = opts ?? {};
   const timeoutSignal = AbortSignal.timeout(timeout);
   const combinedSignal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
-  console.log(`[docker-api] ${init.method || "GET"} ${path}`);
+  console.log(`[docker-api] ${init.method || "GET"} ${redactDockerBuildPath(path)}`);
   const res = await fetch(`http://localhost${path}`, {
     ...init,
     unix: SOCKET,
@@ -111,7 +112,9 @@ export async function buildImage(
   const gitUrl = githubUrl.endsWith(".git") ? githubUrl : `${githubUrl}.git`;
   const remote = `${gitUrl}#${branch}`;
   const params = new URLSearchParams({ remote, t: tag, dockerfile });
-  console.log(`[buildImage] remote=${remote} tag=${tag} dockerfile=${dockerfile}`);
+  console.log(
+    `[buildImage] remote=${redactCredentials(remote) ?? remote} tag=${tag} dockerfile=${dockerfile}`,
+  );
   const res = await dockerFetch(`/v1.44/build?${params}`, {
     method: "POST",
     timeout: BUILD_TIMEOUT,
@@ -161,7 +164,7 @@ export async function buildImageStreaming(
   const params = new URLSearchParams({ remote, t: tag, dockerfile });
   if (noCache) params.set("nocache", "true");
   console.log(
-    `[buildImageStreaming] remote=${remote} tag=${tag} dockerfile=${dockerfile} nocache=${noCache}`,
+    `[buildImageStreaming] remote=${redactCredentials(remote) ?? remote} tag=${tag} dockerfile=${dockerfile} nocache=${noCache}`,
   );
   const res = await dockerFetch(`/v1.44/build?${params}`, {
     method: "POST",
