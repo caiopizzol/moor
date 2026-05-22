@@ -433,12 +433,22 @@ export async function removeContainer(containerId: string): Promise<void> {
   }
 }
 
+// #34 Phase A: callers can set a per-exec timeout instead of the previous
+// hardcoded 10-minute ceiling. Cron and Caddy paths keep the default; only the
+// /exec route and moor_exec MCP tool forward operator-supplied values.
+export const EXEC_TIMEOUT_DEFAULT_MS = 600_000;
+export const EXEC_TIMEOUT_MIN_MS = 1_000;
+export const EXEC_TIMEOUT_MAX_MS = 3_600_000;
+
 export async function execInContainer(
   containerId: string,
   command: string,
-  opts?: { signal?: AbortSignal; onExecId?: (id: string) => void },
+  opts?: { signal?: AbortSignal; onExecId?: (id: string) => void; timeout_ms?: number },
 ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
-  console.log(`[execInContainer] container=${containerId.slice(0, 12)} cmd="${command}"`);
+  const timeout = opts?.timeout_ms ?? EXEC_TIMEOUT_DEFAULT_MS;
+  console.log(
+    `[execInContainer] container=${containerId.slice(0, 12)} cmd="${command}" timeout_ms=${timeout}`,
+  );
   // Create exec
   const createRes = await dockerFetch(`/v1.44/containers/${containerId}/exec`, {
     method: "POST",
@@ -461,7 +471,7 @@ export async function execInContainer(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ Detach: false }),
-    timeout: 600000,
+    timeout,
     signal: opts?.signal,
   });
 
