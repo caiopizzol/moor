@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
+import { createFrameParser } from "./docker-frame-parser";
 import { buildKillScript, buildWrappedExecCmd, parseKillResult } from "./exec-kill";
 import { redactCredentials, redactDockerBuildPath } from "./redact";
 
@@ -667,6 +668,97 @@ async function runKill(
   // The kill script can take a few seconds (grace + verify). Give it room.
   const { stdout } = await execRaw(containerId, buildKillScript(pidFile), 15_000);
   return parseKillResult(stdout);
+}
+
+/** Streaming variant of execInContainer for #34 Phase B async exec.
+ *
+ *  Differences from execInContainer:
+ *  - No internal timeout. Caller controls duration via opts.signal (typically
+ *    a long safety timer from exec-async.ts).
+ *  - Output is delivered as raw byte chunks to the supplied callbacks rather
+ *    than buffered. A multi-GB job can run without accumulating in memory.
+ *  - On abort/kill, returns with exitCode=null and the caller decides how to
+ *    finalize the run record (timed_out, stopped, error).
+ *
+ *  Same as execInContainer:
+ *  - Wraps the command with the PID-capturing wrapper so killExec works.
+ *  - Registers in the trackedExecs map keyed by the Docker exec ID.
+ *  - Cleans up the pidfile on successful completion.
+ */
+export async function execInContainerStreaming(
+  containerId: string,
+  command: string,
+  callbacks: {
+    onStdout: (bytes: Uint8Array) => void;
+    onStderr: (bytes: Uint8Array) => void;
+  },
+  opts?: { signal?: AbortSignal; onExecId?: (id: string) => void },
+): Promise<{ exitCode: number | null }> {
+  const killToken = crypto.randomUUID();
+  const pidFile = `/tmp/.moor-exec-${killToken}.pid`;
+  console.log(
+    `[execInContainerStreaming] container=${containerId.slice(0, 12)} cmd="${command}" kill_token=${killToken}`,
+  );
+
+  const createRes = await dockerFetch(`/v1.44/containers/${containerId}/exec`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      Cmd: buildWrappedExecCmd(command, pidFile),
+      AttachStdout: true,
+      AttachStderr: true,
+    }),
+  });
+  if (!createRes.ok) throw new Error(`Exec create failed: ${await createRes.text()}`);
+  const { Id } = (await createRes.json()) as { Id: string };
+
+  trackedExecs.set(Id, { containerId, pidFile });
+  opts?.onExecId?.(Id);
+
+  let cleanCompletion = false;
+  try {
+    const startRes = await dockerFetch(`/v1.44/exec/${Id}/start`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ Detach: false }),
+      signal: opts?.signal,
+      timeout: 0, // caller manages duration
+    });
+    if (!startRes.ok) throw new Error(`Exec start failed: ${await startRes.text()}`);
+
+    const parser = createFrameParser(callbacks);
+    const reader = startRes.body?.getReader();
+    if (!reader) {
+      // No body — short-circuit to inspect
+      const inspectRes = await dockerFetch(`/v1.44/exec/${Id}/json`);
+      const inspect = (await inspectRes.json()) as { ExitCode: number | null };
+      cleanCompletion = true;
+      return { exitCode: inspect.ExitCode };
+    }
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        parser(value);
+      }
+    } catch (e) {
+      // Abort propagates here; finalize as no-exit-code.
+      if (opts?.signal?.aborted) return { exitCode: null };
+      throw e;
+    }
+
+    const inspectRes = await dockerFetch(`/v1.44/exec/${Id}/json`);
+    const inspect = (await inspectRes.json()) as { ExitCode: number | null };
+    cleanCompletion = true;
+    return { exitCode: inspect.ExitCode };
+  } finally {
+    trackedExecs.delete(Id);
+    if (cleanCompletion) {
+      execRaw(containerId, `rm -f ${pidFile}`, 5_000).catch(() => {});
+    }
+    // On abort/kill, the killExec script already removed the pidfile.
+  }
 }
 
 export async function getImageExposedPorts(imageTag: string): Promise<number[]> {
