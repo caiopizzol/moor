@@ -5,7 +5,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/caiopizzol/moor.git",
+    "url": "git+https://github.com/caiopizzol/moor.git",
     "directory": "packages/mcp"
   },
   "homepage": "https://github.com/caiopizzol/moor/tree/main/packages/mcp",
