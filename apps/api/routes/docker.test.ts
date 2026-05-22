@@ -1,8 +1,9 @@
 // Integration tests for #34 Phase A: timeout_ms validation on POST /exec.
-// Runs against an in-memory SQLite DB. We never actually reach Docker because
-// the handler short-circuits on a missing/non-running container; that's the
-// boundary we want to test for input validation. The actual exec timing is
-// verified manually post-deploy.
+// Runs against an in-memory SQLite DB. Tests that exercise the "accept" path
+// inject a fake container_id so the request gets past the route's running-
+// container guard; the Docker call itself then fails at the engine layer
+// (which is fine — we're only verifying validation, not real exec behavior).
+// Live timing and kill semantics are verified manually post-deploy.
 
 process.env.MOOR_DB_PATH = ":memory:";
 
