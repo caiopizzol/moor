@@ -152,6 +152,42 @@ function validateGithubUrl(url: string): void {
   }
 }
 
+/** Strict GitHub repo URL validator used by moor_deploy. Stricter than
+ *  validateGithubUrl: requires host = github.com or www.github.com AND a path of
+ *  exactly /owner/repo (with optional .git suffix, optional trailing slash).
+ *  Rejects gist.github.com, the bare root, and /owner/repo/tree/... extras.
+ *  Failed deploys trigger an actual image build/pull, so the up-front check is
+ *  worth being pickier than the create/update wrappers. */
+function validateGithubRepoUrl(url: string): void {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new Error(`github_url is not a valid URL: ${url}`);
+  }
+  // The downstream build path (apps/api/docker.ts:buildImage) appends ".git" and a
+  // branch ref to whatever URL we forward, so a non-http protocol, query string, or
+  // fragment quietly mangles the resulting git remote. Reject those up front.
+  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+    throw new Error(`github_url must use http or https (got protocol "${parsed.protocol}")`);
+  }
+  if (parsed.search) {
+    throw new Error(`github_url must not contain query parameters (got "${parsed.search}")`);
+  }
+  if (parsed.hash) {
+    throw new Error(`github_url must not contain a URL fragment (got "${parsed.hash}")`);
+  }
+  const host = parsed.hostname;
+  if (host !== "github.com" && host !== "www.github.com") {
+    throw new Error(`github_url must use github.com or www.github.com (got "${host}")`);
+  }
+  if (!/^\/[^/]+\/[^/]+?(\.git)?\/?$/.test(parsed.pathname)) {
+    throw new Error(
+      `github_url must point to /owner/repo (with optional .git); got "${parsed.pathname}"`,
+    );
+  }
+}
+
 /** Validate a 5-field crontab schedule against what apps/api/cron.ts can actually execute.
  *  Stricter than the scheduler's permissive parser: the scheduler silently never fires
  *  on bad input, so MCP rejects up-front. Returns an error string or null. */
@@ -770,6 +806,203 @@ server.registerTool(
     ];
     if (data.ip && data.serverIp) {
       lines.push(`Match: ${data.ip === data.serverIp ? "yes" : "no"}`);
+    }
+    return { content: [{ type: "text", text: lines.join("\n") }] };
+  },
+);
+
+server.registerTool(
+  "moor_deploy",
+  {
+    title: "Deploy Project",
+    description:
+      "Create-or-update a project end to end: metadata, env vars (merged into existing), and an optional build/run. Default fails if the project already exists; pass update_existing: true to upsert. When run: true (default), waits for the full Docker build/pull and start, which can take minutes for large images. Errors are tagged by the failing step ([create], [update], [set_env], or [run]) and do not roll back earlier steps.",
+    inputSchema: z.object({
+      name: z
+        .string()
+        .regex(
+          /^[a-zA-Z0-9][a-zA-Z0-9_-]*$/,
+          "name must start alphanumeric; allowed chars: a-z A-Z 0-9 _ -",
+        )
+        .describe("Project name (also the container suffix: moor-<name>)"),
+      github_url: z
+        .string()
+        .optional()
+        .describe(
+          "GitHub repo URL: host must be github.com or www.github.com, path must be /owner/repo (optional .git). Mutually exclusive with docker_image.",
+        ),
+      docker_image: z
+        .string()
+        .optional()
+        .describe(
+          "Docker image reference (e.g. nginx:latest). Mutually exclusive with github_url.",
+        ),
+      branch: z.string().optional().describe("Git branch (API default: main)"),
+      dockerfile: z
+        .string()
+        .optional()
+        .describe("Dockerfile path in the repo (API default: Dockerfile)"),
+      domain: z.string().optional().describe("Public domain to route via Caddy"),
+      domain_port: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .describe("Container port Caddy should forward to"),
+      restart_policy: z
+        .enum(["no", "on-failure", "always", "unless-stopped"])
+        .optional()
+        .describe("Docker restart policy (API default: unless-stopped)"),
+      env: z
+        .record(z.string(), z.string())
+        .optional()
+        .describe(
+          "Env vars to MERGE into existing project envs. Omit to leave envs untouched. Pass {} for an explicit no-op. Use moor_env_delete to remove keys.",
+        ),
+      run: z
+        .boolean()
+        .optional()
+        .default(true)
+        .describe(
+          "Build/pull and start after create/update. Default true. Setting false leaves the container untouched; if envs changed while the container is running, the change will not apply until the next run/restart.",
+        ),
+      update_existing: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe("Allow updating a project that already exists. Default false (create-only)."),
+    }),
+  },
+  async (input) => {
+    // Up-front validation: do strict checks before any side effects.
+    if (input.github_url) validateGithubRepoUrl(input.github_url);
+    if (input.github_url && input.docker_image) {
+      throw new Error("Cannot set both github_url and docker_image");
+    }
+
+    // Resolve existence and check domain conflicts from a single project list.
+    const listRes = await apiGet("/api/projects");
+    if (!listRes.ok) throw new Error(`Failed to list projects: ${listRes.status}`);
+    const projects = (await listRes.json()) as Project[];
+    const existing = projects.find((p) => p.name === input.name);
+
+    if (existing && !input.update_existing) {
+      throw new Error(
+        `Project "${input.name}" already exists. Pass update_existing: true to update it.`,
+      );
+    }
+
+    if (!existing) {
+      const sources = (input.github_url ? 1 : 0) + (input.docker_image ? 1 : 0);
+      if (sources !== 1) {
+        throw new Error("Provide exactly one of github_url or docker_image");
+      }
+    }
+
+    // Normalize once for both the conflict check and the write. The API trims but
+    // does not lowercase, so " Example.com " vs an existing "example.com" would
+    // slip past the raw-string pre-check and only surface as a Caddy collision.
+    const normalizedDomain =
+      input.domain === undefined ? undefined : input.domain.trim().toLowerCase() || null;
+
+    if (normalizedDomain) {
+      const conflict = projects.find(
+        (p) =>
+          p.domain && p.domain.trim().toLowerCase() === normalizedDomain && p.id !== existing?.id,
+      );
+      if (conflict) {
+        throw new Error(
+          `Domain "${normalizedDomain}" is already used by project "${conflict.name}" (id=${conflict.id}). Refusing before Caddy reload.`,
+        );
+      }
+    }
+
+    // Step 1: create or update project metadata.
+    let projectId: number;
+    let projectName: string;
+    if (!existing) {
+      const createBody: Record<string, unknown> = {
+        name: input.name,
+        github_url: input.github_url,
+        docker_image: input.docker_image,
+        branch: input.branch,
+        dockerfile: input.dockerfile,
+        domain: normalizedDomain,
+        domain_port: input.domain_port,
+        restart_policy: input.restart_policy,
+      };
+      const res = await apiPost("/api/projects", createBody);
+      if (!res.ok) throw new Error(`[create] ${await res.text()}`);
+      const created = (await res.json()) as Project;
+      projectId = created.id;
+      projectName = created.name;
+    } else {
+      // Update only fields explicitly provided. `name` is the lookup key here,
+      // not a rename target; use moor_project_update for renames.
+      const updateBody: Record<string, unknown> = {};
+      if (input.github_url !== undefined) updateBody.github_url = input.github_url;
+      if (input.docker_image !== undefined) updateBody.docker_image = input.docker_image;
+      if (input.branch !== undefined) updateBody.branch = input.branch;
+      if (input.dockerfile !== undefined) updateBody.dockerfile = input.dockerfile;
+      if (normalizedDomain !== undefined) updateBody.domain = normalizedDomain;
+      if (input.domain_port !== undefined) updateBody.domain_port = input.domain_port;
+      if (input.restart_policy !== undefined) updateBody.restart_policy = input.restart_policy;
+
+      if (Object.keys(updateBody).length > 0) {
+        const res = await apiPut(`/api/projects/${existing.id}`, updateBody);
+        if (!res.ok) throw new Error(`[update] ${await res.text()}`);
+      }
+      projectId = existing.id;
+      projectName = existing.name;
+    }
+
+    // Step 2: merge envs. Omitted env leaves existing untouched; {} is a no-op.
+    const envEntries = input.env ? Object.entries(input.env) : [];
+    const envProvided = envEntries.length > 0;
+    if (envProvided) {
+      const existingRes = await apiGet(`/api/projects/${projectId}/envs`);
+      if (!existingRes.ok) {
+        throw new Error(`[set_env] Failed to read envs: ${existingRes.status}`);
+      }
+      const existingEnvs = (await existingRes.json()) as { key: string; value: string }[];
+      const merged = new Map(existingEnvs.map((v) => [v.key, v.value]));
+      for (const [k, v] of envEntries) merged.set(k, v);
+      const allVars = Array.from(merged, ([key, value]) => ({ key, value }));
+      const putRes = await apiPut(`/api/projects/${projectId}/envs`, allVars);
+      if (!putRes.ok) throw new Error(`[set_env] ${await putRes.text()}`);
+    }
+
+    // Step 3: run, default true. Wait for the full SSE stream like moor_rebuild.
+    let runLogs = "";
+    if (input.run) {
+      const runRes = await apiPost(`/api/projects/${projectId}/run`);
+      if (!runRes.ok) throw new Error(`[run] ${await runRes.text()}`);
+      const { logs, error } = await readSSE(runRes);
+      runLogs = logs;
+      if (error) throw new Error(`[run] ${error}`);
+    }
+
+    const lines: string[] = [];
+    lines.push(
+      existing
+        ? `Updated project ${projectName} (id=${projectId}).`
+        : `Created project ${projectName} (id=${projectId}).`,
+    );
+    if (envProvided) {
+      lines.push(
+        `Merged ${envEntries.length} env var(s): ${envEntries.map(([k]) => k).join(", ")}.`,
+      );
+    }
+    if (!input.run) {
+      if (envProvided && existing?.status === "running") {
+        lines.push(
+          "Note: project is running; env changes will not take effect until the next run or restart.",
+        );
+      }
+    } else {
+      lines.push("");
+      lines.push("Build/run output:");
+      lines.push(runLogs || "(no output)");
     }
     return { content: [{ type: "text", text: lines.join("\n") }] };
   },
