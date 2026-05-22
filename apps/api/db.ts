@@ -73,6 +73,46 @@ db.exec(`
     protocol TEXT DEFAULT 'tcp',
     UNIQUE(host_port, protocol)
   );
+
+  -- #34 Phase B: async exec runs. Distinct from the runs table (which tracks
+  -- cron and build runs) because the lifecycle is different: long-running,
+  -- explicitly stoppable, with bounded output. state is one of:
+  --   'running'   exec is in flight; in-memory map holds the kill handle
+  --   'exited'    process completed naturally; exit_code is set
+  --   'stopped'   killed by moor_exec_stop, kill confirmed (no survivors)
+  --   'timed_out' safety timer (timeout_ms) expired; kill ran
+  --   'error'     something went wrong (e.g. lost during restart, no handle)
+  CREATE TABLE IF NOT EXISTS exec_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    command TEXT NOT NULL,
+    state TEXT NOT NULL DEFAULT 'running',
+    exit_code INTEGER,
+    stdout TEXT NOT NULL DEFAULT '',
+    stderr TEXT NOT NULL DEFAULT '',
+    stdout_total_bytes INTEGER NOT NULL DEFAULT 0,
+    stderr_total_bytes INTEGER NOT NULL DEFAULT 0,
+    timeout_ms INTEGER NOT NULL,
+    killed_pid TEXT,
+    error_message TEXT,
+    started_at TEXT NOT NULL DEFAULT (datetime('now')),
+    finished_at TEXT
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_exec_runs_project_started
+    ON exec_runs(project_id, started_at);
+`);
+
+// #34 Phase B: orphan sweep. On moor restart, the in-memory map of active runs
+// is lost — we can't kill or observe those processes anymore. Any exec_runs row
+// still in 'running' state is from a prior process and has no path back to a
+// terminal state, so mark it as error with an honest message.
+db.exec(`
+  UPDATE exec_runs
+  SET state = 'error',
+      error_message = 'process may have continued past moor restart; terminal state unknown',
+      finished_at = datetime('now')
+  WHERE state = 'running'
 `);
 
 // Migrations — add columns that may not exist in older databases

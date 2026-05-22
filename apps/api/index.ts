@@ -16,6 +16,7 @@ import { handleCaddy } from "./routes/caddy";
 import { handleCrons } from "./routes/crons";
 import { handleDocker } from "./routes/docker";
 import { handleEnvs } from "./routes/envs";
+import { handleExec } from "./routes/exec";
 import { handlePorts } from "./routes/ports";
 import { handleProjects } from "./routes/projects";
 import { handleRuns } from "./routes/runs";
@@ -96,6 +97,7 @@ const server = Bun.serve({
 
         const res =
           (await handleProjects(req, url)) ??
+          (await handleExec(req, url)) ??
           (await handleDocker(req, url)) ??
           (await handleCrons(req, url)) ??
           (await handleEnvs(req, url)) ??

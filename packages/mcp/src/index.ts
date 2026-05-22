@@ -1042,6 +1042,150 @@ server.registerTool(
   },
 );
 
+// --- Async exec (#34 Phase B) ---
+
+server.registerTool(
+  "moor_exec_async",
+  {
+    title: "Start Async Exec",
+    description:
+      "Run a long-lived command inside a project's container, returning immediately with a run_id. Use moor_exec_status to poll for output and exit code; moor_exec_stop to terminate. Bounded by an optional timeout_ms (default 86400000 = 24h; min 60000 = 1 min; max 86400000). The recorded output is tail-truncated to the last 64 KiB per stream; stdout_total_bytes and stderr_total_bytes report the full pre-truncation byte count.",
+    inputSchema: z.object({
+      project: z.string().describe("Project name or ID"),
+      command: z.string().min(1).describe("Shell command to execute"),
+      timeout_ms: z
+        .number()
+        .int()
+        .min(60_000)
+        .max(86_400_000)
+        .optional()
+        .describe(
+          "Safety timeout in milliseconds. When exceeded, the process tree is terminated and the run is marked timed_out. Default 86400000 (24h). Min 60000. Max 86400000.",
+        ),
+    }),
+  },
+  async ({ project, command, timeout_ms }) => {
+    const p = await resolveProject(project);
+    const body: Record<string, unknown> = { command };
+    if (timeout_ms !== undefined) body.timeout_ms = timeout_ms;
+    const res = await apiPost(`/api/projects/${p.id}/exec/async`, body);
+    if (!res.ok) throw new Error(`Failed: ${await res.text()}`);
+    const data = (await res.json()) as { run_id: number };
+    return {
+      content: [
+        {
+          type: "text",
+          text: `Started async exec on ${p.name}. run_id=${data.run_id}. Use moor_exec_status to poll; moor_exec_stop to terminate.`,
+        },
+      ],
+    };
+  },
+);
+
+server.registerTool(
+  "moor_exec_status",
+  {
+    title: "Get Async Exec Status",
+    description:
+      "Return the current state of an async exec run: state, exit code (when finished), running tail of stdout/stderr (last 64 KiB each), total bytes seen, duration, and any error message. State is one of: running, exited, stopped, timed_out, error.",
+    inputSchema: z.object({
+      run_id: z.number().int().positive().describe("Run ID returned by moor_exec_async"),
+    }),
+  },
+  async ({ run_id }) => {
+    const res = await apiGet(`/api/exec/${run_id}`);
+    if (res.status === 404) throw new Error(`run_id ${run_id} not found`);
+    if (!res.ok) throw new Error(`Failed: ${await res.text()}`);
+    const data = (await res.json()) as {
+      id: number;
+      state: string;
+      exit_code: number | null;
+      stdout: string;
+      stderr: string;
+      stdout_total_bytes: number;
+      stderr_total_bytes: number;
+      duration_ms: number;
+      command: string;
+      killed_pid: string | null;
+      error_message: string | null;
+      started_at: string;
+      finished_at: string | null;
+    };
+    const lines: string[] = [];
+    lines.push(
+      `run_id=${data.id} state=${data.state} duration=${formatMs(data.duration_ms)}` +
+        (data.exit_code !== null ? ` exit_code=${data.exit_code}` : ""),
+    );
+    lines.push(`command: ${data.command}`);
+    if (data.killed_pid) lines.push(`killed_pid: ${data.killed_pid}`);
+    if (data.error_message) lines.push(`error: ${data.error_message}`);
+    if (data.stdout) {
+      const note =
+        data.stdout_total_bytes > data.stdout.length
+          ? ` (tail of ${data.stdout_total_bytes} bytes)`
+          : "";
+      lines.push(`stdout${note}:`);
+      lines.push(data.stdout);
+    } else if (data.stdout_total_bytes > 0) {
+      lines.push(`stdout_total_bytes=${data.stdout_total_bytes}`);
+    }
+    if (data.stderr) {
+      const note =
+        data.stderr_total_bytes > data.stderr.length
+          ? ` (tail of ${data.stderr_total_bytes} bytes)`
+          : "";
+      lines.push(`stderr${note}:`);
+      lines.push(data.stderr);
+    } else if (data.stderr_total_bytes > 0) {
+      lines.push(`stderr_total_bytes=${data.stderr_total_bytes}`);
+    }
+    return { content: [{ type: "text", text: lines.join("\n") }] };
+  },
+);
+
+server.registerTool(
+  "moor_exec_stop",
+  {
+    title: "Stop Async Exec",
+    description:
+      "Terminate a running async exec by run_id. Walks the descendant process tree inside the container and sends SIGTERM then SIGKILL. Always transitions the run to a terminal state: state=stopped on clean termination (all descendants gone), state=error if any descendant survived OR if the kill handle was lost (moor restart, missing pidfile). Stop is NOT retry-safe — the kill script removes the pidfile after every attempt, and reparented survivors are unreachable from the original PID.",
+    inputSchema: z.object({
+      run_id: z.number().int().positive().describe("Run ID returned by moor_exec_async"),
+    }),
+  },
+  async ({ run_id }) => {
+    const res = await apiPost(`/api/exec/${run_id}/stop`);
+    if (res.status === 404) throw new Error(`run_id ${run_id} not found`);
+    const data = (await res.json()) as {
+      ok: boolean;
+      state: string;
+      killed_pid: string | null;
+      live_remaining: number;
+      message: string;
+    };
+    return {
+      content: [
+        {
+          type: "text",
+          text: `run_id=${run_id} state=${data.state} ${data.message}`,
+        },
+      ],
+    };
+  },
+);
+
+function formatMs(ms: number): string {
+  if (ms < 1000) return `${ms}ms`;
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  const rs = s % 60;
+  if (m < 60) return `${m}m${rs}s`;
+  const h = Math.floor(m / 60);
+  const rm = m % 60;
+  return `${h}h${rm}m${rs}s`;
+}
+
 // --- Start ---
 
 const transport = new StdioServerTransport();
