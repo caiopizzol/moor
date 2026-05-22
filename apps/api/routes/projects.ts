@@ -1,6 +1,7 @@
 import { syncCaddyRoutes } from "../caddy";
 import db from "../db";
 import { removeContainer, stopContainer } from "../docker";
+import { reconcileGithubUrl, redactCredentials, serializeProject } from "../redact";
 
 /** Run Caddy sync. On failure, return a 500 with a clear message that the DB write
  *  succeeded but the route is not active, plus the manual recovery command. The
@@ -28,15 +29,19 @@ export async function handleProjects(req: Request, url: URL): Promise<Response |
   console.log(`[projects] ${req.method} /api/projects${id ? `/${id}` : ""}`);
 
   if (req.method === "GET" && !id) {
-    const rows = db.query("SELECT * FROM projects ORDER BY name").all();
-    console.log(`[projects] listing ${(rows as unknown[]).length} projects`);
-    return Response.json(rows);
+    const rows = db.query("SELECT * FROM projects ORDER BY name").all() as Array<{
+      github_url: string | null;
+    }>;
+    console.log(`[projects] listing ${rows.length} projects`);
+    return Response.json(rows.map(serializeProject));
   }
 
   if (req.method === "GET" && id) {
-    const row = db.query("SELECT * FROM projects WHERE id = ?").get(id);
+    const row = db.query("SELECT * FROM projects WHERE id = ?").get(id) as {
+      github_url: string | null;
+    } | null;
     if (!row) return new Response("Not found", { status: 404 });
-    return Response.json(row);
+    return Response.json(serializeProject(row));
   }
 
   if (req.method === "POST" && !id) {
@@ -86,7 +91,7 @@ async function handleCreate(req: Request): Promise<Response> {
     restart_policy,
   } = body;
   console.log(
-    `[projects] create: name=${name} github_url=${github_url} docker_image=${docker_image} branch=${branch || "main"} dockerfile=${dockerfile || "Dockerfile"} domain=${domain || ""} domain_port=${domain_port || ""}`,
+    `[projects] create: name=${name} github_url=${redactCredentials(github_url) ?? ""} docker_image=${docker_image} branch=${branch || "main"} dockerfile=${dockerfile || "Dockerfile"} domain=${domain || ""} domain_port=${domain_port || ""}`,
   );
   if (!name) return new Response("name is required", { status: 400 });
   if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/.test(name)) {
@@ -123,8 +128,9 @@ async function handleCreate(req: Request): Promise<Response> {
     if (failed) return failed;
   }
 
-  console.log("[projects] created:", JSON.stringify(result));
-  return Response.json(result, { status: 201 });
+  const safe = serializeProject(result as { github_url: string | null });
+  console.log("[projects] created:", JSON.stringify(safe));
+  return Response.json(safe, { status: 201 });
 }
 
 async function handleUpdate(req: Request, id: number): Promise<Response> {
@@ -133,6 +139,18 @@ async function handleUpdate(req: Request, id: number): Promise<Response> {
   const values: (string | number | null)[] = [];
 
   const validPolicies = ["no", "on-failure", "always", "unless-stopped"];
+
+  // Reconciliation: if the incoming github_url matches the redacted form of the
+  // stored URL, the caller is round-tripping a previous read (the web UI's edit
+  // modal saving an unrelated field). Preserve the stored credentialed URL and
+  // skip both the write and the source-switching side effect for that case.
+  let skipGithubUrl = false;
+  if ("github_url" in body) {
+    const stored = db.query("SELECT github_url FROM projects WHERE id = ?").get(id) as {
+      github_url: string | null;
+    } | null;
+    skipGithubUrl = reconcileGithubUrl(body.github_url, stored?.github_url ?? null).skip;
+  }
 
   for (const key of [
     "name",
@@ -144,6 +162,7 @@ async function handleUpdate(req: Request, id: number): Promise<Response> {
     "domain_port",
     "restart_policy",
   ]) {
+    if (key === "github_url" && skipGithubUrl) continue;
     if (key in body) {
       fields.push(`${key} = ?`);
       if (key === "domain") {
@@ -156,13 +175,14 @@ async function handleUpdate(req: Request, id: number): Promise<Response> {
     }
   }
 
-  // When switching source type, clear the other
+  // When switching source type, clear the other. Reconciliation case is excluded:
+  // a round-tripped read should not clear docker_image.
   if ("docker_image" in body && body.docker_image) {
     if (!fields.some((f) => f.startsWith("github_url"))) {
       fields.push("github_url = ?");
       values.push(null);
     }
-  } else if ("github_url" in body && body.github_url) {
+  } else if ("github_url" in body && body.github_url && !skipGithubUrl) {
     if (!fields.some((f) => f.startsWith("docker_image"))) {
       fields.push("docker_image = ?");
       values.push(null);
@@ -177,7 +197,19 @@ async function handleUpdate(req: Request, id: number): Promise<Response> {
     }
   }
 
-  if (fields.length === 0) return new Response("No fields to update", { status: 400 });
+  // A PUT whose only field is a round-tripped github_url is a no-op. Return the
+  // current row rather than failing with "no fields to update", so the UI's
+  // save-then-reload pattern keeps working.
+  if (fields.length === 0) {
+    if (skipGithubUrl) {
+      const current = db.query("SELECT * FROM projects WHERE id = ?").get(id) as {
+        github_url: string | null;
+      } | null;
+      if (!current) return new Response("Not found", { status: 404 });
+      return Response.json(serializeProject(current));
+    }
+    return new Response("No fields to update", { status: 400 });
+  }
 
   if ("name" in body && body.name) {
     const existing = db
@@ -201,5 +233,5 @@ async function handleUpdate(req: Request, id: number): Promise<Response> {
     if (failed) return failed;
   }
 
-  return Response.json(row);
+  return Response.json(serializeProject(row as { github_url: string | null }));
 }

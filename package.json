@@ -12,6 +12,7 @@
     "dev:web": "cd apps/web && bun run dev",
     "build": "cd apps/web && bun run build",
     "start": "bun run apps/api/index.ts",
+    "test": "bun test",
     "lint": "bunx biome check .",
     "lint:fix": "bunx biome check --write .",
     "format": "bunx biome format --write .",

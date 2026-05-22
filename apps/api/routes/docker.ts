@@ -10,6 +10,7 @@ import {
   stopContainer,
 } from "../docker";
 import { autoDetectPorts, getProjectPorts } from "../ports";
+import { redactCredentials } from "../redact";
 
 type Project = {
   id: number;
@@ -277,7 +278,9 @@ async function handleExec(req: Request, project: Project): Promise<Response> {
 }
 
 async function handleBuild(project: Project): Promise<Response> {
-  console.log(`[build] project=${project.name} github_url=${project.github_url}`);
+  console.log(
+    `[build] project=${project.name} github_url=${redactCredentials(project.github_url) ?? ""}`,
+  );
   if (!project.github_url) {
     console.log("[build] rejected — no github_url");
     return new Response("No GitHub URL configured", { status: 400 });
