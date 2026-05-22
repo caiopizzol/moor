@@ -73,6 +73,13 @@ async function apiPut(path: string, body: unknown) {
   });
 }
 
+async function apiDelete(path: string) {
+  return fetch(`${baseUrl}${path}`, {
+    method: "DELETE",
+    headers: headers(),
+  });
+}
+
 type Project = {
   id: number;
   name: string;
@@ -125,6 +132,106 @@ async function readSSE(res: Response): Promise<{ logs: string; error?: string }>
     }
   }
   return { logs, error };
+}
+
+// --- Validators ---
+
+/** Validate that a string is a github.com URL. Throws with a clear message on failure.
+ *  Stricter than apps/api/routes/docker.ts:validateGithubUrl, which accepts any host
+ *  ending in "github.com" (so "evilgithub.com" slips through). MCP rejects that and
+ *  surfaces the error at create/update time, not at first build/run. */
+function validateGithubUrl(url: string): void {
+  let host: string;
+  try {
+    host = new URL(url).hostname;
+  } catch {
+    throw new Error(`github_url is not a valid URL: ${url}`);
+  }
+  if (host !== "github.com" && !host.endsWith(".github.com")) {
+    throw new Error(`github_url must be a github.com URL (got hostname "${host}")`);
+  }
+}
+
+/** Validate a 5-field crontab schedule against what apps/api/cron.ts can actually execute.
+ *  Stricter than the scheduler's permissive parser: the scheduler silently never fires
+ *  on bad input, so MCP rejects up-front. Returns an error string or null. */
+const CRON_FIELDS: ReadonlyArray<{ name: string; min: number; max: number }> = [
+  { name: "minute", min: 0, max: 59 },
+  { name: "hour", min: 0, max: 23 },
+  { name: "day-of-month", min: 1, max: 31 },
+  { name: "month", min: 1, max: 12 },
+  { name: "day-of-week", min: 0, max: 6 }, // 0=Sunday; scheduler does not translate 7
+];
+
+// Whitelist each comma-separated part against one of the canonical forms below.
+// Anything else (empty parts, leading "-", bare "N/S", "/S", stray characters) is
+// rejected. The scheduler at apps/api/cron.ts silently ignores or mis-parses these
+// inputs, so the validator must be strict where the scheduler is loose.
+const CRON_PART_PATTERNS = [
+  /^\*$/, // *
+  /^(\d+)$/, // N
+  /^(\d+)-(\d+)$/, // A-B
+  /^\*\/(\d+)$/, // */S
+  /^(\d+)-(\d+)\/(\d+)$/, // A-B/S
+];
+
+function validateCronField(field: string, min: number, max: number, name: string): string | null {
+  if (field === "*") return null;
+  if (/[?LW#]/i.test(field)) return `${name}: ?, L, W, # are not supported`;
+  if (/[a-zA-Z]/.test(field))
+    return `${name}: month/day names are not supported, use numeric values`;
+
+  for (const part of field.split(",")) {
+    if (part === "") return `${name}: empty list element`;
+
+    const match = CRON_PART_PATTERNS.map((re) => part.match(re)).find((m) => m !== null);
+    if (!match) return `${name}: invalid expression "${part}"`;
+
+    // Validate captured numbers against per-field bounds and step positivity.
+    // Capture layout depends on which pattern matched, identified by length.
+    const groups = match.slice(1);
+    if (groups.length === 1 && match[0].startsWith("*/")) {
+      // */S
+      const step = Number(groups[0]);
+      if (step <= 0) return `${name}: step must be a positive integer (got "${groups[0]}")`;
+    } else if (groups.length === 1) {
+      // N
+      const n = Number(groups[0]);
+      if (n < min || n > max) return `${name}: ${n} out of bounds [${min}-${max}]`;
+    } else if (groups.length === 2) {
+      // A-B
+      const a = Number(groups[0]);
+      const b = Number(groups[1]);
+      if (a < min || b > max) return `${name}: range ${a}-${b} out of bounds [${min}-${max}]`;
+      if (a > b) return `${name}: range ${a}-${b} is descending`;
+    } else if (groups.length === 3) {
+      // A-B/S
+      const a = Number(groups[0]);
+      const b = Number(groups[1]);
+      const step = Number(groups[2]);
+      if (a < min || b > max) return `${name}: range ${a}-${b} out of bounds [${min}-${max}]`;
+      if (a > b) return `${name}: range ${a}-${b} is descending`;
+      if (step <= 0) return `${name}: step must be a positive integer (got "${groups[2]}")`;
+    }
+  }
+  return null;
+}
+
+function validateCronSchedule(schedule: string): string | null {
+  const parts = schedule.trim().split(/\s+/);
+  if (parts.length !== 5) {
+    return `schedule must have exactly 5 space-separated fields (got ${parts.length})`;
+  }
+  for (let i = 0; i < 5; i++) {
+    const err = validateCronField(
+      parts[i],
+      CRON_FIELDS[i].min,
+      CRON_FIELDS[i].max,
+      CRON_FIELDS[i].name,
+    );
+    if (err) return err;
+  }
+  return null;
 }
 
 // --- MCP Server ---
@@ -337,6 +444,334 @@ server.registerTool(
       `Containers: ${s.containers.running} running / ${s.containers.total} total`,
     ].join("\n");
     return { content: [{ type: "text", text }] };
+  },
+);
+
+server.registerTool(
+  "moor_project_get",
+  {
+    title: "Get Project",
+    description:
+      "Returns the full record for a project (source, branch, dockerfile, domain, status, container id, restart policy).",
+    inputSchema: z.object({
+      project: z.string().describe("Project name or ID"),
+    }),
+  },
+  async ({ project }) => {
+    const p = await resolveProject(project);
+    return { content: [{ type: "text", text: JSON.stringify(p, null, 2) }] };
+  },
+);
+
+server.registerTool(
+  "moor_project_create",
+  {
+    title: "Create Project",
+    description:
+      "Creates a new project. Provide exactly one of github_url or docker_image. Does not build or start; call moor_rebuild (or moor_deploy in a future release) to bring it up.",
+    inputSchema: z.object({
+      name: z
+        .string()
+        .regex(
+          /^[a-zA-Z0-9][a-zA-Z0-9_-]*$/,
+          "name must start with an alphanumeric character; allowed chars: a-z, A-Z, 0-9, _, -",
+        )
+        .describe("Project name (used as the container name suffix: moor-<name>)"),
+      github_url: z
+        .string()
+        .optional()
+        .describe("github.com URL; mutually exclusive with docker_image"),
+      docker_image: z
+        .string()
+        .optional()
+        .describe("Docker image reference (e.g. nginx:latest); mutually exclusive with github_url"),
+      branch: z.string().optional().describe("Git branch (default: main, for github_url projects)"),
+      dockerfile: z
+        .string()
+        .optional()
+        .describe("Dockerfile path within the repo (default: Dockerfile)"),
+      domain: z.string().optional().describe("Public domain to route to this container via Caddy"),
+      domain_port: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .describe("Container port Caddy should forward to (required if domain is set)"),
+      restart_policy: z
+        .enum(["no", "on-failure", "always", "unless-stopped"])
+        .optional()
+        .describe("Docker restart policy (default: unless-stopped)"),
+    }),
+  },
+  async (input) => {
+    const sources = (input.github_url ? 1 : 0) + (input.docker_image ? 1 : 0);
+    if (sources !== 1) {
+      throw new Error("Provide exactly one of github_url or docker_image");
+    }
+    if (input.github_url) validateGithubUrl(input.github_url);
+
+    const res = await apiPost("/api/projects", input);
+    if (!res.ok) throw new Error(`Failed to create project: ${await res.text()}`);
+    const project = await res.json();
+    return { content: [{ type: "text", text: JSON.stringify(project, null, 2) }] };
+  },
+);
+
+server.registerTool(
+  "moor_project_update",
+  {
+    title: "Update Project",
+    description:
+      "Updates project metadata. Does NOT rebuild or restart the container. Domain or domain_port changes apply to Caddy immediately.",
+    inputSchema: z.object({
+      project: z.string().describe("Project name or ID to update"),
+      name: z
+        .string()
+        .regex(
+          /^[a-zA-Z0-9][a-zA-Z0-9_-]*$/,
+          "name must start alphanumeric; allowed: a-z A-Z 0-9 _ -",
+        )
+        .optional(),
+      github_url: z.string().optional(),
+      docker_image: z.string().optional(),
+      branch: z.string().optional(),
+      dockerfile: z.string().optional(),
+      domain: z.string().optional(),
+      domain_port: z.number().int().positive().optional(),
+      restart_policy: z.enum(["no", "on-failure", "always", "unless-stopped"]).optional(),
+    }),
+  },
+  async (input) => {
+    const { project, ...updates } = input;
+    if (Object.keys(updates).length === 0) {
+      throw new Error("Provide at least one field to update");
+    }
+    if (updates.github_url && updates.docker_image) {
+      throw new Error("Cannot set both github_url and docker_image in the same update");
+    }
+    if (updates.github_url) validateGithubUrl(updates.github_url);
+
+    const p = await resolveProject(project);
+    const res = await apiPut(`/api/projects/${p.id}`, updates);
+    if (!res.ok) throw new Error(`Failed to update project: ${await res.text()}`);
+    const updated = await res.json();
+    return { content: [{ type: "text", text: JSON.stringify(updated, null, 2) }] };
+  },
+);
+
+server.registerTool(
+  "moor_project_delete",
+  {
+    title: "Delete Project",
+    description:
+      "Stops and removes the container, then deletes the project record. Requires confirm_name to match the resolved project name exactly. Irreversible.",
+    inputSchema: z.object({
+      project: z.string().describe("Project name or ID to delete"),
+      confirm_name: z
+        .string()
+        .describe(
+          "Must equal the resolved project's name. Guards against deleting the wrong project.",
+        ),
+    }),
+  },
+  async ({ project, confirm_name }) => {
+    const p = await resolveProject(project);
+    if (confirm_name !== p.name) {
+      throw new Error(
+        `confirm_name "${confirm_name}" does not match resolved project name "${p.name}". Refusing to delete.`,
+      );
+    }
+    const res = await apiDelete(`/api/projects/${p.id}`);
+    if (!res.ok) throw new Error(`Failed to delete project: ${await res.text()}`);
+    return { content: [{ type: "text", text: `Deleted project ${p.name} (id=${p.id}).` }] };
+  },
+);
+
+server.registerTool(
+  "moor_cron_create",
+  {
+    title: "Create Cron",
+    description:
+      "Creates a cron schedule on a project. Schedule is a 5-field crontab string with numeric values only (no jan/sun/etc.). Day-of-week uses 0=Sunday through 6=Saturday; 7 is not accepted.",
+    inputSchema: z.object({
+      project: z.string().describe("Project name or ID"),
+      name: z.string().min(1).describe("Human-readable name for the cron"),
+      schedule: z.string().describe('5-field crontab, e.g. "0 3 * * *" for 03:00 daily'),
+      command: z.string().min(1).describe("Shell command to run inside the project's container"),
+    }),
+  },
+  async ({ project, name, schedule, command }) => {
+    const err = validateCronSchedule(schedule);
+    if (err) throw new Error(`Invalid schedule: ${err}`);
+    const p = await resolveProject(project);
+    const res = await apiPost(`/api/projects/${p.id}/crons`, { name, schedule, command });
+    if (!res.ok) throw new Error(`Failed to create cron: ${await res.text()}`);
+    const cron = await res.json();
+    return { content: [{ type: "text", text: JSON.stringify(cron, null, 2) }] };
+  },
+);
+
+server.registerTool(
+  "moor_cron_update",
+  {
+    title: "Update Cron",
+    description: "Updates a cron's fields by id. Schedule is validated if provided.",
+    inputSchema: z.object({
+      cron_id: z.number().int().positive().describe("Cron ID"),
+      name: z.string().min(1).optional(),
+      schedule: z.string().optional(),
+      command: z.string().min(1).optional(),
+      enabled: z.boolean().optional().describe("Enable or disable the cron"),
+    }),
+  },
+  async ({ cron_id, name, schedule, command, enabled }) => {
+    if (schedule !== undefined) {
+      const err = validateCronSchedule(schedule);
+      if (err) throw new Error(`Invalid schedule: ${err}`);
+    }
+    const body: Record<string, unknown> = {};
+    if (name !== undefined) body.name = name;
+    if (schedule !== undefined) body.schedule = schedule;
+    if (command !== undefined) body.command = command;
+    if (enabled !== undefined) body.enabled = enabled ? 1 : 0;
+    if (Object.keys(body).length === 0) {
+      throw new Error("Provide at least one field to update");
+    }
+    const res = await apiPut(`/api/crons/${cron_id}`, body);
+    if (!res.ok) throw new Error(`Failed to update cron: ${await res.text()}`);
+    const cron = await res.json();
+    return { content: [{ type: "text", text: JSON.stringify(cron, null, 2) }] };
+  },
+);
+
+server.registerTool(
+  "moor_cron_delete",
+  {
+    title: "Delete Cron",
+    description: "Deletes a cron by id.",
+    inputSchema: z.object({
+      cron_id: z.number().int().positive().describe("Cron ID"),
+    }),
+  },
+  async ({ cron_id }) => {
+    const res = await apiDelete(`/api/crons/${cron_id}`);
+    if (!res.ok) throw new Error(`Failed to delete cron: ${await res.text()}`);
+    // API returns 204 whether or not the row existed; phrase the response so it
+    // doesn't claim a row was removed when it might already have been gone.
+    return { content: [{ type: "text", text: `Deletion requested for cron ${cron_id}.` }] };
+  },
+);
+
+server.registerTool(
+  "moor_cron_run",
+  {
+    title: "Run Cron Now",
+    description:
+      "Triggers a cron to run immediately. Requires the project's container to be running.",
+    inputSchema: z.object({
+      cron_id: z.number().int().positive().describe("Cron ID"),
+    }),
+  },
+  async ({ cron_id }) => {
+    const res = await apiPost(`/api/crons/${cron_id}/run`);
+    if (!res.ok) {
+      const text = await res.text();
+      let message = text;
+      try {
+        const parsed = JSON.parse(text);
+        if (parsed?.error) message = parsed.error;
+      } catch {
+        // Not JSON; use raw text
+      }
+      throw new Error(message);
+    }
+    return { content: [{ type: "text", text: `Triggered cron ${cron_id}.` }] };
+  },
+);
+
+server.registerTool(
+  "moor_env_delete",
+  {
+    title: "Delete Environment Variables",
+    description:
+      "Removes one or more environment variables from a project. Restarts the container only if at least one key was actually deleted AND the project was running.",
+    inputSchema: z.object({
+      project: z.string().describe("Project name or ID"),
+      keys: z.array(z.string().min(1)).min(1).describe("Env var keys to remove"),
+    }),
+  },
+  async ({ project, keys }) => {
+    const p = await resolveProject(project);
+
+    const existingRes = await apiGet(`/api/projects/${p.id}/envs`);
+    if (!existingRes.ok) throw new Error(`Failed to get envs: ${existingRes.status}`);
+    const existing = (await existingRes.json()) as { key: string; value: string }[];
+    const existingKeys = new Set(existing.map((v) => v.key));
+
+    const toDelete = keys.filter((k) => existingKeys.has(k));
+    const missing = keys.filter((k) => !existingKeys.has(k));
+
+    if (toDelete.length === 0) {
+      const existingList = [...existingKeys].sort().join(", ") || "(none)";
+      return {
+        content: [
+          {
+            type: "text",
+            text: `No matching keys on ${p.name}. Existing keys: ${existingList}`,
+          },
+        ],
+      };
+    }
+
+    for (const key of toDelete) {
+      const res = await apiDelete(`/api/projects/${p.id}/envs/${encodeURIComponent(key)}`);
+      if (!res.ok) throw new Error(`Failed to delete ${key}: ${await res.text()}`);
+    }
+
+    let text = `Deleted ${toDelete.join(", ")} from ${p.name}.`;
+    if (missing.length > 0) text += ` (Not present: ${missing.join(", ")}.)`;
+
+    if (p.status === "running") {
+      await apiPost(`/api/projects/${p.id}/stop`);
+      const startRes = await apiPost(`/api/projects/${p.id}/start`);
+      if (!startRes.ok) {
+        throw new Error(`Deleted vars but failed to restart: ${await startRes.text()}`);
+      }
+      text += " Container restarted.";
+    }
+
+    return { content: [{ type: "text", text }] };
+  },
+);
+
+server.registerTool(
+  "moor_dns_check",
+  {
+    title: "Check Domain DNS",
+    description:
+      "Resolves a domain's A record and reports whether it matches the server's public IP. Useful before pointing a project's domain at the server.",
+    inputSchema: z.object({
+      domain: z.string().min(1).describe("Domain to check, e.g. app.example.com"),
+    }),
+  },
+  async ({ domain }) => {
+    const res = await apiPost("/api/dns-check", { domain });
+    if (!res.ok) throw new Error(`Failed: ${await res.text()}`);
+    const data = (await res.json()) as {
+      resolves: boolean;
+      ip: string | null;
+      serverIp: string | null;
+    };
+    const lines = [
+      `Domain: ${domain}`,
+      `Resolves: ${data.resolves ? "yes" : "no"}`,
+      `Resolved IP: ${data.ip ?? "(none)"}`,
+      `Server IP: ${data.serverIp ?? "(unknown)"}`,
+    ];
+    if (data.ip && data.serverIp) {
+      lines.push(`Match: ${data.ip === data.serverIp ? "yes" : "no"}`);
+    }
+    return { content: [{ type: "text", text: lines.join("\n") }] };
   },
 );
 
