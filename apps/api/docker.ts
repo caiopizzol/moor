@@ -20,8 +20,19 @@ async function dockerFetch(
   opts?: RequestInit & { timeout?: number },
 ): Promise<Response> {
   const { timeout = 30000, signal, ...init } = opts ?? {};
-  const timeoutSignal = AbortSignal.timeout(timeout);
-  const combinedSignal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
+  // `timeout: 0` disables the internal safety timer. The caller's `signal` is
+  // then the only abort path. Used by execInContainer for /exec/start, where
+  // the exec may legitimately run for an operator-supplied timeout_ms greater
+  // than 30s — letting dockerFetch fire its own 30s timer would silently
+  // truncate long execs before the kill flow could run. Phase B (async exec)
+  // needs the same opt-out for jobs that can take hours.
+  const timeoutSignal = timeout > 0 ? AbortSignal.timeout(timeout) : null;
+  let combinedSignal: AbortSignal | undefined;
+  if (signal && timeoutSignal) {
+    combinedSignal = AbortSignal.any([signal, timeoutSignal]);
+  } else {
+    combinedSignal = signal ?? timeoutSignal ?? undefined;
+  }
   console.log(`[docker-api] ${init.method || "GET"} ${redactDockerBuildPath(path)}`);
   const res = await fetch(`http://localhost${path}`, {
     ...init,
@@ -593,11 +604,16 @@ export async function execInContainer(
   }
 
   try {
+    // timeout: 0 — we manage the abort ourselves via ac.signal (driven by our
+    // own timer at `timeout` ms, which also fires the in-container kill before
+    // tearing down the connection). dockerFetch's default 30s would otherwise
+    // truncate any exec with timeout_ms > 30000 before the kill flow ran.
     const startRes = await dockerFetch(`/v1.44/exec/${Id}/start`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ Detach: false }),
       signal: ac.signal,
+      timeout: 0,
     });
 
     if (!startRes.ok) {
