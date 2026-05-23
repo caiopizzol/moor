@@ -106,6 +106,28 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_exec_runs_project_started
     ON exec_runs(project_id, started_at);
+
+  -- #35: per-project named Docker volume mounts. docker_name is the actual
+  -- Docker volume name, stored at config-creation time. We do NOT derive it
+  -- from project.name on every start — projects can be renamed, and deriving
+  -- later would silently mount a fresh empty volume next to the original
+  -- (which still holds the data under the old derived name). target is the
+  -- in-container mount path. UNIQUE(project_id, name) makes the per-project
+  -- logical handle unique; UNIQUE(project_id, target) prevents two volumes
+  -- competing for the same mount point; UNIQUE(docker_name) prevents
+  -- accidental cross-project clashes (the prefix already gives separation,
+  -- this guards against pathological project-name collisions).
+  CREATE TABLE IF NOT EXISTS project_volumes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    target TEXT NOT NULL,
+    docker_name TEXT NOT NULL UNIQUE,
+    UNIQUE(project_id, name),
+    UNIQUE(project_id, target)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_project_volumes_project ON project_volumes(project_id);
 `);
 
 // #34 Phase B: orphan sweep. On moor restart, the in-memory map of active runs

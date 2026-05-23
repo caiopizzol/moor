@@ -326,9 +326,10 @@ export async function createAndStartContainer(
   ports: { host_port: number; container_port: number }[] = [],
   restartPolicy = "unless-stopped",
   limits: { memoryLimitMb?: number | null; cpus?: number | null } = {},
+  volumes: Array<{ docker_name: string; target: string }> = [],
 ): Promise<string> {
   console.log(
-    `[createContainer] image=${imageTag} name=${name} envVars=${envVars.length} ports=${ports.length} mem_mb=${limits.memoryLimitMb ?? ""} cpus=${limits.cpus ?? ""}`,
+    `[createContainer] image=${imageTag} name=${name} envVars=${envVars.length} ports=${ports.length} mem_mb=${limits.memoryLimitMb ?? ""} cpus=${limits.cpus ?? ""} volumes=${volumes.length}`,
   );
   // Remove existing container with this name if it exists
   try {
@@ -366,6 +367,18 @@ export async function createAndStartContainer(
   }
   if (limits.cpus != null) {
     hostConfig.NanoCpus = Math.round(limits.cpus * 1e9);
+  }
+
+  // #35: named-volume mounts. Type "volume" means Docker manages the volume
+  // lifecycle (auto-creates on first reference if missing) and stores data
+  // under /var/lib/docker/volumes/<name>. docker_name is what we stored at
+  // config-creation time so renaming the project doesn't lose the data.
+  if (volumes.length > 0) {
+    hostConfig.Mounts = volumes.map((v) => ({
+      Type: "volume",
+      Source: v.docker_name,
+      Target: v.target,
+    }));
   }
 
   const body = {
@@ -460,6 +473,22 @@ export async function removeContainer(containerId: string): Promise<void> {
     const err = await res.text();
     console.error(`[removeContainer] error: ${err}`);
   }
+}
+
+/** #35: delete a Docker volume by name. Returns whether the volume was removed
+ *  (or didn't exist), or an error string on failure. Used only by the explicit
+ *  purge path on project delete — never by moor_volume_remove. */
+export async function removeVolume(
+  name: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  console.log(`[removeVolume] removing ${name}`);
+  const del = await dockerFetch(`/v1.44/volumes/${encodeURIComponent(name)}?force=true`, {
+    method: "DELETE",
+  });
+  if (del.ok || del.status === 404) return { ok: true };
+  const text = await del.text();
+  console.error(`[removeVolume] failed name=${name} status=${del.status} body=${text}`);
+  return { ok: false, error: text };
 }
 
 // #34 Phase A: callers can set a per-exec timeout instead of the previous

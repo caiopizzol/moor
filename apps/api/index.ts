@@ -22,6 +22,7 @@ import { handleProjects } from "./routes/projects";
 import { handleRuns } from "./routes/runs";
 import { handleServer } from "./routes/server";
 import { handleTerminalSessions } from "./routes/terminal-sessions";
+import { handleVolumes } from "./routes/volumes";
 import { terminalWebSocket, upgradeTerminal } from "./terminal";
 import { clearAllSessions, startSessionCleanup } from "./terminal-sessions";
 
@@ -97,6 +98,7 @@ const server = Bun.serve({
 
         const res =
           (await handleProjects(req, url)) ??
+          (await handleVolumes(req, url)) ??
           (await handleExec(req, url)) ??
           (await handleDocker(req, url)) ??
           (await handleCrons(req, url)) ??

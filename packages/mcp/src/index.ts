@@ -582,10 +582,24 @@ server.registerTool(
         ),
       cpus: z
         .number()
-        .positive()
+        .min(0.001)
         .optional()
         .describe(
           "Max CPU cores. Fractional values OK (e.g. 0.5 = half a core). Min 0.001 (anything smaller rounds to Docker NanoCpus=0, which means unlimited — use omit for that). Max host core count. Takes effect on container recreate.",
+        ),
+      volumes: z
+        .array(
+          z.object({
+            name: z.string().min(1).describe("Logical volume name (unique per project)"),
+            target: z
+              .string()
+              .min(1)
+              .describe("Absolute in-container mount path (e.g. /var/lib/postgresql/data)"),
+          }),
+        )
+        .optional()
+        .describe(
+          "Named Docker volumes to attach. Each entry creates a per-project volume (stored as moor-<project>-<name>) and mounts it at the given target on next container recreate. Data survives container/project rebuilds unless explicitly purged via project delete with purge_volumes=true.",
         ),
     }),
   },
@@ -596,10 +610,35 @@ server.registerTool(
     }
     if (input.github_url) validateGithubUrl(input.github_url);
 
-    const res = await apiPost("/api/projects", input);
+    const { volumes, ...createBody } = input;
+    const res = await apiPost("/api/projects", createBody);
     if (!res.ok) throw new Error(`Failed to create project: ${await res.text()}`);
-    const project = await res.json();
-    return { content: [{ type: "text", text: JSON.stringify(project, null, 2) }] };
+    const project = (await res.json()) as { id: number };
+
+    // Volumes are a separate endpoint so the API stays single-concern. Loop
+    // through them; if any one fails, report what landed and what didn't.
+    const volumeFailures: Array<{ name: string; error: string }> = [];
+    const volumeCreated: string[] = [];
+    if (volumes && volumes.length > 0) {
+      for (const v of volumes) {
+        const vRes = await apiPost(`/api/projects/${project.id}/volumes`, v);
+        if (vRes.ok) volumeCreated.push(v.name);
+        else volumeFailures.push({ name: v.name, error: await vRes.text() });
+      }
+    }
+
+    const lines = [JSON.stringify(project, null, 2)];
+    if (volumeCreated.length > 0) {
+      lines.push(`\nCreated volumes: ${volumeCreated.join(", ")}`);
+    }
+    if (volumeFailures.length > 0) {
+      lines.push(
+        `\nVolume failures (project was still created): ${volumeFailures
+          .map((f) => `${f.name}: ${f.error}`)
+          .join("; ")}`,
+      );
+    }
+    return { content: [{ type: "text", text: lines.join("\n") }] };
   },
 );
 
@@ -636,7 +675,7 @@ server.registerTool(
         ),
       cpus: z
         .number()
-        .positive()
+        .min(0.001)
         .nullable()
         .optional()
         .describe(
@@ -667,7 +706,7 @@ server.registerTool(
   {
     title: "Delete Project",
     description:
-      "Stops and removes the container, then deletes the project record. Requires confirm_name to match the resolved project name exactly. Irreversible.",
+      "Stops and removes the container, then deletes the project record. Requires confirm_name to match the resolved project name exactly. Irreversible. Named Docker volumes are preserved by default (data survives so a recreated project can remount them); pass purge_volumes: true to also delete the underlying Docker volumes — that deletion is also irreversible.",
     inputSchema: z.object({
       project: z.string().describe("Project name or ID to delete"),
       confirm_name: z
@@ -675,18 +714,47 @@ server.registerTool(
         .describe(
           "Must equal the resolved project's name. Guards against deleting the wrong project.",
         ),
+      purge_volumes: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe(
+          "Also delete the underlying Docker volumes (their data). Default false: project gone, volumes (and their data) preserved. The volume metadata is cleaned up either way; this flag only controls whether the data goes too.",
+        ),
     }),
   },
-  async ({ project, confirm_name }) => {
+  async ({ project, confirm_name, purge_volumes }) => {
     const p = await resolveProject(project);
     if (confirm_name !== p.name) {
       throw new Error(
         `confirm_name "${confirm_name}" does not match resolved project name "${p.name}". Refusing to delete.`,
       );
     }
-    const res = await apiDelete(`/api/projects/${p.id}`);
-    if (!res.ok) throw new Error(`Failed to delete project: ${await res.text()}`);
-    return { content: [{ type: "text", text: `Deleted project ${p.name} (id=${p.id}).` }] };
+    const qs = purge_volumes ? "?purge_volumes=true" : "";
+    const res = await apiDelete(`/api/projects/${p.id}${qs}`);
+    if (!res.ok) {
+      const text = await res.text();
+      try {
+        const parsed = JSON.parse(text);
+        if (parsed?.message) throw new Error(parsed.message);
+      } catch {
+        // not json
+      }
+      throw new Error(`Failed to delete project: ${text}`);
+    }
+    // 204 No Content (no purge or no volumes) vs 200 JSON (purge with results)
+    if (res.status === 204) {
+      return { content: [{ type: "text", text: `Deleted project ${p.name} (id=${p.id}).` }] };
+    }
+    const body = (await res.json()) as { volumes_purged?: number };
+    return {
+      content: [
+        {
+          type: "text",
+          text: `Deleted project ${p.name} (id=${p.id}). Purged ${body.volumes_purged ?? 0} Docker volume(s).`,
+        },
+      ],
+    };
   },
 );
 
@@ -878,6 +946,98 @@ server.registerTool(
   },
 );
 
+// --- Volumes (#35) ---
+
+server.registerTool(
+  "moor_volume_list",
+  {
+    title: "List Project Volumes",
+    description:
+      "List the named Docker volumes attached to a project. Each entry includes the logical name (per-project handle), the in-container target path, and the actual Docker volume name (for `docker volume ls` / `docker volume inspect` outside moor).",
+    inputSchema: z.object({
+      project: z.string().describe("Project name or ID"),
+    }),
+  },
+  async ({ project }) => {
+    const p = await resolveProject(project);
+    const res = await apiGet(`/api/projects/${p.id}/volumes`);
+    if (!res.ok) throw new Error(`Failed: ${await res.text()}`);
+    const rows = (await res.json()) as Array<{
+      id: number;
+      name: string;
+      target: string;
+      docker_name: string;
+    }>;
+    if (rows.length === 0) {
+      return { content: [{ type: "text", text: `No volumes attached to ${p.name}.` }] };
+    }
+    const lines = rows.map(
+      (v) => `id=${v.id}  name=${v.name}  target=${v.target}  docker_name=${v.docker_name}`,
+    );
+    return { content: [{ type: "text", text: lines.join("\n") }] };
+  },
+);
+
+server.registerTool(
+  "moor_volume_add",
+  {
+    title: "Add Project Volume",
+    description:
+      "Attach a named Docker volume to a project. The volume is created lazily by Docker on first container start; moor stores the mount config (logical name, in-container target, and the generated docker_name like moor-<project>-<name>). Takes effect on container recreate (next moor_rebuild / moor_restart / moor_deploy / moor_project run) — already-running containers keep their existing mounts.",
+    inputSchema: z.object({
+      project: z.string().describe("Project name or ID"),
+      name: z
+        .string()
+        .min(1)
+        .describe("Logical volume name (unique per project; alphanumeric/_/-)"),
+      target: z
+        .string()
+        .min(1)
+        .describe("Absolute in-container mount path (e.g. /var/lib/postgresql/data)"),
+    }),
+  },
+  async ({ project, name, target }) => {
+    const p = await resolveProject(project);
+    const res = await apiPost(`/api/projects/${p.id}/volumes`, { name, target });
+    if (!res.ok) throw new Error(`Failed: ${await res.text()}`);
+    const created = (await res.json()) as {
+      id: number;
+      name: string;
+      target: string;
+      docker_name: string;
+    };
+    return {
+      content: [
+        {
+          type: "text",
+          text: `Attached volume to ${p.name}: id=${created.id}, name=${created.name}, target=${created.target}, docker_name=${created.docker_name}. Mount applies on next container recreate.`,
+        },
+      ],
+    };
+  },
+);
+
+server.registerTool(
+  "moor_volume_remove",
+  {
+    title: "Remove Project Volume Mount",
+    description:
+      "Detach a named volume from a project's mount config. The underlying Docker volume (and its data) is intentionally preserved — to actually delete the data, use moor_project_delete with purge_volumes:true, or run `docker volume rm <docker_name>` manually. Takes effect on next container recreate.",
+    inputSchema: z.object({
+      project: z.string().describe("Project name or ID"),
+      volume_id: z.number().int().positive().describe("Volume ID from moor_volume_list"),
+    }),
+  },
+  async ({ project, volume_id }) => {
+    const p = await resolveProject(project);
+    const res = await apiDelete(`/api/projects/${p.id}/volumes/${volume_id}`);
+    if (res.status === 404) throw new Error(`Volume ${volume_id} not found on project ${p.name}`);
+    if (!res.ok) throw new Error(`Failed: ${await res.text()}`);
+    const body = (await res.json()) as { docker_name: string; message: string };
+    return { content: [{ type: "text", text: body.message }] };
+  },
+);
+
 server.registerTool(
   "moor_deploy",
   {
@@ -931,11 +1091,22 @@ server.registerTool(
         ),
       cpus: z
         .number()
-        .positive()
+        .min(0.001)
         .nullable()
         .optional()
         .describe(
           "Max CPU cores. Fractional OK (e.g. 0.5; min 0.001). Max host core count. Pass null on update to clear.",
+        ),
+      volumes: z
+        .array(
+          z.object({
+            name: z.string().min(1),
+            target: z.string().min(1),
+          }),
+        )
+        .optional()
+        .describe(
+          "Named Docker volumes to attach. Each entry becomes a per-project volume (stored as moor-<project>-<name>) and mounts at the given target on container recreate. On update_existing, additions only — no removals. Data survives container/project rebuilds unless explicitly purged via moor_project_delete with confirm_name (purge_volumes is a separate flag).",
         ),
       env: z
         .record(z.string(), z.string())
@@ -1042,6 +1213,51 @@ server.registerTool(
       }
       projectId = existing.id;
       projectName = existing.name;
+    }
+
+    // Step 1.5: add named volumes (additions only — moor_deploy never removes
+    // volumes, even on update_existing). Mounts apply on next container
+    // recreate, which the run step below triggers by default.
+    if (input.volumes && input.volumes.length > 0) {
+      // Cache the existing list once so we can resolve 409s without re-fetching
+      // per conflict. Only fetched if a 409 actually occurs.
+      let existingVolumes: Array<{ name: string; target: string }> | null = null;
+      for (const v of input.volumes) {
+        const vRes = await apiPost(`/api/projects/${projectId}/volumes`, v);
+        if (vRes.ok) continue;
+        const text = await vRes.text();
+        if (vRes.status !== 409) {
+          throw new Error(`[volumes] failed to add ${v.name}: ${text}`);
+        }
+        // 409 is tolerable ONLY if the existing volume matches the requested
+        // spec exactly (same name, same target). A 409 with a drifted target
+        // means the operator changed the desired mount and we'd silently
+        // ignore the change — fail loudly instead.
+        if (existingVolumes === null) {
+          const listRes = await apiGet(`/api/projects/${projectId}/volumes`);
+          if (!listRes.ok) {
+            throw new Error(
+              `[volumes] could not resolve 409 on ${v.name}: failed to list existing volumes: ${await listRes.text()}`,
+            );
+          }
+          existingVolumes = (await listRes.json()) as Array<{ name: string; target: string }>;
+        }
+        const match = existingVolumes.find((e) => e.name === v.name);
+        if (!match) {
+          // 409 was for some other reason (target collision under a different
+          // name, or cross-project docker_name collision). Operator must
+          // intervene.
+          throw new Error(
+            `[volumes] conflict adding ${v.name}: ${text} (no existing volume by that name; check for target collision)`,
+          );
+        }
+        if (match.target !== v.target) {
+          throw new Error(
+            `[volumes] conflict adding ${v.name}: existing target "${match.target}" differs from requested "${v.target}". moor_deploy does not change mount targets; use moor_volume_remove + moor_volume_add explicitly.`,
+          );
+        }
+        // Same name, same target — idempotent re-run, tolerable.
+      }
     }
 
     // Step 2: merge envs. Omitted env leaves existing untouched; {} is a no-op.
