@@ -8,6 +8,7 @@ process.env.MOOR_DB_PATH = ":memory:";
 import { beforeEach, describe, expect, test } from "bun:test";
 
 const { default: db } = await import("../db");
+const { BuildRun, activeBuildRuns } = await import("../build-runs");
 const { handleRuns } = await import("./runs");
 
 async function call(method: string, path: string): Promise<Response> {
@@ -213,5 +214,94 @@ describe("#65 list orders by started_at_ms with id tie-breaker", () => {
     const res = await call("GET", `/api/projects/${pid}/runs?include_output=false`);
     const body = (await res.json()) as { runs: Array<{ id: number }> };
     expect(body.runs.map((r) => r.id)).toEqual([second.id, first.id]);
+  });
+});
+
+describe("#68 POST /api/runs/:id/stop dispatch", () => {
+  beforeEach(() => {
+    db.query("DELETE FROM runs").run();
+    db.query("DELETE FROM projects").run();
+    // Active registry persists across tests in the same module; clear so
+    // each test starts from a known state.
+    activeBuildRuns.clear();
+  });
+
+  test("active build run → 200 { ok:true, result:'cancelled' } and row finalized exit=130", async () => {
+    const pid = makeProject("a");
+    const run = new BuildRun(pid);
+
+    const res = await call("POST", `/api/runs/${run.id}/stop`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { ok: boolean; result: string };
+    expect(body).toEqual({ ok: true, result: "cancelled" });
+    expect(run.abort.signal.aborted).toBe(true);
+
+    const row = db.query("SELECT exit_code, stderr FROM runs WHERE id = ?").get(run.id) as {
+      exit_code: number;
+      stderr: string;
+    };
+    expect(row.exit_code).toBe(130);
+    expect(row.stderr).toContain("[cancelled by user]");
+  });
+
+  test("active build past markStreamingDone → 409 { ok:false, result:'not_cancellable' }", async () => {
+    const pid = makeProject("a");
+    const run = new BuildRun(pid);
+    run.markStreamingDone();
+
+    const res = await call("POST", `/api/runs/${run.id}/stop`);
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { ok: boolean; result: string };
+    expect(body).toEqual({ ok: false, result: "not_cancellable" });
+    // Row still in-flight; container-start path would finalize later.
+    const row = db.query("SELECT finished_at FROM runs WHERE id = ?").get(run.id) as {
+      finished_at: string | null;
+    };
+    expect(row.finished_at).toBeNull();
+    run.finalize(0); // cleanup
+  });
+
+  test("finished row → 409 { ok:false, result:'already_finished' }", async () => {
+    const pid = makeProject("a");
+    const rid = (
+      db
+        .query(
+          `INSERT INTO runs (project_id, cron_id, started_at, finished_at, exit_code, stdout)
+           VALUES (?, NULL, datetime('now'), datetime('now'), 0, '') RETURNING id`,
+        )
+        .get(pid) as { id: number }
+    ).id;
+
+    const res = await call("POST", `/api/runs/${rid}/stop`);
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { ok: boolean; result: string };
+    expect(body).toEqual({ ok: false, result: "already_finished" });
+  });
+
+  test("missing row → 404 { ok:false, result:'not_found' }", async () => {
+    const res = await call("POST", `/api/runs/999999/stop`);
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as { ok: boolean; result: string };
+    expect(body).toEqual({ ok: false, result: "not_found" });
+  });
+
+  test("unfinished row not in active registry → 409 { ok:false, result:'not_active' }", async () => {
+    // Simulates an orphan row from a prior moor process that the startup
+    // sweep would have caught on next restart. The route should refuse to
+    // cancel rather than try to finalize something it can't observe.
+    const pid = makeProject("a");
+    const rid = (
+      db
+        .query(
+          `INSERT INTO runs (project_id, cron_id, started_at)
+           VALUES (?, NULL, datetime('now')) RETURNING id`,
+        )
+        .get(pid) as { id: number }
+    ).id;
+
+    const res = await call("POST", `/api/runs/${rid}/stop`);
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { ok: boolean; result: string };
+    expect(body).toEqual({ ok: false, result: "not_active" });
   });
 });

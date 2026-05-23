@@ -128,6 +128,7 @@ export async function buildImageStreaming(
   tag: string,
   onLine: (text: string) => void,
   noCache = false,
+  signal?: AbortSignal,
 ): Promise<void> {
   const gitUrl = githubUrl.endsWith(".git") ? githubUrl : `${githubUrl}.git`;
   const remote = `${gitUrl}#${branch}`;
@@ -136,9 +137,13 @@ export async function buildImageStreaming(
   console.log(
     `[buildImageStreaming] remote=${redactCredentials(remote) ?? remote} tag=${tag} dockerfile=${dockerfile} nocache=${noCache}`,
   );
+  // #68: signal lets BuildRun.cancel() tear down the daemon-side build.
+  // Live test confirmed closing the /v1.44/build connection aborts the
+  // build immediately (classic builder; BuildKit untested).
   const res = await dockerFetch(`/v1.44/build?${params}`, {
     method: "POST",
     timeout: BUILD_TIMEOUT,
+    signal,
   });
 
   if (!res.ok) {
@@ -203,6 +208,7 @@ function parsePullLine(line: string): { text: string; error?: boolean } | null {
 export async function pullImageStreaming(
   imageRef: string,
   onLine: (text: string) => void,
+  signal?: AbortSignal,
 ): Promise<void> {
   // Split image:tag
   const [fromImage, tag] = imageRef.includes(":")
@@ -229,6 +235,7 @@ export async function pullImageStreaming(
   const res = await dockerFetch(`/v1.44/images/create?${params}`, {
     method: "POST",
     timeout: BUILD_TIMEOUT,
+    signal,
   });
 
   if (!res.ok) {

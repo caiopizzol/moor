@@ -1,3 +1,4 @@
+import { activeBuildRuns } from "../build-runs";
 import { stopCronRun } from "../cron";
 import db from "../db";
 
@@ -88,15 +89,48 @@ export async function handleRuns(req: Request, url: URL): Promise<Response | nul
     return Response.json(row);
   }
 
-  // /api/runs/:id/stop
+  // /api/runs/:id/stop — generalized to cover cron runs (existing) and
+  // active build/pull runs (#68). Lookup order matters: cron registry
+  // first, then build registry, then DB to disambiguate "already
+  // finished" from "doesn't exist". We don't infer "is build vs cron"
+  // from the DB row because cron_id IS NULL is ambiguous (deleted
+  // crons also have NULL via ON DELETE SET NULL).
   const stopMatch = url.pathname.match(/^\/api\/runs\/(\d+)\/stop$/);
   if (stopMatch && req.method === "POST") {
     const id = Number(stopMatch[1]);
-    const stopped = await stopCronRun(id);
-    if (!stopped) {
-      return Response.json({ error: "Run not active or not found" }, { status: 404 });
+
+    const stoppedCron = await stopCronRun(id);
+    if (stoppedCron) {
+      return Response.json({ ok: true, result: "cancelled_cron" });
     }
-    return Response.json({ ok: true });
+
+    const build = activeBuildRuns.get(id);
+    if (build) {
+      const result = build.cancel();
+      if (result === "cancelled") {
+        return Response.json({ ok: true, result: "cancelled" });
+      }
+      // not_cancellable / already_finished — caller can still tell what
+      // happened from the result field.
+      return Response.json({ ok: false, result }, { status: 409 });
+    }
+
+    // Not in either registry. Differentiate "doesn't exist" from
+    // "exists but already terminal" so the operator can tell whether
+    // they hit the right id.
+    const row = db.query("SELECT finished_at FROM runs WHERE id = ?").get(id) as {
+      finished_at: string | null;
+    } | null;
+    if (!row) {
+      return Response.json({ ok: false, result: "not_found" }, { status: 404 });
+    }
+    if (row.finished_at !== null) {
+      return Response.json({ ok: false, result: "already_finished" }, { status: 409 });
+    }
+    // Row exists, in-flight, but neither registry knows about it. Most
+    // likely an orphan that the next moor restart would sweep — treat as
+    // not_active so the operator knows it can't be cancelled here.
+    return Response.json({ ok: false, result: "not_active" }, { status: 409 });
   }
 
   return null;
