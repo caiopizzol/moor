@@ -150,7 +150,7 @@ async function handleRun(req: Request, project: Project): Promise<Response> {
       try {
         if (isImageProject) {
           log(`Pulling ${project.docker_image}...\n`);
-          await pullImageStreaming(project.docker_image!, log);
+          await pullImageStreaming(project.docker_image!, log, run.abort.signal);
         } else {
           await buildImageStreaming(
             project.github_url as string,
@@ -159,11 +159,17 @@ async function handleRun(req: Request, project: Project): Promise<Response> {
             tag,
             log,
             noCache,
+            run.abort.signal,
           );
         }
 
         const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
         const verb = isImageProject ? "Pull" : "Build";
+
+        // #68: past this point cancel() can't stop anything useful — the
+        // container-start phase below uses different Docker endpoints and
+        // AbortController on the build/pull fetch won't reach them.
+        run.markStreamingDone();
 
         db.query("UPDATE projects SET image_tag = ?, status = 'stopped' WHERE id = ?").run(
           tag,
@@ -178,6 +184,15 @@ async function handleRun(req: Request, project: Project): Promise<Response> {
           log(`Port ${container_port} → host :${host_port}\n`);
         }
       } catch (e) {
+        // #68: if cancel() fired AbortError, BuildRun.cancel already
+        // finalized the row with exit_code=130 and "[cancelled by user]".
+        // Don't re-finalize or overwrite with a generic failure.
+        if (run.abort.signal.aborted) {
+          db.query("UPDATE projects SET status = 'error' WHERE id = ?").run(project.id);
+          send("error", "cancelled by user");
+          safeClose();
+          return;
+        }
         const message = e instanceof Error ? e.message : "Unknown error";
         console.error(`[run] FAILED: ${message}`);
         run.appendStderr(`${message}\n`);
@@ -351,9 +366,16 @@ async function handleBuild(project: Project): Promise<Response> {
 
   try {
     console.log("[build] starting docker build...");
-    await buildImageStreaming(project.github_url, project.branch, project.dockerfile, tag, (line) =>
-      run.appendStdout(line),
+    await buildImageStreaming(
+      project.github_url,
+      project.branch,
+      project.dockerfile,
+      tag,
+      (line) => run.appendStdout(line),
+      false,
+      run.abort.signal,
     );
+    run.markStreamingDone();
     db.query("UPDATE projects SET image_tag = ?, status = 'stopped' WHERE id = ?").run(
       tag,
       project.id,
@@ -367,6 +389,11 @@ async function handleBuild(project: Project): Promise<Response> {
     return Response.json({ message: "Build complete" });
   } catch (e) {
     db.query("UPDATE projects SET status = 'error' WHERE id = ?").run(project.id);
+    // #68: cancel already finalized as exit 130 with "[cancelled by user]";
+    // don't overwrite with a generic failure.
+    if (run.abort.signal.aborted) {
+      return new Response("cancelled by user", { status: 499 });
+    }
     const message = e instanceof Error ? e.message : "Unknown error";
     console.error(`[build] FAILED: ${message}`);
     run.appendStderr(`${message}\n`);

@@ -8,7 +8,7 @@ process.env.MOOR_DB_PATH = ":memory:";
 import { beforeEach, describe, expect, test } from "bun:test";
 
 const { default: db } = await import("./db");
-const { BuildRun } = await import("./build-runs");
+const { BuildRun, activeBuildRuns } = await import("./build-runs");
 const { TAIL_CAP_BYTES } = await import("./output-cap");
 
 function makeProject(name = "p"): number {
@@ -258,5 +258,83 @@ describe("#65 orphan sweep on Moor restart", () => {
     expect(row.exit_code).toBe(0);
     expect(row.stdout).toBe("all good");
     // The original finished_at timestamp must be preserved (no overwrite).
+  });
+});
+
+describe("#68 BuildRun.cancel lifecycle", () => {
+  let projectId: number;
+
+  beforeEach(() => {
+    db.query("DELETE FROM runs").run();
+    db.query("DELETE FROM projects").run();
+    activeBuildRuns.clear();
+    projectId = makeProject();
+  });
+
+  test("cancel during streaming returns 'cancelled' and finalizes exit_code=130 with stderr note", () => {
+    const run = new BuildRun(projectId);
+    expect(activeBuildRuns.has(run.id)).toBe(true);
+    expect(run.abort.signal.aborted).toBe(false);
+
+    const result = run.cancel();
+    expect(result).toBe("cancelled");
+    expect(run.abort.signal.aborted).toBe(true);
+    expect(activeBuildRuns.has(run.id)).toBe(false); // cleaned up
+
+    const row = db.query("SELECT * FROM runs WHERE id = ?").get(run.id) as {
+      finished_at: string | null;
+      exit_code: number;
+      stderr: string;
+    };
+    expect(row.finished_at).not.toBeNull();
+    expect(row.exit_code).toBe(130);
+    expect(row.stderr).toContain("[cancelled by user]");
+  });
+
+  test("cancel after markStreamingDone returns 'not_cancellable' — container-start phase is past the abort window", () => {
+    const run = new BuildRun(projectId);
+    run.appendStdout("build done\n");
+    run.markStreamingDone();
+    const result = run.cancel();
+    expect(result).toBe("not_cancellable");
+    // Row stays in-flight; the container-start phase will finalize it later.
+    const row = db.query("SELECT finished_at FROM runs WHERE id = ?").get(run.id) as {
+      finished_at: string | null;
+    };
+    expect(row.finished_at).toBeNull();
+    // Cleanup so beforeEach assertions in the next test hold.
+    run.finalize(0);
+  });
+
+  test("cancel after finalize returns 'already_finished'", () => {
+    const run = new BuildRun(projectId);
+    run.finalize(0);
+    expect(run.cancel()).toBe("already_finished");
+    // exit_code stays at the original finalize value (0), not 130.
+    const row = db.query("SELECT exit_code FROM runs WHERE id = ?").get(run.id) as {
+      exit_code: number;
+    };
+    expect(row.exit_code).toBe(0);
+  });
+
+  test("double-cancel is idempotent (second call returns 'already_finished')", () => {
+    const run = new BuildRun(projectId);
+    expect(run.cancel()).toBe("cancelled");
+    expect(run.cancel()).toBe("already_finished");
+  });
+
+  test("stray finalize after cancel does not rewrite exit_code (in-memory guard)", () => {
+    // Defensive coverage: if the build try/catch fires finalize(0) on the
+    // same instance after cancel ran, the in-memory `finalized` guard
+    // makes it a no-op. The `WHERE finished_at IS NULL` clause in
+    // finalize() is a belt-and-suspenders backstop for cross-instance
+    // races and isn't exercised here.
+    const run = new BuildRun(projectId);
+    run.cancel();
+    run.finalize(0);
+    const row = db.query("SELECT exit_code FROM runs WHERE id = ?").get(run.id) as {
+      exit_code: number;
+    };
+    expect(row.exit_code).toBe(130);
   });
 });

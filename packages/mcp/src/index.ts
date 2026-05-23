@@ -1390,6 +1390,27 @@ server.registerTool(
 );
 
 server.registerTool(
+  "moor_run_stop",
+  {
+    title: "Stop or Cancel a Run",
+    description:
+      "Stops an active cron run or cancels an active build/pull run (from moor_rebuild / moor_deploy). Closing the connection to the Docker build/pull endpoint aborts the daemon-side job. Cancellation is only valid during the build/pull streaming phase — once the build finishes and container start has begun, the call returns not_cancellable. Returns: cancelled / cancelled_cron / not_cancellable / already_finished / not_active / not_found.",
+    inputSchema: z.object({
+      run_id: z.number().int().positive().describe("Run ID from moor_runs"),
+    }),
+  },
+  async ({ run_id }) => {
+    const res = await apiPost(`/api/runs/${run_id}/stop`);
+    const data = (await res.json()) as { ok: boolean; result?: string; error?: string };
+    const result = data.result ?? (data.ok ? "stopped" : (data.error ?? "unknown"));
+    if (data.ok) {
+      return { content: [{ type: "text", text: `run_id=${run_id} ${result}` }] };
+    }
+    throw new Error(`run_id=${run_id} ${result}`);
+  },
+);
+
+server.registerTool(
   "moor_deploy",
   {
     title: "Deploy Project",
