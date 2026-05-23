@@ -1394,19 +1394,31 @@ server.registerTool(
   {
     title: "Stop or Cancel a Run",
     description:
-      "Stops an active cron run or cancels an active build/pull run (from moor_rebuild / moor_deploy). Closing the connection to the Docker build/pull endpoint aborts the daemon-side job. Cancellation is only valid during the build/pull streaming phase — once the build finishes and container start has begun, the call returns not_cancellable. Returns: cancelled / cancelled_cron / not_cancellable / already_finished / not_active / not_found.",
+      "Stops an active cron run or cancels an active build/pull run (from moor_rebuild / moor_deploy). Closing the connection to the Docker build/pull endpoint aborts the daemon-side job. Cancellation is only valid during the build/pull streaming phase — once the build finishes and container start has begun, the call returns not_cancellable. Returns one of: cancelled, cancelled_cron, not_cancellable, already_finished, not_active, not_found. These are all expected outcomes, not errors — the tool throws only on unexpected server failures.",
     inputSchema: z.object({
       run_id: z.number().int().positive().describe("Run ID from moor_runs"),
     }),
   },
   async ({ run_id }) => {
     const res = await apiPost(`/api/runs/${run_id}/stop`);
-    const data = (await res.json()) as { ok: boolean; result?: string; error?: string };
-    const result = data.result ?? (data.ok ? "stopped" : (data.error ?? "unknown"));
-    if (data.ok) {
-      return { content: [{ type: "text", text: `run_id=${run_id} ${result}` }] };
+    // The /stop route returns 200 for cancelled/cancelled_cron and 4xx
+    // for the rest of the known result categories (with a result field
+    // either way). All of those are expected outcomes — render them as
+    // content so the agent can react without try/catch. Only surface as
+    // an error if the response doesn't fit the documented shape (server
+    // error, parse failure, etc).
+    let data: { ok?: boolean; result?: string; error?: string };
+    try {
+      data = (await res.json()) as { ok?: boolean; result?: string; error?: string };
+    } catch {
+      throw new Error(`run_id=${run_id} server error: ${res.status} ${res.statusText}`);
     }
-    throw new Error(`run_id=${run_id} ${result}`);
+    if (typeof data.result === "string") {
+      return { content: [{ type: "text", text: `run_id=${run_id} ${data.result}` }] };
+    }
+    throw new Error(
+      `run_id=${run_id} unexpected response: status=${res.status} body=${JSON.stringify(data)}`,
+    );
   },
 );
 
