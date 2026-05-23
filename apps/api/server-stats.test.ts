@@ -32,18 +32,41 @@ describe("#53 parseLoadAvg", () => {
 });
 
 describe("#53 parseSystemDf", () => {
-  test("aggregates images: unique-bytes sum and unused-only reclaimable", () => {
+  test("images.bytes uses LayersSize (deduped) — not a naive per-image sum", () => {
+    // A shared 200-byte base layer would be hidden by Size-SharedSize
+    // and double-counted by raw Size. LayersSize is the truth Docker uses.
     const out = parseSystemDf({
+      LayersSize: 1200,
       Images: [
-        { Id: "a", Size: 1000, SharedSize: 200, Containers: 1 }, // used: 800 unique, not reclaimable
-        { Id: "b", Size: 500, SharedSize: 100, Containers: 0 }, // unused: 400 unique, reclaimable
-        { Id: "c", Size: 300, SharedSize: 300, Containers: 0 }, // unused, but fully shared -> 0
+        { Id: "a", Size: 1000, SharedSize: 200, Containers: 1 },
+        { Id: "b", Size: 500, SharedSize: 100, Containers: 0 },
       ],
     });
-    expect(out.images.bytes).toBe(800 + 400 + 0);
+    expect(out.images.bytes).toBe(1200);
+  });
+
+  test("images.bytes falls back to per-image unique sum when LayersSize is absent", () => {
+    const out = parseSystemDf({
+      Images: [
+        { Id: "a", Size: 1000, SharedSize: 200, Containers: 1 },
+        { Id: "b", Size: 500, SharedSize: 100, Containers: 0 },
+      ],
+    });
+    expect(out.images.bytes).toBe(800 + 400);
+  });
+
+  test("images.reclaimable_bytes counts only unused images, by unique bytes", () => {
+    const out = parseSystemDf({
+      LayersSize: 9999,
+      Images: [
+        { Id: "a", Size: 1000, SharedSize: 200, Containers: 1 }, // used
+        { Id: "b", Size: 500, SharedSize: 100, Containers: 0 }, // unused: 400
+        { Id: "c", Size: 300, SharedSize: 300, Containers: 0 }, // unused but fully shared: 0
+      ],
+    });
     expect(out.images.reclaimable_bytes).toBe(400);
-    expect(out.images.count).toBe(3);
     expect(out.images.unused_count).toBe(2);
+    expect(out.images.count).toBe(3);
   });
 
   test("aggregates containers: only non-running rows are reclaimable", () => {
@@ -60,32 +83,37 @@ describe("#53 parseSystemDf", () => {
     expect(out.containers.stopped_count).toBe(2);
   });
 
-  test("volumes: RefCount==0 is reclaimable; un-walked Size=-1 is treated as 0", () => {
+  test("volumes: RefCount==0 with UsageData is reclaimable; null UsageData is unknown, not unused", () => {
+    // A volume Docker did not compute usage for must not silently count as
+    // reclaimable. RefCount==0 (with UsageData present) is the explicit signal.
     const out = parseSystemDf({
       Volumes: [
         { Name: "v1", UsageData: { Size: 2048, RefCount: 1 } },
         { Name: "v2", UsageData: { Size: 4096, RefCount: 0 } },
-        { Name: "v3", UsageData: { Size: -1, RefCount: 0 } }, // un-walked
-        { Name: "v4", UsageData: null },
+        { Name: "v3", UsageData: { Size: -1, RefCount: 0 } }, // un-walked size
+        { Name: "v4", UsageData: null }, // unknown — not unused
       ],
     });
-    expect(out.volumes.bytes).toBe(2048 + 4096);
+    expect(out.volumes.bytes).toBe(2048 + 4096); // v3 contributes 0, v4 skipped
     expect(out.volumes.reclaimable_bytes).toBe(4096);
-    expect(out.volumes.count).toBe(4);
-    expect(out.volumes.unused_count).toBe(3); // v2, v3, v4 all have refCount==0
+    expect(out.volumes.count).toBe(4); // count reflects all volumes
+    expect(out.volumes.unused_count).toBe(2); // v2, v3 — v4 (null) is unknown
   });
 
-  test("build cache: only !InUse rows reclaim, count covers all", () => {
+  test("build cache: Shared rows are excluded from total, reclaimable, and count", () => {
+    // Docker's own summary treats shared cache as not safely prunable; mirror
+    // that. Of the remaining non-shared rows, only !InUse is reclaimable.
     const out = parseSystemDf({
       BuildCache: [
-        { ID: "c1", Size: 1000, InUse: true, Shared: false },
-        { ID: "c2", Size: 500, InUse: false, Shared: false },
-        { ID: "c3", Size: 250, InUse: false, Shared: true },
+        { ID: "c1", Size: 1000, InUse: true, Shared: false }, // counted, not reclaimable
+        { ID: "c2", Size: 500, InUse: false, Shared: false }, // counted, reclaimable
+        { ID: "c3", Size: 250, InUse: false, Shared: true }, // excluded
+        { ID: "c4", Size: 800, InUse: true, Shared: true }, // excluded
       ],
     });
-    expect(out.build_cache.bytes).toBe(1750);
-    expect(out.build_cache.reclaimable_bytes).toBe(750);
-    expect(out.build_cache.count).toBe(3);
+    expect(out.build_cache.bytes).toBe(1500);
+    expect(out.build_cache.reclaimable_bytes).toBe(500);
+    expect(out.build_cache.count).toBe(2);
   });
 
   test("handles empty/missing arrays without throwing", () => {

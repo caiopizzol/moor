@@ -51,18 +51,29 @@ export function parseLoadAvg(raw: string): number {
 
 /** Aggregate Docker `/system/df` into compact per-category numbers.
  *
- *  Notes:
- *  - Images: `Size - SharedSize` is the bytes a delete would actually free
- *    (shared layers stay live). Reclaimable counts only images with zero
- *    container refs, matching `docker system df`'s ACTIVE/RECLAIMABLE split.
+ *  Aggregation rules mirror Docker's own `docker system df` summary logic
+ *  (Moby's legacy diskusage formatter against `/v1.44/system/df`):
+ *  - Images: total is `LayersSize` (the deduped on-disk size of all image
+ *    layers). A naive sum of per-image `Size` double-counts shared base
+ *    layers; a sum of `Size - SharedSize` hides them. `LayersSize` is the
+ *    field Docker itself uses. Reclaimable is sum of `Size - SharedSize`
+ *    for images with zero container refs — that is the bytes a delete
+ *    would actually free, since shared layers stay live behind other
+ *    images. Falls back to the per-image computation only if `LayersSize`
+ *    is missing.
  *  - Containers: `SizeRw` is the writable layer. Reclaimable counts only
  *    non-running containers, since a running container's writable layer
  *    can't be removed.
- *  - Volumes: `UsageData.Size` is -1 when Docker didn't walk the volume.
- *    Treat -1 as 0 for sums so a single un-walked volume can't dominate.
- *  - Build cache: every entry is technically prunable, but we only count
- *    `!InUse` rows toward reclaimable to match the conservative posture
- *    expected by cleanup tooling.
+ *  - Volumes: `RefCount === 0` (with UsageData present) is the explicit
+ *    unused signal. `UsageData: null` or missing means Docker did not
+ *    compute usage; treat as unknown, not unused — listing it as
+ *    reclaimable would be misleading. `Size === -1` means Docker did not
+ *    walk the volume; treat as 0 bytes so a single un-walked volume can't
+ *    dominate the total.
+ *  - Build cache: rows with `Shared: true` are shared with other in-use
+ *    cache and are not safely prunable on their own; Docker's summary
+ *    excludes them from both total and reclaimable, and so do we. Of the
+ *    remaining (non-shared) entries, `!InUse` rows are reclaimable.
  */
 export function parseSystemDf(raw: SystemDfResponse): DockerDisk {
   const images = raw.Images ?? [];
@@ -70,17 +81,18 @@ export function parseSystemDf(raw: SystemDfResponse): DockerDisk {
   const volumes = raw.Volumes ?? [];
   const buildCache = raw.BuildCache ?? [];
 
-  let imagesBytes = 0;
+  let imagesPerSum = 0;
   let imagesReclaimable = 0;
   let imagesUnused = 0;
   for (const img of images) {
     const unique = Math.max(0, (img.Size ?? 0) - (img.SharedSize ?? 0));
-    imagesBytes += unique;
+    imagesPerSum += unique;
     if ((img.Containers ?? 0) === 0) {
       imagesReclaimable += unique;
       imagesUnused++;
     }
   }
+  const imagesBytes = raw.LayersSize ?? imagesPerSum;
 
   let containersBytes = 0;
   let containersReclaimable = 0;
@@ -98,11 +110,11 @@ export function parseSystemDf(raw: SystemDfResponse): DockerDisk {
   let volumesReclaimable = 0;
   let volumesUnused = 0;
   for (const v of volumes) {
-    const size = v.UsageData?.Size ?? -1;
-    const safeSize = size < 0 ? 0 : size;
+    const usage = v.UsageData;
+    if (!usage) continue;
+    const safeSize = usage.Size < 0 ? 0 : usage.Size;
     volumesBytes += safeSize;
-    const refCount = v.UsageData?.RefCount ?? 0;
-    if (refCount === 0) {
+    if (usage.RefCount === 0) {
       volumesReclaimable += safeSize;
       volumesUnused++;
     }
@@ -110,9 +122,12 @@ export function parseSystemDf(raw: SystemDfResponse): DockerDisk {
 
   let cacheBytes = 0;
   let cacheReclaimable = 0;
+  let cacheCount = 0;
   for (const entry of buildCache) {
+    if (entry.Shared) continue;
     const size = entry.Size ?? 0;
     cacheBytes += size;
+    cacheCount++;
     if (!entry.InUse) cacheReclaimable += size;
   }
 
@@ -139,7 +154,7 @@ export function parseSystemDf(raw: SystemDfResponse): DockerDisk {
     build_cache: {
       bytes: cacheBytes,
       reclaimable_bytes: cacheReclaimable,
-      count: buildCache.length,
+      count: cacheCount,
     },
   };
 }
