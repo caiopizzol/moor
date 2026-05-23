@@ -116,58 +116,11 @@ function parseBuildLine(line: string): { text: string; error?: boolean } | null 
   return null;
 }
 
-export async function buildImage(
-  githubUrl: string,
-  branch: string,
-  dockerfile: string,
-  tag: string,
-): Promise<string> {
-  const gitUrl = githubUrl.endsWith(".git") ? githubUrl : `${githubUrl}.git`;
-  const remote = `${gitUrl}#${branch}`;
-  const params = new URLSearchParams({ remote, t: tag, dockerfile });
-  console.log(
-    `[buildImage] remote=${redactCredentials(remote) ?? remote} tag=${tag} dockerfile=${dockerfile}`,
-  );
-  const res = await dockerFetch(`/v1.44/build?${params}`, {
-    method: "POST",
-    timeout: BUILD_TIMEOUT,
-  });
-
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`Docker build failed: ${res.status} ${body}`);
-  }
-
-  let rawOutput = "";
-  const reader = res.body?.getReader();
-  if (reader) {
-    const decoder = new TextDecoder();
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      rawOutput += decoder.decode(value, { stream: true });
-    }
-  }
-
-  let buildError: string | null = null;
-  let output = "";
-  for (const line of rawOutput.split("\n").filter(Boolean)) {
-    const parsed = parseBuildLine(line);
-    if (parsed) {
-      output += parsed.text;
-      if (parsed.error) buildError = parsed.text;
-    }
-  }
-
-  if (buildError) throw new Error(buildError);
-  return output;
-}
-
-/** Streaming version of buildImage — calls onLine for each parsed line as
- *  it arrives. Returns void: callers must persist the output themselves
- *  (see BuildRun in apps/api/build-runs.ts). The previous full-string
- *  return value kept an unbounded copy of the build log alive in API
- *  memory, which defeated the 64 KiB tail cap on the durable side. */
+/** Build a Docker image. Calls onLine for each parsed line as it arrives.
+ *  Returns void: callers own persistence (see BuildRun in
+ *  apps/api/build-runs.ts). An earlier full-string return value kept an
+ *  unbounded copy of the build log alive in API memory, which defeated
+ *  the 64 KiB tail cap on the durable side. */
 export async function buildImageStreaming(
   githubUrl: string,
   branch: string,

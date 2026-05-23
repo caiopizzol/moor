@@ -166,9 +166,9 @@ function validateGithubRepoUrl(url: string): void {
   } catch {
     throw new Error(`github_url is not a valid URL: ${url}`);
   }
-  // The downstream build path (apps/api/docker.ts:buildImage) appends ".git" and a
-  // branch ref to whatever URL we forward, so a non-http protocol, query string, or
-  // fragment quietly mangles the resulting git remote. Reject those up front.
+  // The downstream build path (apps/api/docker.ts:buildImageStreaming) appends ".git"
+  // and a branch ref to whatever URL we forward, so a non-http protocol, query string,
+  // or fragment quietly mangles the resulting git remote. Reject those up front.
   if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
     throw new Error(`github_url must use http or https (got protocol "${parsed.protocol}")`);
   }
