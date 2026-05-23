@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import { McpServer, StdioServerTransport } from "@modelcontextprotocol/server";
 import { z } from "zod";
+import { tailUtf8 } from "./tail-utf8";
 
 // --- Config ---
 
@@ -1087,12 +1088,22 @@ server.registerTool(
   {
     title: "Get Async Exec Status",
     description:
-      "Return the current state of an async exec run: state, exit code (when finished), running tail of stdout/stderr (last 64 KiB each), total bytes seen, duration, and any error message. State is one of: running, exited, stopped, timed_out, error.",
+      "Return the current state of an async exec run: state, exit code (when finished), running tail of stdout/stderr (default 8 KiB each inline; the API stores up to 64 KiB), total bytes seen, duration, and any error message. State is one of: running, exited, stopped, timed_out, error. Pass tail_bytes to control how many bytes of each stream are returned inline (0 to 65536; default 8192). The API's 64 KiB-per-stream storage cap is unchanged — tail_bytes only controls what the MCP tool returns to keep responses under typical agent token limits.",
     inputSchema: z.object({
       run_id: z.number().int().positive().describe("Run ID returned by moor_exec_async"),
+      tail_bytes: z
+        .number()
+        .int()
+        .min(0)
+        .max(65_536)
+        .optional()
+        .describe(
+          "Max bytes of each stream (stdout, stderr) returned inline. Default 8192. Max 65536 (the API storage cap). Set to 0 for metadata-only.",
+        ),
     }),
   },
-  async ({ run_id }) => {
+  async ({ run_id, tail_bytes }) => {
+    const cap = tail_bytes ?? 8192;
     const res = await apiGet(`/api/exec/${run_id}`);
     if (res.status === 404) throw new Error(`run_id ${run_id} not found`);
     if (!res.ok) throw new Error(`Failed: ${await res.text()}`);
@@ -1119,29 +1130,41 @@ server.registerTool(
     lines.push(`command: ${data.command}`);
     if (data.killed_pid) lines.push(`killed_pid: ${data.killed_pid}`);
     if (data.error_message) lines.push(`error: ${data.error_message}`);
-    if (data.stdout) {
-      const note =
-        data.stdout_total_bytes > data.stdout.length
-          ? ` (tail of ${data.stdout_total_bytes} bytes)`
-          : "";
-      lines.push(`stdout${note}:`);
-      lines.push(data.stdout);
-    } else if (data.stdout_total_bytes > 0) {
-      lines.push(`stdout_total_bytes=${data.stdout_total_bytes}`);
-    }
-    if (data.stderr) {
-      const note =
-        data.stderr_total_bytes > data.stderr.length
-          ? ` (tail of ${data.stderr_total_bytes} bytes)`
-          : "";
-      lines.push(`stderr${note}:`);
-      lines.push(data.stderr);
-    } else if (data.stderr_total_bytes > 0) {
-      lines.push(`stderr_total_bytes=${data.stderr_total_bytes}`);
-    }
+    appendStream(lines, "stdout", data.stdout, data.stdout_total_bytes, cap);
+    appendStream(lines, "stderr", data.stderr, data.stderr_total_bytes, cap);
     return { content: [{ type: "text", text: lines.join("\n") }] };
   },
 );
+
+function appendStream(
+  lines: string[],
+  name: string,
+  raw: string,
+  totalBytes: number,
+  cap: number,
+): void {
+  if (!raw && totalBytes === 0) return;
+  if (!raw) {
+    // API returned an empty string but the stream did emit data (totalBytes > 0
+    // is possible when no bytes survived API-side tail cap, though unlikely).
+    lines.push(`${name}_total_bytes=${totalBytes}`);
+    return;
+  }
+  const { tail, storedBytes, trimmed: mcpTrimmed } = tailUtf8(raw, cap);
+  const apiTrimmed = totalBytes > storedBytes;
+  let header: string;
+  if (mcpTrimmed && apiTrimmed) {
+    header = `${name} (showing last ${tail.length} chars of ${storedBytes} stored bytes; ${totalBytes} total bytes seen):`;
+  } else if (mcpTrimmed) {
+    header = `${name} (showing last ${tail.length} chars of ${storedBytes} total bytes):`;
+  } else if (apiTrimmed) {
+    header = `${name} (tail of ${storedBytes} stored from ${totalBytes} total bytes seen):`;
+  } else {
+    header = `${name}:`;
+  }
+  lines.push(header);
+  if (cap > 0) lines.push(tail);
+}
 
 server.registerTool(
   "moor_exec_stop",
