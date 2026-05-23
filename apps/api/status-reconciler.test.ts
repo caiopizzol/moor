@@ -133,45 +133,64 @@ describe("#71 reconcileOnce — dual-field model, both directions", () => {
   test("inspect failure → preserves prior live_*, records live_error (load-bearing)", async () => {
     // A periodic loop must NOT rewrite truth from a transient daemon
     // glitch. Seed the row with a prior successful live_status='running',
-    // then have the inspector fail; live_status must stay 'running'.
+    // then have the inspector fail; live_status must stay 'running' AND
+    // live_checked_at must NOT advance — otherwise MCP would show a
+    // fresh timestamp next to a stale snapshot, contradicting the
+    // "last successful inspect" semantic the description promises.
     const p = makeProject("a", "running", "container-A");
     await reconcileOnce(
       mockInspect({
         "container-A": { ok: true, state: { Running: true, ExitCode: 0 } },
       }),
     );
-    let row = db.query("SELECT live_status, live_error FROM projects WHERE id = ?").get(p.id) as {
+    let row = db
+      .query("SELECT live_status, live_checked_at, live_error FROM projects WHERE id = ?")
+      .get(p.id) as {
       live_status: string;
+      live_checked_at: string;
       live_error: string | null;
     };
     expect(row.live_status).toBe("running");
     expect(row.live_error).toBeNull();
+    const firstCheckedAt = row.live_checked_at;
 
-    // Now simulate Docker socket unreachable.
+    // Now simulate Docker socket unreachable. Wait at least one second
+    // so a buggy implementation that advanced live_checked_at would
+    // produce a visibly different timestamp (SQLite datetime() is
+    // second-precision).
+    await new Promise((r) => setTimeout(r, 1100));
     await reconcileOnce(
       mockInspect({
         "container-A": { ok: false, kind: "error", message: "ECONNREFUSED" },
       }),
     );
-    row = db.query("SELECT live_status, live_error FROM projects WHERE id = ?").get(p.id) as {
+    row = db
+      .query("SELECT live_status, live_checked_at, live_error FROM projects WHERE id = ?")
+      .get(p.id) as {
       live_status: string;
+      live_checked_at: string;
       live_error: string | null;
     };
     expect(row.live_status).toBe("running"); // preserved!
     expect(row.live_error).toBe("ECONNREFUSED");
+    expect(row.live_checked_at).toBe(firstCheckedAt); // preserved!
 
-    // Next successful inspect clears live_error.
+    // Next successful inspect clears live_error and updates checked_at.
     await reconcileOnce(
       mockInspect({
         "container-A": { ok: true, state: { Running: false, ExitCode: 0 } },
       }),
     );
-    row = db.query("SELECT live_status, live_error FROM projects WHERE id = ?").get(p.id) as {
+    row = db
+      .query("SELECT live_status, live_checked_at, live_error FROM projects WHERE id = ?")
+      .get(p.id) as {
       live_status: string;
+      live_checked_at: string;
       live_error: string | null;
     };
     expect(row.live_status).toBe("stopped");
     expect(row.live_error).toBeNull();
+    expect(row.live_checked_at).not.toBe(firstCheckedAt); // advanced
   });
 
   test("projects with container_id IS NULL are skipped — no inspect calls", async () => {

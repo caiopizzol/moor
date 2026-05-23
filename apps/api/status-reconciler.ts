@@ -86,12 +86,15 @@ function writeLiveOk(projectId: number, liveStatus: LiveStatus, liveExitCode: nu
 }
 
 function writeLiveError(projectId: number, message: string): void {
-  // Only live_error and live_checked_at change; live_status /
-  // live_exit_code keep their last successful values. The next
-  // successful inspect clears live_error.
-  db.query(
-    `UPDATE projects SET live_checked_at = datetime('now'), live_error = ? WHERE id = ?`,
-  ).run(message, projectId);
+  // Only live_error changes; live_status, live_exit_code, AND
+  // live_checked_at keep their last successful values. The MCP
+  // description guarantees live_checked_at is the time of the last
+  // successful inspect — moving it forward on a failure would lie
+  // ("we checked 2 seconds ago and it's running") when really we
+  // tried 2 seconds ago, failed, and the "running" is from earlier.
+  // The next successful inspect updates live_checked_at and clears
+  // live_error in writeLiveOk.
+  db.query("UPDATE projects SET live_error = ? WHERE id = ?").run(message, projectId);
 }
 
 /** One reconciler pass. Walks every project with container_id IS NOT
