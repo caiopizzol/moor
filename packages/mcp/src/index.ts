@@ -491,7 +491,8 @@ server.registerTool(
   "moor_stats",
   {
     title: "Server Stats",
-    description: "Get server resource usage: CPU, memory, disk, and container counts.",
+    description:
+      "Get server resource usage: load, memory, root disk, Docker disk by category (images/containers/volumes/build cache) with reclaimable bytes, and container counts. Note: cpu.percent is load-derived (load avg ÷ cores), not instantaneous CPU; use the `load` field for the same signal with explicit naming.",
   },
   async () => {
     const res = await apiGet("/api/server/stats");
@@ -501,22 +502,59 @@ server.registerTool(
       os: string;
       uptime: string;
       cpu: { percent: number; cores: number };
+      load?: { one_min: number; cores: number; normalized_percent: number };
       memory: { total: string; used: string; percent: number };
       disk: { total: string; used: string; percent: number };
       containers: { running: number; total: number };
+      docker?: {
+        images: { bytes: number; reclaimable_bytes: number; count: number; unused_count: number };
+        containers: {
+          bytes: number;
+          reclaimable_bytes: number;
+          count: number;
+          stopped_count: number;
+        };
+        volumes: { bytes: number; reclaimable_bytes: number; count: number; unused_count: number };
+        build_cache: { bytes: number; reclaimable_bytes: number; count: number };
+      } | null;
     };
-    const text = [
+    const lines = [
       `Host: ${s.hostname}`,
       `OS: ${s.os}`,
       `Uptime: ${s.uptime}`,
-      `CPU: ${s.cpu.percent}% (${s.cpu.cores} cores)`,
+      `CPU: ${s.cpu.percent}% (${s.cpu.cores} cores) — load-derived, not instantaneous`,
+    ];
+    if (s.load) {
+      lines.push(
+        `Load (1m): ${s.load.one_min.toFixed(2)} on ${s.load.cores} cores (${s.load.normalized_percent}%)`,
+      );
+    }
+    lines.push(
       `Memory: ${s.memory.used} / ${s.memory.total} (${s.memory.percent}%)`,
-      `Disk: ${s.disk.used} / ${s.disk.total} (${s.disk.percent}%)`,
+      `Disk (root /): ${s.disk.used} / ${s.disk.total} (${s.disk.percent}%)`,
       `Containers: ${s.containers.running} running / ${s.containers.total} total`,
-    ].join("\n");
-    return { content: [{ type: "text", text }] };
+    );
+    if (s.docker) {
+      const d = s.docker;
+      lines.push(
+        "Docker disk:",
+        `  Images: ${formatBytes(d.images.bytes)} (${formatBytes(d.images.reclaimable_bytes)} reclaimable, ${d.images.unused_count}/${d.images.count} unused)`,
+        `  Containers: ${formatBytes(d.containers.bytes)} (${formatBytes(d.containers.reclaimable_bytes)} reclaimable, ${d.containers.stopped_count}/${d.containers.count} stopped)`,
+        `  Volumes: ${formatBytes(d.volumes.bytes)} (${formatBytes(d.volumes.reclaimable_bytes)} reclaimable, ${d.volumes.unused_count}/${d.volumes.count} unused)`,
+        `  Build cache: ${formatBytes(d.build_cache.bytes)} (${formatBytes(d.build_cache.reclaimable_bytes)} reclaimable, ${d.build_cache.count} entries)`,
+      );
+    }
+    return { content: [{ type: "text", text: lines.join("\n") }] };
   },
 );
+
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  const i = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024)));
+  const val = bytes / 1024 ** i;
+  return `${val.toFixed(val < 10 ? 1 : 0)} ${units[i]}`;
+}
 
 server.registerTool(
   "moor_project_get",

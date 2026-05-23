@@ -1,5 +1,13 @@
 import { execSync } from "node:child_process";
 import { SOCKET as SOCKET_PATH } from "../docker";
+import {
+  computeLoadPercent,
+  type DockerDisk,
+  type LoadInfo,
+  parseLoadAvg,
+  parseSystemDf,
+  type SystemDfResponse,
+} from "../server-stats";
 
 export async function handleServer(_req: Request, url: URL): Promise<Response | null> {
   if (url.pathname === "/api/server/stats" && _req.method === "GET") {
@@ -23,11 +31,33 @@ async function getServerStats() {
   const os = getOsInfo();
   const uptime = getUptime();
   const cpu = getCpuUsage();
+  const load = getLoadInfo(cpu.cores);
   const memory = getMemoryInfo();
   const disk = getDiskInfo();
-  const containers = await getContainerInfo();
+  const [containers, docker] = await Promise.all([getContainerInfo(), getDockerDiskInfo()]);
 
-  return { hostname, os, uptime, cpu, memory, disk, containers };
+  return { hostname, os, uptime, cpu, load, memory, disk, containers, docker };
+}
+
+function getLoadInfo(cores: number): LoadInfo {
+  const raw = tryExec("cat /proc/loadavg 2>/dev/null");
+  if (!raw) return { one_min: 0, cores, normalized_percent: 0 };
+  const one_min = parseLoadAvg(raw);
+  if (!Number.isFinite(one_min)) return { one_min: 0, cores, normalized_percent: 0 };
+  return { one_min, cores, normalized_percent: computeLoadPercent(one_min, cores) };
+}
+
+async function getDockerDiskInfo(): Promise<DockerDisk | null> {
+  try {
+    const res = await fetch("http://localhost/v1.44/system/df", {
+      unix: SOCKET_PATH,
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) return null;
+    return parseSystemDf((await res.json()) as SystemDfResponse);
+  } catch {
+    return null;
+  }
 }
 
 function tryExec(cmd: string): string {
