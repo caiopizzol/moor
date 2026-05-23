@@ -90,11 +90,12 @@ export function computeCpuPercent(payload: DockerStatsPayload): number {
 }
 
 /** Return container memory accounting that matches `docker stats`'s
- *  calculateMemUsageUnixNoCache: usage minus inactive_file. The key
- *  differs by cgroup version — `total_inactive_file` on cgroup v1,
- *  `inactive_file` on cgroup v2. If neither is present, fall through
- *  to raw usage (rather than the legacy `cache` field, which is
- *  Docker 19.03 behavior and overstates the "active" memory). */
+ *  calculateMemUsageUnixNoCache: subtract `total_inactive_file` (cgroup
+ *  v1) or `inactive_file` (cgroup v2) from usage. Critically, only
+ *  subtract when the inactive value is *less than* usage — otherwise
+ *  fall through to raw usage. Docker CLI does the same (clamping to 0
+ *  would silently misreport an active container as idle in the rare
+ *  cgroup edges where the kernel reports inactive ≥ usage). */
 export function computeMemory(payload: DockerStatsPayload): {
   bytes: number;
   limit_bytes: number;
@@ -103,8 +104,11 @@ export function computeMemory(payload: DockerStatsPayload): {
   const m = payload.memory_stats ?? {};
   const usage = m.usage ?? 0;
   const limit = m.limit ?? 0;
-  const inactive = m.stats?.total_inactive_file ?? m.stats?.inactive_file ?? 0;
-  const bytes = Math.max(0, usage - inactive);
+  const v1 = m.stats?.total_inactive_file;
+  const v2 = m.stats?.inactive_file;
+  let bytes = usage;
+  if (v1 !== undefined && v1 < usage) bytes = usage - v1;
+  else if (v2 !== undefined && v2 < usage) bytes = usage - v2;
   const percent = limit > 0 ? Math.round((bytes / limit) * 10000) / 100 : 0;
   return { bytes, limit_bytes: limit, percent };
 }

@@ -118,12 +118,16 @@ describe("#52 computeMemory — matches docker stats calculateMemUsageUnixNoCach
     expect(m.bytes).toBe(1_000_000);
   });
 
-  test("clamps bytes to 0 if inactive_file > usage (rare cgroup edge)", () => {
+  test("falls back to raw usage when inactive_file >= usage (matches Docker CLI)", () => {
+    // Docker CLI's calculateMemUsageUnixNoCache only subtracts inactive when
+    // it's *less than* usage; otherwise it returns raw usage. Clamping to 0
+    // here would silently misreport an active container as idle on rare
+    // cgroup edges where the kernel reports inactive >= usage.
     const m = computeMemory({
       memory_stats: { usage: 100, limit: 1000, stats: { inactive_file: 200 } },
     });
-    expect(m.bytes).toBe(0);
-    expect(m.percent).toBe(0);
+    expect(m.bytes).toBe(100);
+    expect(m.percent).toBe(10);
   });
 
   test("percent stays 0 when limit is missing — not Infinity", () => {
