@@ -107,4 +107,70 @@ describe("exec_runs race-safe terminal transition", () => {
     const row = db.query("SELECT id FROM exec_runs WHERE id=?").get(rid);
     expect(row).toBeNull();
   });
+
+  // #45: schema and migration for ms-precision timestamps
+  test("exec_runs has started_at_ms and finished_at_ms columns", () => {
+    const cols = db.query("PRAGMA table_info(exec_runs)").all() as Array<{ name: string }>;
+    const names = cols.map((c) => c.name);
+    expect(names).toContain("started_at_ms");
+    expect(names).toContain("finished_at_ms");
+  });
+
+  test("migration backfill populates started_at_ms from started_at text", () => {
+    const pid = makeProject();
+    // Simulate a pre-#45 row: started_at_ms NULL, started_at = a known second.
+    db.query(
+      "INSERT INTO exec_runs (project_id, command, timeout_ms, started_at, started_at_ms) VALUES (?, 'old', 60000, '2025-01-01 12:34:56', NULL)",
+    ).run(pid);
+    // Re-run the same backfill query the startup migration runs
+    db.query(
+      "UPDATE exec_runs SET started_at_ms = CAST(strftime('%s', started_at) AS INTEGER) * 1000 WHERE started_at_ms IS NULL AND started_at IS NOT NULL",
+    ).run();
+    const row = db.query("SELECT started_at_ms FROM exec_runs WHERE command = 'old'").get() as {
+      started_at_ms: number;
+    };
+    expect(row.started_at_ms).toBe(Date.UTC(2025, 0, 1, 12, 34, 56));
+  });
+
+  test("backfill leaves _ms NULL when text timestamp is also NULL", () => {
+    const pid = makeProject();
+    db.query(
+      "INSERT INTO exec_runs (project_id, command, timeout_ms, finished_at, finished_at_ms) VALUES (?, 'no-finish', 60000, NULL, NULL)",
+    ).run(pid);
+    db.query(
+      "UPDATE exec_runs SET finished_at_ms = CAST(strftime('%s', finished_at) AS INTEGER) * 1000 WHERE finished_at_ms IS NULL AND finished_at IS NOT NULL",
+    ).run();
+    const row = db
+      .query("SELECT finished_at_ms FROM exec_runs WHERE command = 'no-finish'")
+      .get() as { finished_at_ms: number | null };
+    expect(row.finished_at_ms).toBeNull();
+  });
+
+  test("duration from _ms columns is millisecond-accurate even when text timestamps collide", () => {
+    const pid = makeProject();
+    const startMs = 1_700_000_000_500;
+    const finishMs = 1_700_000_000_750; // 250 ms after start, same wall-clock second
+    db.query(
+      `INSERT INTO exec_runs
+       (project_id, command, state, exit_code, timeout_ms,
+        started_at, started_at_ms, finished_at, finished_at_ms)
+       VALUES (?, 'fast', 'exited', 0, 60000,
+               '2023-11-14 22:13:20', ?, '2023-11-14 22:13:20', ?)`,
+    ).run(pid, startMs, finishMs);
+    const row = db
+      .query(
+        "SELECT started_at_ms, finished_at_ms, started_at, finished_at FROM exec_runs WHERE command = 'fast'",
+      )
+      .get() as {
+      started_at_ms: number;
+      finished_at_ms: number;
+      started_at: string;
+      finished_at: string;
+    };
+    // _ms preserves the 250 ms duration that text columns lose to second-rounding
+    expect(row.finished_at_ms - row.started_at_ms).toBe(250);
+    expect(
+      new Date(`${row.finished_at}Z`).getTime() - new Date(`${row.started_at}Z`).getTime(),
+    ).toBe(0);
+  });
 });

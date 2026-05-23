@@ -41,6 +41,8 @@ type ExecRunRow = {
   error_message: string | null;
   started_at: string;
   finished_at: string | null;
+  started_at_ms: number | null;
+  finished_at_ms: number | null;
 };
 
 export type RunStatus = ExecRunRow & { duration_ms: number };
@@ -54,11 +56,15 @@ export function startAsyncExec(params: {
   command: string;
   timeoutMs: number;
 }): { runId: number } {
+  // #45: started_at_ms is set from Date.now() at insert time. The text
+  // started_at column keeps SQLite's second-precision datetime('now') default
+  // for human-readable display; duration_ms reads from _ms columns first.
+  const startedAtMs = Date.now();
   const inserted = db
     .query(
-      "INSERT INTO exec_runs (project_id, command, state, timeout_ms) VALUES (?, ?, 'running', ?) RETURNING id",
+      "INSERT INTO exec_runs (project_id, command, state, timeout_ms, started_at_ms) VALUES (?, ?, 'running', ?, ?) RETURNING id",
     )
-    .get(params.projectId, params.command, params.timeoutMs) as { id: number };
+    .get(params.projectId, params.command, params.timeoutMs, startedAtMs) as { id: number };
   const runId = inserted.id;
 
   const abort = new AbortController();
@@ -67,7 +73,7 @@ export function startAsyncExec(params: {
     abort,
     stdout: new TailBuffer(TAIL_CAP_BYTES),
     stderr: new TailBuffer(TAIL_CAP_BYTES),
-    startedAtMs: Date.now(),
+    startedAtMs,
   };
   activeRuns.set(runId, active);
 
@@ -286,9 +292,14 @@ export function getRunStatus(runId: number): RunStatus | null {
     };
   }
 
-  // Terminal state — DB row is the source of truth.
-  const startedMs = new Date(`${row.started_at}Z`).getTime();
-  const finishedMs = row.finished_at ? new Date(`${row.finished_at}Z`).getTime() : Date.now();
+  // Terminal state — DB row is the source of truth. Prefer the _ms columns
+  // (written from Date.now() with true millisecond precision); fall back to
+  // parsing the text columns for rows that pre-date the #45 migration.
+  const startedMs =
+    row.started_at_ms ?? (row.started_at ? new Date(`${row.started_at}Z`).getTime() : Date.now());
+  const finishedMs =
+    row.finished_at_ms ??
+    (row.finished_at ? new Date(`${row.finished_at}Z`).getTime() : Date.now());
   return { ...row, duration_ms: finishedMs - startedMs };
 }
 
@@ -306,6 +317,9 @@ function tryFinalize(
   errorMessage: string | null,
 ): boolean {
   const active = activeRuns.get(runId);
+  // #45: finished_at_ms is set from Date.now() so duration_ms is accurate to
+  // the millisecond. finished_at (text) keeps datetime('now') for display.
+  const finishedAtMs = Date.now();
   let result: { changes: number };
   if (active) {
     result = db
@@ -313,7 +327,8 @@ function tryFinalize(
         `UPDATE exec_runs
          SET state = ?, exit_code = ?, stdout = ?, stderr = ?,
              stdout_total_bytes = ?, stderr_total_bytes = ?,
-             killed_pid = ?, error_message = ?, finished_at = datetime('now')
+             killed_pid = ?, error_message = ?,
+             finished_at = datetime('now'), finished_at_ms = ?
          WHERE id = ? AND state = 'running'`,
       )
       .run(
@@ -325,6 +340,7 @@ function tryFinalize(
         active.stderr.totalBytes,
         killedPid,
         errorMessage,
+        finishedAtMs,
         runId,
       );
     activeRuns.delete(runId);
@@ -333,10 +349,11 @@ function tryFinalize(
       .query(
         `UPDATE exec_runs
          SET state = ?, exit_code = ?,
-             killed_pid = ?, error_message = ?, finished_at = datetime('now')
+             killed_pid = ?, error_message = ?,
+             finished_at = datetime('now'), finished_at_ms = ?
          WHERE id = ? AND state = 'running'`,
       )
-      .run(state, exitCode, killedPid, errorMessage, runId);
+      .run(state, exitCode, killedPid, errorMessage, finishedAtMs, runId);
   }
   return result.changes > 0;
 }
