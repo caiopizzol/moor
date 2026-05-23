@@ -74,8 +74,18 @@ export function startAsyncExec(params: {
   // Safety timeout. On expiry, kill the exec; the running streaming call
   // will see abort and return. We then finalize based on the kill outcome:
   // clean kill -> timed_out; survivors or no handle -> error.
+  //
+  // abort.abort() runs BEFORE killExec for the same reason as in
+  // stopAsyncExec (#43): if the kill terminates the user's exec before the
+  // background task sees the abort signal, the streaming dockerFetch returns
+  // naturally with exit_code=143, the background task races to tryFinalize
+  // 'exited' and wins, and our timed_out finalize becomes a no-op. Aborting
+  // first makes the streaming reader throw on the abort path; the background
+  // task's guard skips finalize; the wrapper still runs in the container so
+  // killExec terminates it; this timed_out finalize then has no contention.
   const safetyTimer = setTimeout(async () => {
     if (!activeRuns.has(runId)) return; // already finalized
+    abort.abort();
     let killResult: { sentTo: string | null; live: number } = { sentTo: null, live: 0 };
     if (active.execId) {
       try {
@@ -84,7 +94,6 @@ export function startAsyncExec(params: {
         console.warn(`[exec-async] kill on timeout failed for run ${runId}:`, e);
       }
     }
-    abort.abort();
     if (killResult.sentTo !== null && killResult.live === 0) {
       tryFinalize(runId, "timed_out", null, killResult.sentTo, null);
     } else if (killResult.sentTo !== null && killResult.live > 0) {
