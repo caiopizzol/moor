@@ -14,6 +14,7 @@ import {
 } from "../docker";
 import { autoDetectPorts, getProjectPorts } from "../ports";
 import { redactCredentials } from "../redact";
+import { getProjectVolumes } from "./volumes";
 
 type Project = {
   id: number;
@@ -199,6 +200,7 @@ async function handleRun(req: Request, project: Project): Promise<Response> {
           ports,
           project.restart_policy,
           { memoryLimitMb: project.memory_limit_mb, cpus: project.cpus },
+          getProjectVolumes(project.id),
         );
         console.log(`[run] container started: ${containerId}`);
 
@@ -390,6 +392,7 @@ async function handleStart(project: Project): Promise<Response> {
       ports,
       project.restart_policy,
       { memoryLimitMb: project.memory_limit_mb, cpus: project.cpus },
+      getProjectVolumes(project.id),
     );
     console.log(`[start] container started: ${containerId}`);
     db.query("UPDATE projects SET container_id = ?, status = 'running' WHERE id = ?").run(

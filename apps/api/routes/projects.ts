@@ -1,8 +1,9 @@
 import { syncCaddyRoutes } from "../caddy";
 import db from "../db";
-import { removeContainer, stopContainer } from "../docker";
+import { removeContainer, removeVolume, stopContainer } from "../docker";
 import { reconcileGithubUrl, redactCredentials, serializeProject } from "../redact";
 import { validateCpus, validateMemoryLimitMb } from "../resource-limits";
+import { collectProjectVolumeDockerNames } from "./volumes";
 
 /** Run Caddy sync. On failure, return a 500 with a clear message that the DB write
  *  succeeded but the route is not active, plus the manual recovery command. The
@@ -67,11 +68,68 @@ export async function handleProjects(req: Request, url: URL): Promise<Response |
         // best effort — container may already be gone
       }
     }
+
+    // #35: purge_volumes is an explicit destructive opt-in. By default the
+    // project's named Docker volumes are preserved (so a recreated project of
+    // the same name could remount them, and the operator never loses data to
+    // a misclick). Volume docker_names must be collected BEFORE the project
+    // row is deleted — the ON DELETE CASCADE wipes project_volumes too.
+    const url2 = new URL(req.url);
+    const purgeVolumes = url2.searchParams.get("purge_volumes") === "true";
+    const volumeNames = purgeVolumes ? collectProjectVolumeDockerNames(id) : [];
+
     const hadDomain = !!project?.domain;
     db.query("DELETE FROM projects WHERE id = ?").run(id);
+
+    // Both Caddy sync and volume purge attempt UNCONDITIONALLY. We must not
+    // return early on Caddy failure if a purge was requested: by this point
+    // project_volumes has been CASCADE-wiped, and `volumeNames` is the only
+    // remaining handle for the operator to act on. Skipping the purge would
+    // leak orphaned volumes that moor can no longer help clean up.
+    let caddyFailure: Response | null = null;
     if (hadDomain) {
-      const failed = await applyCaddySync("Project deletion");
-      if (failed) return failed;
+      caddyFailure = await applyCaddySync("Project deletion");
+    }
+
+    const purgeFailures: Array<{ name: string; error: string }> = [];
+    if (purgeVolumes && volumeNames.length > 0) {
+      for (const name of volumeNames) {
+        const result = await removeVolume(name);
+        if (!result.ok) purgeFailures.push({ name, error: result.error });
+      }
+    }
+
+    if (caddyFailure && purgeFailures.length === 0 && !purgeVolumes) {
+      return caddyFailure;
+    }
+    if (caddyFailure || purgeFailures.length > 0) {
+      const messages: string[] = [];
+      if (caddyFailure) {
+        messages.push(`Caddy reload failed (${await caddyFailure.text()})`);
+      }
+      if (purgeFailures.length > 0) {
+        messages.push(
+          `${purgeFailures.length} volume(s) failed to purge — remove manually via 'docker volume rm'`,
+        );
+      }
+      return Response.json(
+        {
+          ok: false,
+          project_deleted: true,
+          caddy_failed: caddyFailure !== null,
+          volumes_purged: purgeVolumes ? volumeNames.length - purgeFailures.length : 0,
+          volumes_failed: purgeFailures,
+          message: `Project deleted, but: ${messages.join("; ")}`,
+        },
+        { status: 500 },
+      );
+    }
+    if (purgeVolumes) {
+      return Response.json({
+        ok: true,
+        project_deleted: true,
+        volumes_purged: volumeNames.length,
+      });
     }
     return new Response(null, { status: 204 });
   }
