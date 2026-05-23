@@ -227,4 +227,66 @@ try {
   // Column already exists
 }
 
+// #65: live build observability. runs now represents the full deploy run
+// (build/pull + container start) and is INSERTed at start with finished_at
+// NULL, then UPDATEd as output streams in. Status uses the existing
+// finished_at IS NULL convention (no new state column — that would force
+// a coordinated web/MCP rollout). The new *_total_bytes columns capture
+// the truth Docker emitted, since stdout/stderr now store at most a
+// 64 KiB tail (TAIL_CAP_BYTES) for builds. Backfill: existing rows store
+// full output, so total_bytes == length(stored).
+try {
+  db.exec("ALTER TABLE runs ADD COLUMN started_at_ms INTEGER");
+  db.exec(
+    "UPDATE runs SET started_at_ms = CAST(strftime('%s', started_at) AS INTEGER) * 1000 WHERE started_at_ms IS NULL AND started_at IS NOT NULL",
+  );
+} catch {
+  // Column already exists
+}
+
+try {
+  db.exec("ALTER TABLE runs ADD COLUMN finished_at_ms INTEGER");
+  db.exec(
+    "UPDATE runs SET finished_at_ms = CAST(strftime('%s', finished_at) AS INTEGER) * 1000 WHERE finished_at_ms IS NULL AND finished_at IS NOT NULL",
+  );
+} catch {
+  // Column already exists
+}
+
+try {
+  db.exec("ALTER TABLE runs ADD COLUMN stdout_total_bytes INTEGER");
+  db.exec(
+    "UPDATE runs SET stdout_total_bytes = length(CAST(stdout AS BLOB)) WHERE stdout_total_bytes IS NULL AND stdout IS NOT NULL",
+  );
+} catch {
+  // Column already exists
+}
+
+try {
+  db.exec("ALTER TABLE runs ADD COLUMN stderr_total_bytes INTEGER");
+  db.exec(
+    "UPDATE runs SET stderr_total_bytes = length(CAST(stderr AS BLOB)) WHERE stderr_total_bytes IS NULL AND stderr IS NOT NULL",
+  );
+} catch {
+  // Column already exists
+}
+
+// #65 orphan sweep for build/manual runs. cron_id IS NULL && finished_at
+// IS NULL means a build was in flight when moor crashed/restarted — the
+// in-memory tail buffer and SSE consumer are gone, so the row has no path
+// back to a terminal state. Mark it failed with an honest stderr note,
+// matching the #34 Phase B pattern for exec_runs. Cron runs follow a
+// different lifecycle (cron.ts owns its own sweep) and are excluded by
+// the cron_id IS NOT NULL guard.
+db.exec(`
+  UPDATE runs
+  SET finished_at = datetime('now'),
+      finished_at_ms = CAST((strftime('%s', 'now') * 1000) AS INTEGER),
+      exit_code = COALESCE(exit_code, 1),
+      stderr = COALESCE(stderr, '') ||
+               CASE WHEN stderr IS NULL OR stderr = '' THEN '' ELSE char(10) END ||
+               '[moor restarted; terminal state unknown]'
+  WHERE finished_at IS NULL AND cron_id IS NULL
+`);
+
 export default db;
