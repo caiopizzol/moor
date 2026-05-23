@@ -127,6 +127,22 @@ curl http://localhost:8080   # the host port shown for the project in the moor a
 
 Your network firewall should keep direct project port ranges closed regardless. Caddy is the only intended public entry point.
 
+## Scheduled dangling-image cleanup
+
+Builds create new image layers and leave the previous tagged image as a dangling artifact. On an active host these add up fast (8 GB+ regenerates within minutes when several projects rebuild). The MCP tools `moor_cleanup_plan` + `moor_cleanup_execute` let you reclaim that space manually.
+
+Moor can also run the same cleanup on a schedule. Off by default; opt in via:
+
+```bash
+MOOR_CLEANUP_DANGLING_INTERVAL_HOURS=24
+```
+
+Accepted range: from `0.0167` (1 minute) up to `596` hours (about 24 days — the underlying `setInterval` ms cap). Values outside that range are logged and ignored, and the scheduler stays off.
+
+The scheduler reuses the manual code path — same eligibility filter (`noprune=true`, dangling images only), same `cleanup_audit` rows, same per-candidate re-validation at execute time. If a cleanup cycle is still running when the next tick fires, it's skipped rather than overlapped. Failures are logged but never crash the moor process.
+
+Tagged-but-unused images and volumes are not in scope of this scheduler — those need explicit operator action via the manual tools.
+
 ## Docker socket trust boundary
 
 Moor mounts `/var/run/docker.sock` on the host. That means:
