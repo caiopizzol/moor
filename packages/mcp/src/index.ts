@@ -572,6 +572,21 @@ server.registerTool(
         .enum(["no", "on-failure", "always", "unless-stopped"])
         .optional()
         .describe("Docker restart policy (default: unless-stopped)"),
+      memory_limit_mb: z
+        .number()
+        .int()
+        .min(6)
+        .optional()
+        .describe(
+          "Max RAM in MB (also caps swap to the same value so the container can't burn through host swap). Min 6 (Docker's floor), max host total memory. Omit for unbounded. Takes effect on container recreate (next moor_rebuild / moor_restart / moor_deploy / moor_project run).",
+        ),
+      cpus: z
+        .number()
+        .positive()
+        .optional()
+        .describe(
+          "Max CPU cores. Fractional values OK (e.g. 0.5 = half a core). Min 0.001 (anything smaller rounds to Docker NanoCpus=0, which means unlimited — use omit for that). Max host core count. Takes effect on container recreate.",
+        ),
     }),
   },
   async (input) => {
@@ -593,7 +608,7 @@ server.registerTool(
   {
     title: "Update Project",
     description:
-      "Updates project metadata. Does NOT rebuild or restart the container. Domain or domain_port changes apply to Caddy immediately.",
+      "Updates project metadata. Does NOT rebuild or restart the container. Domain or domain_port changes apply to Caddy immediately. Resource-limit changes (memory_limit_mb, cpus) take effect on the next container recreate (moor_rebuild / moor_restart / moor_deploy / moor_project run) — an already-running container keeps its existing limits.",
     inputSchema: z.object({
       project: z.string().describe("Project name or ID to update"),
       name: z
@@ -610,6 +625,23 @@ server.registerTool(
       domain: z.string().optional(),
       domain_port: z.number().int().positive().optional(),
       restart_policy: z.enum(["no", "on-failure", "always", "unless-stopped"]).optional(),
+      memory_limit_mb: z
+        .number()
+        .int()
+        .min(6)
+        .nullable()
+        .optional()
+        .describe(
+          "Max RAM in MB. Pass null to clear (return to unbounded). Min 6, max host total memory. Takes effect on container recreate.",
+        ),
+      cpus: z
+        .number()
+        .positive()
+        .nullable()
+        .optional()
+        .describe(
+          "Max CPU cores (fractional OK; min 0.001). Pass null to clear. Max host core count. Takes effect on container recreate.",
+        ),
     }),
   },
   async (input) => {
@@ -888,6 +920,23 @@ server.registerTool(
         .enum(["no", "on-failure", "always", "unless-stopped"])
         .optional()
         .describe("Docker restart policy (API default: unless-stopped)"),
+      memory_limit_mb: z
+        .number()
+        .int()
+        .min(6)
+        .nullable()
+        .optional()
+        .describe(
+          "Max RAM in MB (also caps swap to the same value). Min 6, max host total memory. Pass null on update to clear. Limits apply on container recreate, which deploy always does when run: true.",
+        ),
+      cpus: z
+        .number()
+        .positive()
+        .nullable()
+        .optional()
+        .describe(
+          "Max CPU cores. Fractional OK (e.g. 0.5; min 0.001). Max host core count. Pass null on update to clear.",
+        ),
       env: z
         .record(z.string(), z.string())
         .optional()
@@ -965,6 +1014,8 @@ server.registerTool(
         domain: normalizedDomain,
         domain_port: input.domain_port,
         restart_policy: input.restart_policy,
+        memory_limit_mb: input.memory_limit_mb,
+        cpus: input.cpus,
       };
       const res = await apiPost("/api/projects", createBody);
       if (!res.ok) throw new Error(`[create] ${await res.text()}`);
@@ -982,6 +1033,8 @@ server.registerTool(
       if (normalizedDomain !== undefined) updateBody.domain = normalizedDomain;
       if (input.domain_port !== undefined) updateBody.domain_port = input.domain_port;
       if (input.restart_policy !== undefined) updateBody.restart_policy = input.restart_policy;
+      if (input.memory_limit_mb !== undefined) updateBody.memory_limit_mb = input.memory_limit_mb;
+      if (input.cpus !== undefined) updateBody.cpus = input.cpus;
 
       if (Object.keys(updateBody).length > 0) {
         const res = await apiPut(`/api/projects/${existing.id}`, updateBody);

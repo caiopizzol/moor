@@ -139,4 +139,78 @@ describe("#30 project URL credential redaction", () => {
     expect(res.status).toBeLessThan(400);
     expect(storedUrl(p.id)).toBe(CREDENTIALED);
   });
+
+  // #36: resource-limits validation on POST/PUT
+  test("POST rejects memory_limit_mb below the Docker floor", async () => {
+    const res = await call("POST", "/api/projects", {
+      name: "mem-low",
+      docker_image: "nginx:alpine",
+      memory_limit_mb: 4,
+    });
+    expect(res.status).toBe(400);
+    expect(await res.text()).toContain("memory_limit_mb must be >=");
+  });
+
+  test("POST rejects cpus <= 0 (null is the clear signal)", async () => {
+    const res = await call("POST", "/api/projects", {
+      name: "cpu-zero",
+      docker_image: "nginx:alpine",
+      cpus: 0,
+    });
+    expect(res.status).toBe(400);
+    expect(await res.text()).toContain("cpus must be > 0");
+  });
+
+  test("POST accepts and persists valid memory_limit_mb and cpus", async () => {
+    const res = await call("POST", "/api/projects", {
+      name: "limited",
+      docker_image: "nginx:alpine",
+      memory_limit_mb: 256,
+      cpus: 0.5,
+    });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { id: number; memory_limit_mb: number; cpus: number };
+    expect(body.memory_limit_mb).toBe(256);
+    expect(body.cpus).toBe(0.5);
+  });
+
+  test("PUT with memory_limit_mb=null clears a previously-set limit", async () => {
+    insertProject("clear-test", null);
+    const row = db.query("SELECT id FROM projects WHERE name = 'clear-test'").get() as {
+      id: number;
+    };
+    // First set a limit
+    await call("PUT", `/api/projects/${row.id}`, { memory_limit_mb: 512 });
+    let stored = db.query("SELECT memory_limit_mb FROM projects WHERE id = ?").get(row.id) as {
+      memory_limit_mb: number | null;
+    };
+    expect(stored.memory_limit_mb).toBe(512);
+    // Now clear it via null
+    const res = await call("PUT", `/api/projects/${row.id}`, { memory_limit_mb: null });
+    expect(res.status).toBeLessThan(400);
+    stored = db.query("SELECT memory_limit_mb FROM projects WHERE id = ?").get(row.id) as {
+      memory_limit_mb: number | null;
+    };
+    expect(stored.memory_limit_mb).toBeNull();
+  });
+
+  test("PUT with cpus=null clears the limit; PUT without the field leaves it alone", async () => {
+    insertProject("cpus-test", null);
+    const row = db.query("SELECT id FROM projects WHERE name = 'cpus-test'").get() as {
+      id: number;
+    };
+    await call("PUT", `/api/projects/${row.id}`, { cpus: 1.5 });
+    // Updating an unrelated field doesn't touch cpus
+    await call("PUT", `/api/projects/${row.id}`, { branch: "develop" });
+    let stored = db.query("SELECT cpus FROM projects WHERE id = ?").get(row.id) as {
+      cpus: number | null;
+    };
+    expect(stored.cpus).toBe(1.5);
+    // Explicit null clears
+    await call("PUT", `/api/projects/${row.id}`, { cpus: null });
+    stored = db.query("SELECT cpus FROM projects WHERE id = ?").get(row.id) as {
+      cpus: number | null;
+    };
+    expect(stored.cpus).toBeNull();
+  });
 });
