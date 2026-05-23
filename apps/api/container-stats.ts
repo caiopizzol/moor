@@ -46,14 +46,22 @@ export const NOT_RUNNING: NotRunningResponse = {
 };
 
 export type DockerStatsPayload = {
+  /** Docker stamps this with the wall-clock at which the stats sample was
+   *  taken. For a stopped container, no sample is collected and the field
+   *  is the Go zero-time `"0001-01-01T00:00:00Z"`. Most reliable signal
+   *  the daemon gives us for "container exists but isn't running." */
+  read?: string;
   cpu_stats?: {
     cpu_usage?: { total_usage?: number; percpu_usage?: number[] };
-    system_cpu_usage?: number;
-    online_cpus?: number;
+    // Docker returns `null` (not undefined) for this on a stopped container's
+    // /stats response. Keep the type honest so `system_cpu_usage: null` test
+    // fixtures match the real production shape.
+    system_cpu_usage?: number | null;
+    online_cpus?: number | null;
   };
   precpu_stats?: {
     cpu_usage?: { total_usage?: number };
-    system_cpu_usage?: number;
+    system_cpu_usage?: number | null;
   };
   memory_stats?: {
     usage?: number;
@@ -68,6 +76,17 @@ export type DockerStatsPayload = {
   };
   pids_stats?: { current?: number };
 };
+
+/** Detect that a `/containers/:id/stats?stream=false` payload describes a
+ *  stopped container. Docker returns 200 (not 404) for an exited
+ *  container that still exists, but with `read` set to the Go zero-time
+ *  and `cpu_stats.system_cpu_usage` null. Either signal alone is enough;
+ *  we check both for resilience against future daemon changes. */
+export function isStoppedPayload(payload: DockerStatsPayload): boolean {
+  if (payload.read === "0001-01-01T00:00:00Z") return true;
+  if (payload.cpu_stats?.system_cpu_usage == null) return true;
+  return false;
+}
 
 /** Compute container CPU as a percentage of the host across the
  *  (cpu_stats - precpu_stats) interval Docker took on its own.
