@@ -1,0 +1,209 @@
+// Tests for #71 status reconciler. The realInspect Docker round-trip
+// is covered by live smoke; here we exercise the pure parser and the
+// reconciler logic via an injectable Inspector mock.
+
+process.env.MOOR_DB_PATH = ":memory:";
+
+import { beforeEach, describe, expect, test } from "bun:test";
+
+const { default: db } = await import("./db");
+const { parseContainerState, reconcileOnce } = await import("./status-reconciler");
+
+import type { Inspector } from "./status-reconciler";
+
+function makeProject(name: string, status: string, containerId: string | null): { id: number } {
+  return db
+    .query(
+      `INSERT INTO projects (name, status, container_id)
+       VALUES (?, ?, ?) RETURNING id`,
+    )
+    .get(name, status, containerId) as { id: number };
+}
+
+describe("#71 parseContainerState — pure mapping", () => {
+  test("Running:true → live_status='running', exit code null", () => {
+    expect(parseContainerState({ Running: true, ExitCode: 0 })).toEqual({
+      live_status: "running",
+      live_exit_code: null,
+    });
+    // ExitCode may be non-zero on a still-running container (stale Docker
+    // field from a prior incarnation); Running:true wins.
+    expect(parseContainerState({ Running: true, ExitCode: 137 })).toEqual({
+      live_status: "running",
+      live_exit_code: null,
+    });
+  });
+
+  test("Running:false + ExitCode=0 → 'stopped'", () => {
+    expect(parseContainerState({ Running: false, ExitCode: 0 })).toEqual({
+      live_status: "stopped",
+      live_exit_code: 0,
+    });
+  });
+
+  test("Running:false + ExitCode!=0 → 'error' with the exit code preserved", () => {
+    expect(parseContainerState({ Running: false, ExitCode: 1 })).toEqual({
+      live_status: "error",
+      live_exit_code: 1,
+    });
+    expect(parseContainerState({ Running: false, ExitCode: 137 })).toEqual({
+      live_status: "error",
+      live_exit_code: 137,
+    });
+  });
+
+  test("OOMKilled is 'error' even with ExitCode=0 (kernel killed before code was set)", () => {
+    expect(parseContainerState({ Running: false, ExitCode: 0, OOMKilled: true })).toEqual({
+      live_status: "error",
+      live_exit_code: 0,
+    });
+  });
+});
+
+describe("#71 reconcileOnce — dual-field model, both directions", () => {
+  beforeEach(() => {
+    db.query("DELETE FROM projects").run();
+  });
+
+  function mockInspect(map: Record<string, Awaited<ReturnType<Inspector>>>): Inspector {
+    return async (containerId: string) => {
+      const result = map[containerId];
+      if (!result) throw new Error(`mockInspect missing fixture for ${containerId}`);
+      return result;
+    };
+  }
+
+  test("DB says running, Docker says Exited(1) → live_status='error', exit_code=1, recorded stays untouched", async () => {
+    const p = makeProject("a", "running", "container-A");
+    await reconcileOnce(
+      mockInspect({
+        "container-A": { ok: true, state: { Running: false, ExitCode: 1 } },
+      }),
+    );
+    const row = db
+      .query("SELECT status, live_status, live_exit_code, live_error FROM projects WHERE id = ?")
+      .get(p.id) as {
+      status: string;
+      live_status: string;
+      live_exit_code: number;
+      live_error: string | null;
+    };
+    expect(row.status).toBe("running"); // unmutated — recorded state preserved
+    expect(row.live_status).toBe("error");
+    expect(row.live_exit_code).toBe(1);
+    expect(row.live_error).toBeNull();
+  });
+
+  test("DB says error, Docker says running → live_status='running', recorded stays 'error'", async () => {
+    // Proves the dual-field model works in BOTH directions, not just
+    // catching missed exits.
+    const p = makeProject("a", "error", "container-A");
+    await reconcileOnce(
+      mockInspect({
+        "container-A": { ok: true, state: { Running: true, ExitCode: 0 } },
+      }),
+    );
+    const row = db
+      .query("SELECT status, live_status, live_exit_code FROM projects WHERE id = ?")
+      .get(p.id) as {
+      status: string;
+      live_status: string;
+      live_exit_code: number | null;
+    };
+    expect(row.status).toBe("error");
+    expect(row.live_status).toBe("running");
+    expect(row.live_exit_code).toBeNull();
+  });
+
+  test("Docker 404 → live_status='missing', exit_code=null", async () => {
+    const p = makeProject("a", "running", "container-gone");
+    await reconcileOnce(mockInspect({ "container-gone": { ok: false, kind: "missing" } }));
+    const row = db
+      .query("SELECT live_status, live_exit_code, live_error FROM projects WHERE id = ?")
+      .get(p.id) as {
+      live_status: string;
+      live_exit_code: number | null;
+      live_error: string | null;
+    };
+    expect(row.live_status).toBe("missing");
+    expect(row.live_exit_code).toBeNull();
+    expect(row.live_error).toBeNull();
+  });
+
+  test("inspect failure → preserves prior live_*, records live_error (load-bearing)", async () => {
+    // A periodic loop must NOT rewrite truth from a transient daemon
+    // glitch. Seed the row with a prior successful live_status='running',
+    // then have the inspector fail; live_status must stay 'running'.
+    const p = makeProject("a", "running", "container-A");
+    await reconcileOnce(
+      mockInspect({
+        "container-A": { ok: true, state: { Running: true, ExitCode: 0 } },
+      }),
+    );
+    let row = db.query("SELECT live_status, live_error FROM projects WHERE id = ?").get(p.id) as {
+      live_status: string;
+      live_error: string | null;
+    };
+    expect(row.live_status).toBe("running");
+    expect(row.live_error).toBeNull();
+
+    // Now simulate Docker socket unreachable.
+    await reconcileOnce(
+      mockInspect({
+        "container-A": { ok: false, kind: "error", message: "ECONNREFUSED" },
+      }),
+    );
+    row = db.query("SELECT live_status, live_error FROM projects WHERE id = ?").get(p.id) as {
+      live_status: string;
+      live_error: string | null;
+    };
+    expect(row.live_status).toBe("running"); // preserved!
+    expect(row.live_error).toBe("ECONNREFUSED");
+
+    // Next successful inspect clears live_error.
+    await reconcileOnce(
+      mockInspect({
+        "container-A": { ok: true, state: { Running: false, ExitCode: 0 } },
+      }),
+    );
+    row = db.query("SELECT live_status, live_error FROM projects WHERE id = ?").get(p.id) as {
+      live_status: string;
+      live_error: string | null;
+    };
+    expect(row.live_status).toBe("stopped");
+    expect(row.live_error).toBeNull();
+  });
+
+  test("projects with container_id IS NULL are skipped — no inspect calls", async () => {
+    makeProject("never-started", "stopped", null);
+    let calls = 0;
+    await reconcileOnce(async () => {
+      calls++;
+      return { ok: true, state: { Running: true, ExitCode: 0 } };
+    });
+    expect(calls).toBe(0);
+  });
+
+  test("walks every project with container_id, not just status='running'", async () => {
+    // Otherwise we'd miss the "recorded stopped but actually running"
+    // direction. Three projects, one of each recorded status.
+    const a = makeProject("a", "running", "c1");
+    const b = makeProject("b", "stopped", "c2");
+    const c = makeProject("c", "error", "c3");
+
+    await reconcileOnce(
+      mockInspect({
+        c1: { ok: true, state: { Running: false, ExitCode: 1 } },
+        c2: { ok: true, state: { Running: true, ExitCode: 0 } },
+        c3: { ok: true, state: { Running: true, ExitCode: 0 } },
+      }),
+    );
+
+    const rows = db
+      .query(`SELECT id, status, live_status FROM projects WHERE id IN (?, ?, ?) ORDER BY id`)
+      .all(a.id, b.id, c.id) as Array<{ id: number; status: string; live_status: string }>;
+    expect(rows[0]).toMatchObject({ status: "running", live_status: "error" });
+    expect(rows[1]).toMatchObject({ status: "stopped", live_status: "running" });
+    expect(rows[2]).toMatchObject({ status: "error", live_status: "running" });
+  });
+});

@@ -90,6 +90,17 @@ type Project = {
   domain: string | null;
   docker_image: string | null;
   github_url: string | null;
+  // #71: live_* fields are written by the API's status reconciler.
+  // status above is moor's RECORDED state (only changes on explicit
+  // start/stop/build/cancel). live_status reflects Docker's view at
+  // last successful inspect. Differences mean moor missed an external
+  // change (or the reconciler hasn't run yet). live_error non-null
+  // means the most recent inspect failed; the live_status / exit_code
+  // shown is the last successful snapshot.
+  live_status?: "running" | "stopped" | "error" | "missing" | null;
+  live_exit_code?: number | null;
+  live_checked_at?: string | null;
+  live_error?: string | null;
 };
 
 async function resolveProject(name: string): Promise<Project> {
@@ -284,7 +295,8 @@ server.registerTool(
   "moor_status",
   {
     title: "List Projects",
-    description: "List all projects managed by Moor with their status, source, and domain.",
+    description:
+      "List all projects managed by Moor. `status` is moor's recorded state (only changes on explicit start/stop/build/cancel). `live_status` is Docker's view at last successful inspect; differences (e.g. recorded='running' live='error') mean moor missed an external change like a host docker stop, crash, or OOM kill. `live_error` non-null means the most recent inspect failed and the live_* values are the last successful snapshot, not necessarily current.",
   },
   async () => {
     const res = await apiGet("/api/projects");
@@ -293,6 +305,10 @@ server.registerTool(
     const summary = projects.map((p) => ({
       name: p.name,
       status: p.status,
+      live_status: p.live_status ?? null,
+      live_exit_code: p.live_exit_code ?? null,
+      live_checked_at: p.live_checked_at ?? null,
+      live_error: p.live_error ?? null,
       source: p.docker_image || p.github_url || null,
       domain: p.domain,
     }));

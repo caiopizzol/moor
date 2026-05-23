@@ -26,6 +26,7 @@ import { handleRuns } from "./routes/runs";
 import { handleServer } from "./routes/server";
 import { handleTerminalSessions } from "./routes/terminal-sessions";
 import { handleVolumes } from "./routes/volumes";
+import { startStatusReconciler, stopStatusReconciler } from "./status-reconciler";
 import { terminalWebSocket, upgradeTerminal } from "./terminal";
 import { clearAllSessions, startSessionCleanup } from "./terminal-sessions";
 
@@ -171,6 +172,7 @@ startCronScheduler();
 startSessionCleanup();
 setInterval(cleanExpiredSessions, 3600_000);
 startCleanupScheduler();
+startStatusReconciler();
 
 // Graceful shutdown
 const shutdown = () => {
@@ -178,6 +180,7 @@ const shutdown = () => {
   interruptActiveRuns();
   clearAllSessions();
   stopCleanupScheduler();
+  stopStatusReconciler();
   server.stop();
   process.exit(0);
 };

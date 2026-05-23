@@ -227,6 +227,40 @@ try {
   // Column already exists
 }
 
+// #71: dual-field model for runtime truth. projects.status stays moor's
+// *recorded* state (changes only on explicit moor actions: start/stop/
+// build/cancel). The live_* fields are written by the status reconciler
+// background loop and reflect Docker's view at last successful inspect.
+// Both directions matter — DB can drift from Docker (missed exit) and
+// Docker can drift from DB (recorded as error but container still up).
+// live_error is non-null only when the most recent inspect failed
+// (socket unreachable, 5xx, parse failure); the loop preserves the last
+// successful live_status / live_exit_code in that case so a transient
+// daemon glitch doesn't rewrite truth.
+try {
+  db.exec("ALTER TABLE projects ADD COLUMN live_status TEXT");
+} catch {
+  // Column already exists
+}
+
+try {
+  db.exec("ALTER TABLE projects ADD COLUMN live_exit_code INTEGER");
+} catch {
+  // Column already exists
+}
+
+try {
+  db.exec("ALTER TABLE projects ADD COLUMN live_checked_at TEXT");
+} catch {
+  // Column already exists
+}
+
+try {
+  db.exec("ALTER TABLE projects ADD COLUMN live_error TEXT");
+} catch {
+  // Column already exists
+}
+
 // #65: live build observability. runs now represents the full deploy run
 // (build/pull + container start) and is INSERTed at start with finished_at
 // NULL, then UPDATEd as output streams in. Status uses the existing
