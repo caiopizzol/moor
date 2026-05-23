@@ -23,10 +23,30 @@ describe("#59 parseIntervalHours — env-driven, off by default", () => {
     expect(parseIntervalHours("Infinity")).toBeNull();
   });
 
-  test("accepts positive numbers (including fractional hours for testing cadence)", () => {
+  test("accepts positive numbers within the valid range", () => {
     expect(parseIntervalHours("24")).toBe(24);
     expect(parseIntervalHours("0.5")).toBe(0.5);
     expect(parseIntervalHours("168")).toBe(168);
+  });
+
+  test("rejects intervals above setInterval ms cap — would silently become a tight loop", () => {
+    // setInterval clamps any ms > 2_147_483_647 (~596h) to 1ms with a
+    // TimeoutOverflowWarning. An operator setting "monthly-ish" 720h
+    // would unknowingly hammer cleanup continuously.
+    expect(parseIntervalHours("720")).toBeNull();
+    expect(parseIntervalHours("1000")).toBeNull();
+  });
+
+  test("rejects intervals below 1 minute — never useful, only misconfiguration", () => {
+    expect(parseIntervalHours("0.0001")).toBeNull(); // 0.36 seconds
+    expect(parseIntervalHours("0.01")).toBeNull(); // 36 seconds
+  });
+
+  test("just-above-floor and just-below-ceiling values are accepted", () => {
+    // 1 minute = 1/60 hours ≈ 0.01666...
+    expect(parseIntervalHours(`${1 / 60}`)).toBe(1 / 60);
+    // Just under 596.523h (the cap).
+    expect(parseIntervalHours("596")).toBe(596);
   });
 });
 
