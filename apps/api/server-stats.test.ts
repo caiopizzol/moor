@@ -3,7 +3,13 @@
 // glue code).
 
 import { describe, expect, test } from "bun:test";
-import { computeLoadPercent, parseLoadAvg, parseSystemDf } from "./server-stats";
+import {
+  computeLoadPercent,
+  parseLoadAvg,
+  parseProcMeminfo,
+  parseProcUptime,
+  parseSystemDf,
+} from "./server-stats";
 
 describe("#53 computeLoadPercent — must match the existing cpu.percent formula", () => {
   test("matches load1m / cores rounded, clamped to 100", () => {
@@ -123,5 +129,67 @@ describe("#53 parseSystemDf", () => {
     expect(out.containers.count).toBe(0);
     expect(out.volumes.count).toBe(0);
     expect(out.build_cache.count).toBe(0);
+  });
+});
+
+describe("#56 parseProcUptime", () => {
+  test("formats days, hours, minutes from seconds-since-boot", () => {
+    const oneDayTwoHoursThreeMin = 1 * 86400 + 2 * 3600 + 3 * 60 + 45;
+    expect(parseProcUptime(`${oneDayTwoHoursThreeMin}.42 6789.01\n`)).toBe(
+      "1 day, 2 hours, 3 minutes",
+    );
+  });
+
+  test("singular vs plural", () => {
+    expect(parseProcUptime("60")).toBe("1 minute");
+    expect(parseProcUptime("3600")).toBe("1 hour");
+    expect(parseProcUptime(`${86400 + 3600 + 60}`)).toBe("1 day, 1 hour, 1 minute");
+  });
+
+  test("under a minute renders as 0 minutes (never empty)", () => {
+    expect(parseProcUptime("30")).toBe("0 minutes");
+  });
+
+  test("returns empty string for malformed input — caller falls back", () => {
+    expect(parseProcUptime("")).toBe("");
+    expect(parseProcUptime("not-a-number")).toBe("");
+    expect(parseProcUptime("-5")).toBe("");
+  });
+});
+
+describe("#56 parseProcMeminfo", () => {
+  // Trimmed real fixture; kB units, irregular spacing — kernel emits this verbatim.
+  const fixture = `MemTotal:        4039212 kB
+MemFree:          112744 kB
+MemAvailable:    2401088 kB
+Buffers:           87432 kB
+Cached:          2154732 kB
+SwapTotal:       1048572 kB
+SwapFree:        1048572 kB
+`;
+
+  test("computes used = MemTotal - MemAvailable in bytes", () => {
+    const m = parseProcMeminfo(fixture);
+    expect(m).not.toBeNull();
+    if (!m) return;
+    expect(m.totalBytes).toBe(4039212 * 1024);
+    expect(m.usedBytes).toBe((4039212 - 2401088) * 1024);
+    expect(m.percent).toBe(Math.round(((4039212 - 2401088) / 4039212) * 100));
+  });
+
+  test("falls back to MemFree when MemAvailable is absent (very old kernels)", () => {
+    const old = `MemTotal:   1000 kB\nMemFree:     250 kB\n`;
+    const m = parseProcMeminfo(old);
+    expect(m).not.toBeNull();
+    if (!m) return;
+    expect(m.totalBytes).toBe(1000 * 1024);
+    expect(m.usedBytes).toBe((1000 - 250) * 1024);
+    expect(m.percent).toBe(75);
+  });
+
+  test("returns null on garbage or missing MemTotal — caller falls back", () => {
+    expect(parseProcMeminfo("")).toBeNull();
+    expect(parseProcMeminfo("MemTotal: 0 kB\nMemAvailable: 0 kB\n")).toBeNull();
+    expect(parseProcMeminfo("MemTotal: 1000 kB\n")).toBeNull(); // no MemFree or MemAvailable
   });
 });

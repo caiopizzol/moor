@@ -49,6 +49,56 @@ export function parseLoadAvg(raw: string): number {
   return Number.parseFloat(first);
 }
 
+/** Parse `/proc/uptime` into a human string like `uptime -p` would render.
+ *
+ *  Returns empty string for malformed input — the route falls back to its
+ *  shell-based path for macOS dev. Format mirrors the existing wire shape
+ *  ("X days, Y hours, Z minutes") so the UI doesn't need to change.
+ */
+export function parseProcUptime(raw: string): string {
+  const seconds = Number.parseFloat(raw.split(/\s+/)[0]);
+  if (!Number.isFinite(seconds) || seconds < 0) return "";
+
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor((seconds % 86400) / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+
+  const parts: string[] = [];
+  if (days > 0) parts.push(`${days} day${days === 1 ? "" : "s"}`);
+  if (hours > 0) parts.push(`${hours} hour${hours === 1 ? "" : "s"}`);
+  if (minutes > 0 || parts.length === 0) {
+    parts.push(`${minutes} minute${minutes === 1 ? "" : "s"}`);
+  }
+  return parts.join(", ");
+}
+
+export type MemInfo = { totalBytes: number; usedBytes: number; percent: number };
+
+/** Parse `/proc/meminfo` into total/used/percent.
+ *
+ *  Uses `MemAvailable` (kernel ≥ 3.14) for "used" rather than `MemFree`.
+ *  MemAvailable accounts for reclaimable slab and page cache; the modern
+ *  `free` command uses it for the same reason. Falls back to MemFree if
+ *  MemAvailable is missing (very old kernels), which slightly overstates
+ *  "used" but doesn't crash.
+ *
+ *  Returns null if MemTotal is absent or zero, or no usable "free" field
+ *  is present. Caller decides the fallback.
+ */
+export function parseProcMeminfo(raw: string): MemInfo | null {
+  const map = new Map<string, number>();
+  for (const line of raw.split("\n")) {
+    const m = line.match(/^(\w+):\s+(\d+)\s*kB/);
+    if (m) map.set(m[1], Number.parseInt(m[2], 10) * 1024);
+  }
+  const total = map.get("MemTotal");
+  if (!total || total <= 0) return null;
+  const available = map.get("MemAvailable") ?? map.get("MemFree");
+  if (available === undefined) return null;
+  const used = Math.max(0, total - available);
+  return { totalBytes: total, usedBytes: used, percent: Math.round((used / total) * 100) };
+}
+
 /** Aggregate Docker `/system/df` into compact per-category numbers.
  *
  *  Aggregation rules mirror Docker's own `docker system df` summary logic
