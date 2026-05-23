@@ -198,8 +198,13 @@ export async function stopAsyncExec(runId: number): Promise<{
     return finalizedResponse(runId, "exec had not started yet; marked as error");
   }
 
-  const result = await killExec(active.execId);
+  // Abort the streaming exec BEFORE calling killExec so the background task
+  // takes the abort branch (and skips its own finalize) instead of seeing the
+  // Docker exec complete naturally with exit_code=143 and racing to finalize
+  // as 'exited' before our 'stopped' transition lands. The wrapper process is
+  // still running in the container at this point — killExec terminates it.
   active.abort.abort();
+  const result = await killExec(active.execId);
 
   if (result.sentTo !== null && result.live === 0) {
     const won = tryFinalize(runId, "stopped", null, result.sentTo, null);
