@@ -304,4 +304,36 @@ describe("#68 POST /api/runs/:id/stop dispatch", () => {
     const body = (await res.json()) as { ok: boolean; result: string };
     expect(body).toEqual({ ok: false, result: "not_active" });
   });
+
+  test("active cron run → 200 { ok:true, result:'cancelled_cron' }", async () => {
+    // cron.ts exports activeRuns; we populate it directly so stopCronRun()
+    // takes the truthy path without setting up the full cron tick.
+    // execId='' is falsy → stopCronRun skips killExec (no real Docker call).
+    const { activeRuns } = await import("../cron");
+    const pid = makeProject("a");
+    const cron = db
+      .query(
+        `INSERT INTO crons (project_id, name, schedule, command)
+         VALUES (?, 'nightly', '* * * * *', 'echo') RETURNING id`,
+      )
+      .get(pid) as { id: number };
+    const rid = (
+      db
+        .query(
+          `INSERT INTO runs (project_id, cron_id, started_at)
+           VALUES (?, ?, datetime('now')) RETURNING id`,
+        )
+        .get(pid, cron.id) as { id: number }
+    ).id;
+
+    const controller = new AbortController();
+    activeRuns.set(rid, { controller, execId: "" });
+
+    const res = await call("POST", `/api/runs/${rid}/stop`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { ok: boolean; result: string };
+    expect(body).toEqual({ ok: true, result: "cancelled_cron" });
+    expect(controller.signal.aborted).toBe(true);
+    activeRuns.delete(rid);
+  });
 });

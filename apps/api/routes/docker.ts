@@ -9,6 +9,7 @@ import {
   ExecTimeoutError,
   execInContainer,
   getContainerLogs,
+  inspectContainer,
   pullImageStreaming,
   stopContainer,
 } from "../docker";
@@ -41,6 +42,32 @@ function validateGithubUrl(url: string): string | null {
     return "Invalid GitHub URL";
   }
   return null;
+}
+
+/** #68 polish: after a cancelled build/pull, reconcile the project's
+ *  status field with the actual container state. The cancel only
+ *  aborts the build/pull HTTP stream — any previously-running
+ *  container is untouched. Hard-coding status='error' lied about that.
+ *
+ *  Mapping:
+ *  - no container_id → "stopped" (no image yet, or never started)
+ *  - container exists and running → "running" (the old container is fine)
+ *  - container exists but stopped, OR inspect fails / 404 → "stopped"
+ *
+ *  We deliberately don't return "error" here. The cancelled run row
+ *  carries exit_code=130 and "[cancelled by user]" — that's the
+ *  honest signal that the build was cancelled. The project itself
+ *  isn't in an error state. */
+async function reconcileStatusAfterCancel(
+  containerId: string | null,
+): Promise<"running" | "stopped"> {
+  if (!containerId) return "stopped";
+  try {
+    const { running } = await inspectContainer(containerId);
+    return running ? "running" : "stopped";
+  } catch {
+    return "stopped";
+  }
 }
 
 export async function handleDocker(req: Request, url: URL): Promise<Response | null> {
@@ -186,9 +213,13 @@ async function handleRun(req: Request, project: Project): Promise<Response> {
       } catch (e) {
         // #68: if cancel() fired AbortError, BuildRun.cancel already
         // finalized the row with exit_code=130 and "[cancelled by user]".
-        // Don't re-finalize or overwrite with a generic failure.
+        // Don't re-finalize or overwrite with a generic failure. Also
+        // reconcile status from the actual container state — the cancel
+        // didn't touch the previously-running container, so leaving
+        // status='error' would lie about the project state.
         if (run.abort.signal.aborted) {
-          db.query("UPDATE projects SET status = 'error' WHERE id = ?").run(project.id);
+          const reconciled = await reconcileStatusAfterCancel(project.container_id);
+          db.query("UPDATE projects SET status = ? WHERE id = ?").run(reconciled, project.id);
           send("error", "cancelled by user");
           safeClose();
           return;
@@ -388,12 +419,15 @@ async function handleBuild(project: Project): Promise<Response> {
     console.log("[build] done — status set to 'stopped'");
     return Response.json({ message: "Build complete" });
   } catch (e) {
-    db.query("UPDATE projects SET status = 'error' WHERE id = ?").run(project.id);
     // #68: cancel already finalized as exit 130 with "[cancelled by user]";
-    // don't overwrite with a generic failure.
+    // don't overwrite with a generic failure. Reconcile status from the
+    // actual container state — the cancel didn't touch a running container.
     if (run.abort.signal.aborted) {
+      const reconciled = await reconcileStatusAfterCancel(project.container_id);
+      db.query("UPDATE projects SET status = ? WHERE id = ?").run(reconciled, project.id);
       return new Response("cancelled by user", { status: 499 });
     }
+    db.query("UPDATE projects SET status = 'error' WHERE id = ?").run(project.id);
     const message = e instanceof Error ? e.message : "Unknown error";
     console.error(`[build] FAILED: ${message}`);
     run.appendStderr(`${message}\n`);

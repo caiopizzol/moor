@@ -1,7 +1,11 @@
 import db from "./db";
 import { execInContainer, killExec } from "./docker";
 
-const activeRuns = new Map<number, { controller: AbortController; execId: string }>();
+/** Exported so the /api/runs/:id/stop dispatch path (#68) and its
+ *  tests can observe active cron runs without going through the
+ *  full cron tick. stopCronRun() is the documented public API; this
+ *  map is the underlying state. */
+export const activeRuns = new Map<number, { controller: AbortController; execId: string }>();
 
 type CronRow = {
   id: number;
