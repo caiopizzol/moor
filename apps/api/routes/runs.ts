@@ -10,10 +10,23 @@ export async function handleRuns(req: Request, url: URL): Promise<Response | nul
     const projectId = Number(projectMatch[1]);
     const page = Number(url.searchParams.get("page") || "1");
     const offset = (page - 1) * PAGE_SIZE;
+    // include_output defaults to true to preserve the existing web-UI
+    // contract. MCP/agent callers should pass include_output=false to skip
+    // the potentially-large stdout/stderr payloads and get byte counts
+    // instead — recreates a softer version of the #44 problem otherwise. #37.
+    const includeOutput = url.searchParams.get("include_output") !== "false";
+
+    const selectList = includeOutput
+      ? "r.*, c.name as cron_name, c.command as cron_command"
+      : `r.id, r.project_id, r.cron_id, r.started_at, r.finished_at,
+         r.exit_code, r.duration_ms,
+         length(r.stdout) AS stdout_bytes,
+         length(r.stderr) AS stderr_bytes,
+         c.name as cron_name, c.command as cron_command`;
 
     const rows = db
       .query(
-        `SELECT r.*, c.name as cron_name, c.command as cron_command
+        `SELECT ${selectList}
          FROM runs r
          LEFT JOIN crons c ON c.id = r.cron_id
          WHERE r.project_id = ?
