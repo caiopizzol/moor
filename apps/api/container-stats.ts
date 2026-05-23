@@ -53,12 +53,15 @@ export type DockerStatsPayload = {
   read?: string;
   cpu_stats?: {
     cpu_usage?: { total_usage?: number; percpu_usage?: number[] };
-    system_cpu_usage?: number;
-    online_cpus?: number;
+    // Docker returns `null` (not undefined) for this on a stopped container's
+    // /stats response. Keep the type honest so `system_cpu_usage: null` test
+    // fixtures match the real production shape.
+    system_cpu_usage?: number | null;
+    online_cpus?: number | null;
   };
   precpu_stats?: {
     cpu_usage?: { total_usage?: number };
-    system_cpu_usage?: number;
+    system_cpu_usage?: number | null;
   };
   memory_stats?: {
     usage?: number;

@@ -228,11 +228,13 @@ describe("#52 isStoppedPayload — detect exited container's /stats response", (
     ).toBe(true);
   });
 
-  test("null system_cpu_usage also signals not-running", () => {
+  test("explicit null system_cpu_usage also signals not-running", () => {
+    // Production payload for an exited container has system_cpu_usage: null
+    // (literally null in JSON, not missing). Type and test match that shape.
     expect(
       isStoppedPayload({
         read: "2026-05-23T15:00:00Z",
-        cpu_stats: { cpu_usage: { total_usage: 0 } },
+        cpu_stats: { cpu_usage: { total_usage: 0 }, system_cpu_usage: null },
         memory_stats: {},
       }),
     ).toBe(true);
