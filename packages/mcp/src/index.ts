@@ -166,9 +166,9 @@ function validateGithubRepoUrl(url: string): void {
   } catch {
     throw new Error(`github_url is not a valid URL: ${url}`);
   }
-  // The downstream build path (apps/api/docker.ts:buildImage) appends ".git" and a
-  // branch ref to whatever URL we forward, so a non-http protocol, query string, or
-  // fragment quietly mangles the resulting git remote. Reject those up front.
+  // The downstream build path (apps/api/docker.ts:buildImageStreaming) appends ".git"
+  // and a branch ref to whatever URL we forward, so a non-http protocol, query string,
+  // or fragment quietly mangles the resulting git remote. Reject those up front.
   if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
     throw new Error(`github_url must use http or https (got protocol "${parsed.protocol}")`);
   }
@@ -326,7 +326,7 @@ server.registerTool(
   {
     title: "Rebuild Project",
     description:
-      "Rebuild a project from source (git pull + docker build) and restart the container. Returns the build output. Use this for code changes, Dockerfile changes, or base-image updates. For env vars / resource limits / port / volume / restart-policy changes, or to recover a crashed container from the existing image, use moor_restart — it skips the build and is much faster.",
+      "Rebuild a project from source (git pull + docker build) and restart the container. Returns the build output when it finishes. While a build is in flight, the most recent moor_runs entry has finished_at=null — call moor_run_get on its id to tail the live output. Use moor_rebuild for code, Dockerfile, or base-image changes. For env vars / resource limits / port / volume / restart-policy changes, or to recover a crashed container from the existing image, use moor_restart — it skips the build and is much faster.",
     inputSchema: z.object({
       project: z.string().describe("Project name or ID"),
       no_cache: z.boolean().optional().default(false).describe("Build without Docker cache"),
@@ -1265,7 +1265,7 @@ server.registerTool(
   {
     title: "List Project Run History",
     description:
-      "Paginated list of cron runs and build runs for a project. Returns one compact line per run (id, type, status, exit code, duration, output byte counts, timestamps) — stdout/stderr bodies are NOT included to avoid blowing token budgets on large build outputs. Use moor_run_get(run_id) to fetch the full output for a single run.",
+      "Paginated list of cron runs and build runs for a project. Returns one compact line per run (id, type, status, exit code, duration, output byte counts, timestamps) — stdout/stderr bodies are NOT included to avoid blowing token budgets on large build outputs. Use moor_run_get(run_id) to fetch the stored output for a single run (cron rows store full output; build/manual rows store at most a 64 KiB tail with the original total bytes recorded separately).",
     inputSchema: z.object({
       project: z.string().describe("Project name or ID"),
       page: z
@@ -1293,6 +1293,8 @@ server.registerTool(
         duration_ms: number | null;
         stdout_bytes: number;
         stderr_bytes: number;
+        stdout_total_bytes?: number;
+        stderr_total_bytes?: number;
       }>;
       total: number;
     };
@@ -1303,15 +1305,22 @@ server.registerTool(
     }
     const lines: string[] = [];
     lines.push(
-      `${p.name}: ${data.runs.length} run(s) on page ${page}, ${data.total} total. Use moor_run_get(run_id) for full output.`,
+      `${p.name}: ${data.runs.length} run(s) on page ${page}, ${data.total} total. Use moor_run_get(run_id) for stored output (build/manual rows are tail-truncated; total bytes shown below).`,
     );
     for (const r of data.runs) {
       const type = deriveRunType(r);
       const status = deriveRunStatus(r);
       const exit = r.exit_code != null ? ` exit=${r.exit_code}` : "";
       const cmd = r.cron_command ? ` cmd="${r.cron_command}"` : "";
+      // #65: surface "what was emitted" (total) per byte field. For live or
+      // already-truncated build runs total > stored; for crons and historical
+      // build rows they're equal. Showing total is the operationally useful
+      // number — "what did Docker actually produce" — and stays accurate as a
+      // build streams in. Fall back to stdout_bytes if the API is old.
+      const outTotal = r.stdout_total_bytes ?? r.stdout_bytes;
+      const errTotal = r.stderr_total_bytes ?? r.stderr_bytes;
       lines.push(
-        `id=${r.id} ${type} ${status}${exit} dur=${formatMsShort(r.duration_ms)} stdout=${r.stdout_bytes}B stderr=${r.stderr_bytes}B started=${r.started_at}${cmd}`,
+        `id=${r.id} ${type} ${status}${exit} dur=${formatMsShort(r.duration_ms)} stdout=${outTotal}B stderr=${errTotal}B started=${r.started_at}${cmd}`,
       );
     }
     return { content: [{ type: "text", text: lines.join("\n") }] };
@@ -1353,6 +1362,8 @@ server.registerTool(
       duration_ms: number | null;
       stdout: string | null;
       stderr: string | null;
+      stdout_total_bytes?: number | null;
+      stderr_total_bytes?: number | null;
     };
     const lines: string[] = [];
     const type = deriveRunType(r);
@@ -1362,14 +1373,18 @@ server.registerTool(
     if (r.cron_command) lines.push(`cron_command: ${r.cron_command}`);
     lines.push(`started_at: ${r.started_at}`);
     if (r.finished_at) lines.push(`finished_at: ${r.finished_at}`);
-    // runs.stdout/stderr is the full payload (no API-side truncation), so
-    // total bytes == stored bytes here. Using TextEncoder for byte length
-    // since JS String.length is UTF-16 code units, not UTF-8 bytes.
+    // #65: runs.stdout/stderr for build runs is a server-side 64 KiB tail
+    // (TAIL_CAP_BYTES). Use stdout_total_bytes / stderr_total_bytes when the
+    // API provides them so appendStream can honestly report "last X of Y".
+    // For cron rows the stored payload IS the full output, and total == stored.
+    // Fall back to encoded length for older APIs that don't return the totals.
     const stdoutStr = r.stdout ?? "";
     const stderrStr = r.stderr ?? "";
     const enc = new TextEncoder();
-    appendStream(lines, "stdout", stdoutStr, enc.encode(stdoutStr).length, cap);
-    appendStream(lines, "stderr", stderrStr, enc.encode(stderrStr).length, cap);
+    const stdoutTotal = r.stdout_total_bytes ?? enc.encode(stdoutStr).length;
+    const stderrTotal = r.stderr_total_bytes ?? enc.encode(stderrStr).length;
+    appendStream(lines, "stdout", stdoutStr, stdoutTotal, cap);
+    appendStream(lines, "stderr", stderrStr, stderrTotal, cap);
     return { content: [{ type: "text", text: lines.join("\n") }] };
   },
 );

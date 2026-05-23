@@ -116,54 +116,11 @@ function parseBuildLine(line: string): { text: string; error?: boolean } | null 
   return null;
 }
 
-export async function buildImage(
-  githubUrl: string,
-  branch: string,
-  dockerfile: string,
-  tag: string,
-): Promise<string> {
-  const gitUrl = githubUrl.endsWith(".git") ? githubUrl : `${githubUrl}.git`;
-  const remote = `${gitUrl}#${branch}`;
-  const params = new URLSearchParams({ remote, t: tag, dockerfile });
-  console.log(
-    `[buildImage] remote=${redactCredentials(remote) ?? remote} tag=${tag} dockerfile=${dockerfile}`,
-  );
-  const res = await dockerFetch(`/v1.44/build?${params}`, {
-    method: "POST",
-    timeout: BUILD_TIMEOUT,
-  });
-
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`Docker build failed: ${res.status} ${body}`);
-  }
-
-  let rawOutput = "";
-  const reader = res.body?.getReader();
-  if (reader) {
-    const decoder = new TextDecoder();
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      rawOutput += decoder.decode(value, { stream: true });
-    }
-  }
-
-  let buildError: string | null = null;
-  let output = "";
-  for (const line of rawOutput.split("\n").filter(Boolean)) {
-    const parsed = parseBuildLine(line);
-    if (parsed) {
-      output += parsed.text;
-      if (parsed.error) buildError = parsed.text;
-    }
-  }
-
-  if (buildError) throw new Error(buildError);
-  return output;
-}
-
-/** Streaming version of buildImage — calls onLine for each parsed line as it arrives. */
+/** Build a Docker image. Calls onLine for each parsed line as it arrives.
+ *  Returns void: callers own persistence (see BuildRun in
+ *  apps/api/build-runs.ts). An earlier full-string return value kept an
+ *  unbounded copy of the build log alive in API memory, which defeated
+ *  the 64 KiB tail cap on the durable side. */
 export async function buildImageStreaming(
   githubUrl: string,
   branch: string,
@@ -171,7 +128,7 @@ export async function buildImageStreaming(
   tag: string,
   onLine: (text: string) => void,
   noCache = false,
-): Promise<string> {
+): Promise<void> {
   const gitUrl = githubUrl.endsWith(".git") ? githubUrl : `${githubUrl}.git`;
   const remote = `${gitUrl}#${branch}`;
   const params = new URLSearchParams({ remote, t: tag, dockerfile });
@@ -190,10 +147,9 @@ export async function buildImageStreaming(
   }
 
   let buildError: string | null = null;
-  let output = "";
   let buffer = "";
   const reader = res.body?.getReader();
-  if (!reader) return "";
+  if (!reader) return;
 
   const decoder = new TextDecoder();
   while (true) {
@@ -208,7 +164,6 @@ export async function buildImageStreaming(
       if (!line) continue;
       const parsed = parseBuildLine(line);
       if (parsed) {
-        output += parsed.text;
         onLine(parsed.text);
         if (parsed.error) buildError = parsed.text;
       }
@@ -218,14 +173,12 @@ export async function buildImageStreaming(
   if (buffer) {
     const parsed = parseBuildLine(buffer);
     if (parsed) {
-      output += parsed.text;
       onLine(parsed.text);
       if (parsed.error) buildError = parsed.text;
     }
   }
 
   if (buildError) throw new Error(buildError);
-  return output;
 }
 
 /** Parse a single Docker pull JSON line into display text. */
@@ -245,11 +198,12 @@ function parsePullLine(line: string): { text: string; error?: boolean } | null {
   return null;
 }
 
-/** Pull a Docker image with streaming output. */
+/** Pull a Docker image with streaming output. Returns void: callers own
+ *  persistence (see BuildRun). Same rationale as buildImageStreaming. */
 export async function pullImageStreaming(
   imageRef: string,
   onLine: (text: string) => void,
-): Promise<string> {
+): Promise<void> {
   // Split image:tag
   const [fromImage, tag] = imageRef.includes(":")
     ? [imageRef.slice(0, imageRef.lastIndexOf(":")), imageRef.slice(imageRef.lastIndexOf(":") + 1)]
@@ -283,10 +237,9 @@ export async function pullImageStreaming(
   }
 
   let pullError: string | null = null;
-  let output = "";
   let buffer = "";
   const reader = res.body?.getReader();
-  if (!reader) return "";
+  if (!reader) return;
 
   const decoder = new TextDecoder();
   while (true) {
@@ -300,7 +253,6 @@ export async function pullImageStreaming(
       if (!line) continue;
       const parsed = parsePullLine(line);
       if (parsed) {
-        output += parsed.text;
         onLine(parsed.text);
         if (parsed.error) pullError = parsed.text;
       }
@@ -309,14 +261,12 @@ export async function pullImageStreaming(
   if (buffer) {
     const parsed = parsePullLine(buffer);
     if (parsed) {
-      output += parsed.text;
       onLine(parsed.text);
       if (parsed.error) pullError = parsed.text;
     }
   }
 
   if (pullError) throw new Error(pullError);
-  return output;
 }
 
 export async function createAndStartContainer(

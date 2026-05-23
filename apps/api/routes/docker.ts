@@ -1,7 +1,7 @@
+import { BuildRun } from "../build-runs";
 import { syncCaddyRoutes } from "../caddy";
 import db from "../db";
 import {
-  buildImage,
   buildImageStreaming,
   createAndStartContainer,
   EXEC_TIMEOUT_MAX_MS,
@@ -97,6 +97,11 @@ async function handleRun(req: Request, project: Project): Promise<Response> {
   console.log(`[run] image tag will be: ${tag}`);
   db.query(`UPDATE projects SET status = ? WHERE id = ?`).run(status, project.id);
 
+  // #65: one deploy run row covers build/pull + port detection + container
+  // start. INSERT before the build starts so moor_run_get can tail mid-build;
+  // BuildRun periodically flushes the rolling tail into runs.stdout.
+  const run = new BuildRun(project.id);
+
   // Stream build/pull output via SSE
   let streamClosed = false;
   let keepalive: ReturnType<typeof setInterval>;
@@ -111,6 +116,13 @@ async function handleRun(req: Request, project: Project): Promise<Response> {
         } catch {
           streamClosed = true;
         }
+      };
+
+      // Mirror every log line into both the SSE stream (for the UI/CLI) and
+      // the persistent BuildRun (for moor_run_get). Single source of text.
+      const log = (line: string) => {
+        send("log", line);
+        run.appendStdout(line);
       };
 
       const safeClose = () => {
@@ -133,22 +145,19 @@ async function handleRun(req: Request, project: Project): Promise<Response> {
         }
       }, 5000);
 
-      let output = "";
       const startTime = Date.now();
 
       try {
         if (isImageProject) {
-          // Pull pre-built image
-          send("log", `Pulling ${project.docker_image}...\n`);
-          output = await pullImageStreaming(project.docker_image!, (line) => send("log", line));
+          log(`Pulling ${project.docker_image}...\n`);
+          await pullImageStreaming(project.docker_image!, log);
         } else {
-          // Build from GitHub
-          output = await buildImageStreaming(
+          await buildImageStreaming(
             project.github_url as string,
             project.branch,
             project.dockerfile,
             tag,
-            (line) => send("log", line),
+            log,
             noCache,
           );
         }
@@ -160,39 +169,34 @@ async function handleRun(req: Request, project: Project): Promise<Response> {
           tag,
           project.id,
         );
-        db.query(
-          `INSERT INTO runs (project_id, started_at, finished_at, exit_code, stdout, cron_id)
-           VALUES (?, datetime('now'), datetime('now'), 0, ?, NULL)`,
-        ).run(project.id, output);
 
-        send("log", `\n${verb} completed in ${elapsed}s\n`);
+        log(`\n${verb} completed in ${elapsed}s\n`);
 
         // Auto-detect exposed ports from image
         const detectedPorts = await autoDetectPorts(project.id, tag, true);
         for (const { host_port, container_port } of detectedPorts) {
-          send("log", `Port ${container_port} → host :${host_port}\n`);
+          log(`Port ${container_port} → host :${host_port}\n`);
         }
       } catch (e) {
         const message = e instanceof Error ? e.message : "Unknown error";
         console.error(`[run] FAILED: ${message}`);
-        db.query(
-          `INSERT INTO runs (project_id, started_at, finished_at, exit_code, stdout, cron_id)
-           VALUES (?, datetime('now'), datetime('now'), 1, ?, NULL)`,
-        ).run(project.id, output || message);
+        run.appendStderr(`${message}\n`);
+        run.finalize(1);
         db.query("UPDATE projects SET status = 'error' WHERE id = ?").run(project.id);
         send("error", message);
         safeClose();
         return;
       }
 
-      // Start the container
+      // Container start is part of the same deploy run — operator's
+      // mental model is "rebuild" includes "and is now running."
       try {
         const envs = db
           .query("SELECT key, value FROM env_vars WHERE project_id = ?")
           .all(project.id) as { key: string; value: string }[];
         const ports = getProjectPorts(project.id);
 
-        send("log", "Starting container...\n");
+        log("Starting container...\n");
         const containerId = await createAndStartContainer(
           tag,
           `moor-${project.name}`,
@@ -211,14 +215,17 @@ async function handleRun(req: Request, project: Project): Promise<Response> {
 
         if (project.domain) {
           await syncCaddyRoutes();
-          send("log", `Route: ${project.domain} -> :${project.domain_port}\n`);
+          log(`Route: ${project.domain} -> :${project.domain_port}\n`);
         }
 
+        run.finalize(0);
         send("done", "Container started");
       } catch (e) {
         db.query("UPDATE projects SET status = 'error' WHERE id = ?").run(project.id);
         const message = e instanceof Error ? e.message : "Unknown error";
         console.error(`[run] CONTAINER START FAILED: ${message}`);
+        run.appendStderr(`${message}\n`);
+        run.finalize(1);
         send("error", message);
       }
 
@@ -227,6 +234,9 @@ async function handleRun(req: Request, project: Project): Promise<Response> {
     cancel() {
       clearInterval(keepalive);
       streamClosed = true;
+      // If the client disconnects mid-build the build still runs to
+      // completion on the daemon and finalize() will fire from the build
+      // try/catch above. No need to finalize here.
     },
   });
 
@@ -332,38 +342,35 @@ async function handleBuild(project: Project): Promise<Response> {
   console.log(`[build] tag=${tag} branch=${project.branch} dockerfile=${project.dockerfile}`);
   db.query("UPDATE projects SET status = 'building' WHERE id = ?").run(project.id);
 
+  // /build is the legacy non-SSE path used by api.projects.build in the web
+  // wrapper. We still wire it through BuildRun + buildImageStreaming so the
+  // row shape (started_at_ms, totals, exit_code, orphan-sweep eligibility)
+  // matches /run and moor_run_get can tail it mid-build. Returns when the
+  // build finishes, like the old contract.
+  const run = new BuildRun(project.id);
+
   try {
     console.log("[build] starting docker build...");
-    const buildStart = Date.now();
-    const buildOutput = await buildImage(
-      project.github_url,
-      project.branch,
-      project.dockerfile,
-      tag,
-    );
-    console.log(
-      `[build] completed in ${((Date.now() - buildStart) / 1000).toFixed(1)}s (${buildOutput.length} chars)`,
+    await buildImageStreaming(project.github_url, project.branch, project.dockerfile, tag, (line) =>
+      run.appendStdout(line),
     );
     db.query("UPDATE projects SET image_tag = ?, status = 'stopped' WHERE id = ?").run(
       tag,
       project.id,
     );
 
-    // Store build output in runs table
-    db.query(
-      `INSERT INTO runs (project_id, started_at, finished_at, exit_code, stdout, cron_id)
-       VALUES (?, datetime('now'), datetime('now'), 0, ?, NULL)`,
-    ).run(project.id, buildOutput);
-
     // Auto-detect exposed ports from image (always re-detect on rebuild)
     await autoDetectPorts(project.id, tag, true);
 
+    run.finalize(0);
     console.log("[build] done — status set to 'stopped'");
     return Response.json({ message: "Build complete" });
   } catch (e) {
     db.query("UPDATE projects SET status = 'error' WHERE id = ?").run(project.id);
     const message = e instanceof Error ? e.message : "Unknown error";
     console.error(`[build] FAILED: ${message}`);
+    run.appendStderr(`${message}\n`);
+    run.finalize(1);
     return new Response(message, { status: 500 });
   }
 }

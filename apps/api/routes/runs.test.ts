@@ -161,3 +161,57 @@ describe("#37 GET /api/projects/:id/runs include_output flag", () => {
     expect(body.stdout).toBe("full output here");
   });
 });
+
+describe("#65 list orders by started_at_ms with id tie-breaker", () => {
+  beforeEach(() => {
+    db.query("DELETE FROM runs").run();
+    db.query("DELETE FROM projects").run();
+  });
+
+  test("two builds in the same wall-clock second sort by started_at_ms DESC", async () => {
+    // SQLite started_at is second-precision, so back-to-back builds collide.
+    // moor_rebuild tells agents to use the most recent in-flight build —
+    // ordering must be unambiguous.
+    const pid = makeProject("a");
+    const earlier = db
+      .query(
+        `INSERT INTO runs (project_id, cron_id, started_at, started_at_ms, finished_at, exit_code, stdout)
+         VALUES (?, NULL, datetime('now'), 1000, datetime('now'), 0, '')
+         RETURNING id`,
+      )
+      .get(pid) as { id: number };
+    const later = db
+      .query(
+        `INSERT INTO runs (project_id, cron_id, started_at, started_at_ms, finished_at, exit_code, stdout)
+         VALUES (?, NULL, datetime('now'), 2000, datetime('now'), 0, '')
+         RETURNING id`,
+      )
+      .get(pid) as { id: number };
+
+    const res = await call("GET", `/api/projects/${pid}/runs?include_output=false`);
+    const body = (await res.json()) as { runs: Array<{ id: number }> };
+    expect(body.runs.map((r) => r.id)).toEqual([later.id, earlier.id]);
+  });
+
+  test("identical started_at_ms falls back to id DESC", async () => {
+    const pid = makeProject("a");
+    const first = db
+      .query(
+        `INSERT INTO runs (project_id, cron_id, started_at, started_at_ms, finished_at, exit_code, stdout)
+         VALUES (?, NULL, datetime('now'), 5000, datetime('now'), 0, '')
+         RETURNING id`,
+      )
+      .get(pid) as { id: number };
+    const second = db
+      .query(
+        `INSERT INTO runs (project_id, cron_id, started_at, started_at_ms, finished_at, exit_code, stdout)
+         VALUES (?, NULL, datetime('now'), 5000, datetime('now'), 0, '')
+         RETURNING id`,
+      )
+      .get(pid) as { id: number };
+
+    const res = await call("GET", `/api/projects/${pid}/runs?include_output=false`);
+    const body = (await res.json()) as { runs: Array<{ id: number }> };
+    expect(body.runs.map((r) => r.id)).toEqual([second.id, first.id]);
+  });
+});

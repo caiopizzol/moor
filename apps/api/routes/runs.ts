@@ -16,21 +16,33 @@ export async function handleRuns(req: Request, url: URL): Promise<Response | nul
     // instead — recreates a softer version of the #44 problem otherwise. #37.
     const includeOutput = url.searchParams.get("include_output") !== "false";
 
+    // #65: stdout_total_bytes / stderr_total_bytes are the truth Docker
+    // emitted (live-build rows store at most a 64 KiB tail; the totals
+    // capture the original size). For older completed rows the migration
+    // backfilled totals to length(stored), so callers can always rely on
+    // the *_total_bytes field. *_bytes still reflects what's *stored*.
     const selectList = includeOutput
       ? "r.*, c.name as cron_name, c.command as cron_command"
       : `r.id, r.project_id, r.cron_id, r.started_at, r.finished_at,
          r.exit_code, r.duration_ms,
          length(CAST(COALESCE(r.stdout, '') AS BLOB)) AS stdout_bytes,
          length(CAST(COALESCE(r.stderr, '') AS BLOB)) AS stderr_bytes,
+         COALESCE(r.stdout_total_bytes, length(CAST(COALESCE(r.stdout, '') AS BLOB))) AS stdout_total_bytes,
+         COALESCE(r.stderr_total_bytes, length(CAST(COALESCE(r.stderr, '') AS BLOB))) AS stderr_total_bytes,
          c.name as cron_name, c.command as cron_command`;
 
+    // Order by ms timestamp so a build that started in the same second as a
+    // prior run still sorts predictably. moor_run_get's "tail the most recent
+    // in-flight build" pattern relies on this. id DESC tie-breaks when even
+    // the ms collides (back-to-back inserts on a fast host). COALESCE guards
+    // against any row that somehow predated the started_at_ms backfill.
     const rows = db
       .query(
         `SELECT ${selectList}
          FROM runs r
          LEFT JOIN crons c ON c.id = r.cron_id
          WHERE r.project_id = ?
-         ORDER BY r.started_at DESC
+         ORDER BY COALESCE(r.started_at_ms, 0) DESC, r.id DESC
          LIMIT ? OFFSET ?`,
       )
       .all(projectId, PAGE_SIZE, offset);
@@ -50,7 +62,7 @@ export async function handleRuns(req: Request, url: URL): Promise<Response | nul
       .query(
         `SELECT * FROM runs
          WHERE project_id = ? AND cron_id IS NULL
-         ORDER BY started_at DESC
+         ORDER BY COALESCE(started_at_ms, 0) DESC, id DESC
          LIMIT 1`,
       )
       .get(projectId);
