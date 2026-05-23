@@ -1038,6 +1038,150 @@ server.registerTool(
   },
 );
 
+// --- Runs history (#37) ---
+
+// A runs row can be a cron run, a build/manual run, OR a cron run whose cron
+// was deleted (cron_id was SET NULL by the FK). The list alone can't tell the
+// latter two apart, so labels are honest about ambiguity instead of confidently
+// calling NULL cron_id "build."
+function deriveRunStatus(row: {
+  finished_at: string | null;
+  exit_code: number | null;
+}): "running" | "success" | "failed" {
+  if (!row.finished_at) return "running";
+  return row.exit_code === 0 ? "success" : "failed";
+}
+
+function deriveRunType(row: { cron_id: number | null; cron_name: string | null }): string {
+  if (row.cron_name) return `cron(${row.cron_name})`;
+  // cron_id IS NULL — could be a genuine build/manual run, or a cron run
+  // whose cron has since been deleted (ON DELETE SET NULL on the FK).
+  return "build_or_manual";
+}
+
+function formatMsShort(ms: number | null | undefined): string {
+  if (ms == null) return "—";
+  if (ms < 1000) return `${ms}ms`;
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  return `${m}m${s % 60}s`;
+}
+
+server.registerTool(
+  "moor_runs",
+  {
+    title: "List Project Run History",
+    description:
+      "Paginated list of cron runs and build runs for a project. Returns one compact line per run (id, type, status, exit code, duration, output byte counts, timestamps) — stdout/stderr bodies are NOT included to avoid blowing token budgets on large build outputs. Use moor_run_get(run_id) to fetch the full output for a single run.",
+    inputSchema: z.object({
+      project: z.string().describe("Project name or ID"),
+      page: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .default(1)
+        .describe("Page number (20 runs per page). Default 1."),
+    }),
+  },
+  async ({ project, page }) => {
+    const p = await resolveProject(project);
+    const res = await apiGet(`/api/projects/${p.id}/runs?include_output=false&page=${page}`);
+    if (!res.ok) throw new Error(`Failed: ${await res.text()}`);
+    const data = (await res.json()) as {
+      runs: Array<{
+        id: number;
+        cron_id: number | null;
+        cron_name: string | null;
+        cron_command: string | null;
+        started_at: string;
+        finished_at: string | null;
+        exit_code: number | null;
+        duration_ms: number | null;
+        stdout_bytes: number;
+        stderr_bytes: number;
+      }>;
+      total: number;
+    };
+    if (data.runs.length === 0) {
+      return {
+        content: [{ type: "text", text: `No runs recorded for ${p.name}.` }],
+      };
+    }
+    const lines: string[] = [];
+    lines.push(
+      `${p.name}: ${data.runs.length} run(s) on page ${page}, ${data.total} total. Use moor_run_get(run_id) for full output.`,
+    );
+    for (const r of data.runs) {
+      const type = deriveRunType(r);
+      const status = deriveRunStatus(r);
+      const exit = r.exit_code != null ? ` exit=${r.exit_code}` : "";
+      const cmd = r.cron_command ? ` cmd="${r.cron_command}"` : "";
+      lines.push(
+        `id=${r.id} ${type} ${status}${exit} dur=${formatMsShort(r.duration_ms)} stdout=${r.stdout_bytes}B stderr=${r.stderr_bytes}B started=${r.started_at}${cmd}`,
+      );
+    }
+    return { content: [{ type: "text", text: lines.join("\n") }] };
+  },
+);
+
+server.registerTool(
+  "moor_run_get",
+  {
+    title: "Get Run Detail",
+    description:
+      "Fetch one cron or build run with its stdout and stderr. Output is tail-truncated (default 8 KiB per stream; max 65536) to keep responses under typical agent token limits. Use tail_bytes=0 for metadata-only.",
+    inputSchema: z.object({
+      run_id: z.number().int().positive().describe("Run ID returned by moor_runs"),
+      tail_bytes: z
+        .number()
+        .int()
+        .min(0)
+        .max(65_536)
+        .optional()
+        .describe(
+          "Max bytes of each stream returned inline. Default 8192. Max 65536. Set to 0 for metadata-only.",
+        ),
+    }),
+  },
+  async ({ run_id, tail_bytes }) => {
+    const cap = tail_bytes ?? 8192;
+    const res = await apiGet(`/api/runs/${run_id}`);
+    if (res.status === 404) throw new Error(`run_id ${run_id} not found`);
+    if (!res.ok) throw new Error(`Failed: ${await res.text()}`);
+    const r = (await res.json()) as {
+      id: number;
+      cron_id: number | null;
+      cron_name: string | null;
+      cron_command: string | null;
+      started_at: string;
+      finished_at: string | null;
+      exit_code: number | null;
+      duration_ms: number | null;
+      stdout: string | null;
+      stderr: string | null;
+    };
+    const lines: string[] = [];
+    const type = deriveRunType(r);
+    const status = deriveRunStatus(r);
+    const exit = r.exit_code != null ? ` exit_code=${r.exit_code}` : "";
+    lines.push(`run_id=${r.id} ${type} ${status}${exit} duration=${formatMsShort(r.duration_ms)}`);
+    if (r.cron_command) lines.push(`cron_command: ${r.cron_command}`);
+    lines.push(`started_at: ${r.started_at}`);
+    if (r.finished_at) lines.push(`finished_at: ${r.finished_at}`);
+    // runs.stdout/stderr is the full payload (no API-side truncation), so
+    // total bytes == stored bytes here. Using TextEncoder for byte length
+    // since JS String.length is UTF-16 code units, not UTF-8 bytes.
+    const stdoutStr = r.stdout ?? "";
+    const stderrStr = r.stderr ?? "";
+    const enc = new TextEncoder();
+    appendStream(lines, "stdout", stdoutStr, enc.encode(stdoutStr).length, cap);
+    appendStream(lines, "stderr", stderrStr, enc.encode(stderrStr).length, cap);
+    return { content: [{ type: "text", text: lines.join("\n") }] };
+  },
+);
+
 server.registerTool(
   "moor_deploy",
   {
