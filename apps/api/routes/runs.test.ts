@@ -102,6 +102,32 @@ describe("#37 GET /api/projects/:id/runs include_output flag", () => {
     expect(row.finished_at).toBeDefined();
   });
 
+  test("multibyte stdout reports UTF-8 byte count, not char count", async () => {
+    // SQLite length(TEXT) counts characters; we need bytes so callers can
+    // budget agent token windows accurately. "é🙂" = 2 chars but 6 bytes.
+    const pid = makeProject("a");
+    makeRun(pid, { stdout: "é🙂" });
+    const res = await call("GET", `/api/projects/${pid}/runs?include_output=false`);
+    const body = (await res.json()) as { runs: Array<{ stdout_bytes: number }> };
+    expect(body.runs[0].stdout_bytes).toBe(6);
+  });
+
+  test("running run with NULL stdout/stderr reports 0 bytes, not null", async () => {
+    // A still-running cron has stdout/stderr = NULL. length(NULL) is NULL in
+    // SQLite — without COALESCE the MCP table would render "stdout=nullB".
+    const pid = makeProject("a");
+    db.query(
+      `INSERT INTO runs (project_id, cron_id, started_at, exit_code, stdout, stderr, duration_ms)
+       VALUES (?, NULL, datetime('now'), NULL, NULL, NULL, NULL)`,
+    ).run(pid);
+    const res = await call("GET", `/api/projects/${pid}/runs?include_output=false`);
+    const body = (await res.json()) as {
+      runs: Array<{ stdout_bytes: number; stderr_bytes: number }>;
+    };
+    expect(body.runs[0].stdout_bytes).toBe(0);
+    expect(body.runs[0].stderr_bytes).toBe(0);
+  });
+
   test("list joins cron name/command for cron runs", async () => {
     const pid = makeProject("a");
     const cid = makeCron(pid, "nightly");

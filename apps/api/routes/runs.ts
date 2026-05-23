@@ -20,8 +20,8 @@ export async function handleRuns(req: Request, url: URL): Promise<Response | nul
       ? "r.*, c.name as cron_name, c.command as cron_command"
       : `r.id, r.project_id, r.cron_id, r.started_at, r.finished_at,
          r.exit_code, r.duration_ms,
-         length(r.stdout) AS stdout_bytes,
-         length(r.stderr) AS stderr_bytes,
+         length(CAST(COALESCE(r.stdout, '') AS BLOB)) AS stdout_bytes,
+         length(CAST(COALESCE(r.stderr, '') AS BLOB)) AS stderr_bytes,
          c.name as cron_name, c.command as cron_command`;
 
     const rows = db
