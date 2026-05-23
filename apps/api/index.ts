@@ -13,6 +13,7 @@ import { interruptActiveRuns, startCronScheduler } from "./cron";
 import { hostTerminalHandlers, isHostTerminal, upgradeHostTerminal } from "./host-terminal";
 import { handleAuth } from "./routes/auth";
 import { handleCaddy } from "./routes/caddy";
+import { handleCleanup } from "./routes/cleanup";
 import { handleCrons } from "./routes/crons";
 import { handleDocker } from "./routes/docker";
 import { handleEnvs } from "./routes/envs";
@@ -107,6 +108,7 @@ const server = Bun.serve({
           (await handleRuns(req, url)) ??
           (await handleTerminalSessions(req, url)) ??
           (await handleCaddy(req, url)) ??
+          (await handleCleanup(req, url)) ??
           (await handleServer(req, url));
 
         if (res) return res;

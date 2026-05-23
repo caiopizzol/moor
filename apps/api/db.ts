@@ -128,6 +128,25 @@ db.exec(`
   );
 
   CREATE INDEX IF NOT EXISTS idx_project_volumes_project ON project_volumes(project_id);
+
+  -- #54: per-execute audit of guarded cleanup runs. candidates_json captures
+  -- the exact list the caller passed (after server-side validation of shape);
+  -- results_json captures the post-revalidation outcome for each one. Keeping
+  -- them as separate JSON blobs preserves the asymmetry between what was
+  -- requested and what actually happened — important because Docker state can
+  -- change between plan and execute, and some candidates legitimately turn
+  -- into no-ops at execute time.
+  CREATE TABLE IF NOT EXISTS cleanup_audit (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    executed_at TEXT NOT NULL DEFAULT (datetime('now')),
+    candidates_json TEXT NOT NULL,
+    results_json TEXT NOT NULL,
+    reclaimed_bytes INTEGER NOT NULL DEFAULT 0,
+    error_text TEXT
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_cleanup_audit_executed_at
+    ON cleanup_audit(executed_at);
 `);
 
 // #34 Phase B: orphan sweep. On moor restart, the in-memory map of active runs
