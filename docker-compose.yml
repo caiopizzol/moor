@@ -31,6 +31,11 @@ services:
       # Uncomment to reset an existing admin's password (also clears sessions).
       # Use one or the other, not both - moor refuses to start if both are set.
       # - MOOR_RESET_PASSWORD
+      # Optional. Set MOOR_CLEANUP_DANGLING_INTERVAL_HOURS=<hours> in .env
+      # to enable scheduled dangling-image cleanup. Off by default.
+      # Accepted range: ~0.017 hours (1 minute) to 596 hours (~24 days).
+      # See docs/self-hosting.md.
+      - MOOR_CLEANUP_DANGLING_INTERVAL_HOURS
 
   caddy:
     image: caddy:2-alpine
