@@ -126,14 +126,28 @@ export function summarizeBuildCachePlan(df: SystemDfResponse): PlanCandidate | n
   };
 }
 
-/** Turn the dangling-image listing into per-ID plan candidates. Uses the
- *  Size value Docker returns when `shared-size=true` is on the request —
- *  for dangling images this is effectively the bytes that would be freed
- *  (a dangling image has no tag, so no other image is sharing layers
- *  via tag). */
-export function summarizeDanglingImagesPlan(images: ImageSummary[]): PlanCandidate[] {
+/** Turn the dangling-image listing into per-ID plan candidates, excluding
+ *  any image still referenced by a container (running OR stopped).
+ *
+ *  Production smoke showed that ~5–7% of plan candidates failed with
+ *  HTTP 409 "image is being used by stopped container" — Docker refuses
+ *  to delete an image whose metadata a stopped container still needs,
+ *  unless `force=true` is set (which we deliberately don't use, since
+ *  it would silently destroy that stopped-container record too).
+ *
+ *  `inUseImageIds` is the set of ImageIDs (full `sha256:...`) currently
+ *  referenced by any container per `/containers/json?all=true`.
+ *  Filtering here makes plan output match what execute can actually
+ *  free, instead of surfacing predictable errors in every audit row.
+ *  Container creation between plan and execute is still possible — the
+ *  rare race-case 409 is handled in `executeDanglingImage`. */
+export function summarizeDanglingImagesPlan(
+  images: ImageSummary[],
+  inUseImageIds: ReadonlySet<string> = new Set(),
+): PlanCandidate[] {
   const out: PlanCandidate[] = [];
   for (const img of images) {
+    if (inUseImageIds.has(img.Id)) continue;
     const unique = Math.max(0, (img.Size ?? 0) - (img.SharedSize ?? 0));
     if (unique <= 0) continue;
     out.push({
@@ -170,6 +184,22 @@ async function fetchDanglingImages(): Promise<ImageSummary[]> {
   return dockerJson<ImageSummary[]>(`/v1.44/images/json?shared-size=true&filters=${q}`);
 }
 
+/** Build the set of ImageIDs referenced by *any* container — running or
+ *  stopped. Docker's per-image `Containers` count is -1 by default and
+ *  requires a separate flag (and even then is inconsistent across
+ *  daemon versions), so we enumerate from /containers/json?all=true,
+ *  which always populates `ImageID` reliably. */
+async function fetchContainerImageIds(): Promise<Set<string>> {
+  const containers = await dockerJson<Array<{ ImageID?: string }>>(
+    "/v1.44/containers/json?all=true",
+  );
+  const out = new Set<string>();
+  for (const c of containers) {
+    if (c.ImageID) out.add(c.ImageID);
+  }
+  return out;
+}
+
 export async function planCleanup(scope: CleanupScope[]): Promise<PlanResponse> {
   const candidates: PlanCandidate[] = [];
 
@@ -180,8 +210,8 @@ export async function planCleanup(scope: CleanupScope[]): Promise<PlanResponse> 
   }
 
   if (scope.includes("dangling_image")) {
-    const images = await fetchDanglingImages();
-    candidates.push(...summarizeDanglingImagesPlan(images));
+    const [images, inUse] = await Promise.all([fetchDanglingImages(), fetchContainerImageIds()]);
+    candidates.push(...summarizeDanglingImagesPlan(images, inUse));
   }
 
   const total_reclaimable_bytes = candidates.reduce((s, c) => s + c.reclaimable_bytes, 0);
@@ -241,11 +271,25 @@ async function executeDanglingImage(id: string): Promise<ExecuteResult> {
       },
     );
     if (!res.ok && res.status !== 404) {
+      const body = await res.text();
+      // 409 with "being used" is the race case: a container appeared
+      // between plan and execute that now references the image (or a
+      // stopped container slipped past the plan-time filter). Label it
+      // honestly so the audit row distinguishes "container conflict"
+      // from real Docker failures.
+      if (res.status === 409 && body.includes("is being used")) {
+        return {
+          category: "dangling_image",
+          id,
+          reclaimed_bytes: 0,
+          error: "referenced by a container at execute time; skipped (use docker rm to unblock)",
+        };
+      }
       return {
         category: "dangling_image",
         id,
         reclaimed_bytes: 0,
-        error: `docker DELETE /images/${id} -> ${res.status}: ${await res.text()}`,
+        error: `docker DELETE /images/${id} -> ${res.status}: ${body}`,
       };
     }
     // 404 means it disappeared between revalidate and delete; treat as

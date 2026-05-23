@@ -130,6 +130,32 @@ describe("#54 summarizeDanglingImagesPlan", () => {
     ]);
     expect(out).toHaveLength(0);
   });
+
+  test("excludes images referenced by any container — avoids predictable 409 at execute time", () => {
+    // Production smoke showed ~5–7% of candidates failed with "image is
+    // being used by stopped container". Filtering them out at plan time
+    // makes the plan match what execute can actually free.
+    const inUse = new Set<string>(["sha256:b"]);
+    const out = summarizeDanglingImagesPlan(
+      [
+        { Id: "sha256:a", Size: 1000, SharedSize: 100, RepoTags: null },
+        { Id: "sha256:b", Size: 500, SharedSize: 100, RepoTags: null }, // referenced
+        { Id: "sha256:c", Size: 800, SharedSize: 100, RepoTags: null },
+      ],
+      inUse,
+    );
+    expect(out.map((c) => c.category === "dangling_image" && c.id)).toEqual([
+      "sha256:a",
+      "sha256:c",
+    ]);
+  });
+
+  test("empty in-use set keeps the prior behavior — no images excluded", () => {
+    const out = summarizeDanglingImagesPlan([
+      { Id: "sha256:a", Size: 1000, SharedSize: 100, RepoTags: null },
+    ]);
+    expect(out).toHaveLength(1);
+  });
 });
 
 describe("#54 cleanup_audit table exists and is writable", () => {
