@@ -1265,7 +1265,7 @@ server.registerTool(
   {
     title: "List Project Run History",
     description:
-      "Paginated list of cron runs and build runs for a project. Returns one compact line per run (id, type, status, exit code, duration, output byte counts, timestamps) — stdout/stderr bodies are NOT included to avoid blowing token budgets on large build outputs. Use moor_run_get(run_id) to fetch the full output for a single run.",
+      "Paginated list of cron runs and build runs for a project. Returns one compact line per run (id, type, status, exit code, duration, output byte counts, timestamps) — stdout/stderr bodies are NOT included to avoid blowing token budgets on large build outputs. Use moor_run_get(run_id) to fetch the stored output for a single run (cron rows store full output; build/manual rows store at most a 64 KiB tail with the original total bytes recorded separately).",
     inputSchema: z.object({
       project: z.string().describe("Project name or ID"),
       page: z
@@ -1305,7 +1305,7 @@ server.registerTool(
     }
     const lines: string[] = [];
     lines.push(
-      `${p.name}: ${data.runs.length} run(s) on page ${page}, ${data.total} total. Use moor_run_get(run_id) for full output.`,
+      `${p.name}: ${data.runs.length} run(s) on page ${page}, ${data.total} total. Use moor_run_get(run_id) for stored output (build/manual rows are tail-truncated; total bytes shown below).`,
     );
     for (const r of data.runs) {
       const type = deriveRunType(r);
