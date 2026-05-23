@@ -660,6 +660,47 @@ server.registerTool(
   },
 );
 
+server.registerTool(
+  "moor_project_stats",
+  {
+    title: "Project Container Stats (live)",
+    description:
+      "Live container stats for one project: CPU percent, memory (excluding page cache, same accounting as `docker stats`), network and block I/O totals, PID count. Single Docker stats snapshot — CPU uses the cpu_stats/precpu_stats delta the daemon already includes. Stopped or never-started projects return running=false with zeroed counters (no 404).",
+    inputSchema: z.object({
+      project: z.string().describe("Project name or ID"),
+    }),
+  },
+  async ({ project }) => {
+    const p = await resolveProject(project);
+    const res = await apiGet(`/api/projects/${p.id}/container-stats`);
+    if (!res.ok) throw new Error(`Failed: ${res.status} ${await res.text()}`);
+    const s = (await res.json()) as {
+      running: boolean;
+      cpu_percent: number;
+      memory_bytes: number;
+      memory_limit_bytes: number;
+      memory_percent: number;
+      network_rx_bytes: number;
+      network_tx_bytes: number;
+      block_read_bytes: number;
+      block_write_bytes: number;
+      pids: number;
+    };
+    if (!s.running) {
+      return {
+        content: [{ type: "text", text: `${p.name}: not running (zeroed counters returned).` }],
+      };
+    }
+    const memLimit = s.memory_limit_bytes > 0 ? formatBytes(s.memory_limit_bytes) : "unlimited";
+    const lines = [
+      `${p.name}: CPU ${s.cpu_percent}% | Memory ${formatBytes(s.memory_bytes)} / ${memLimit} (${s.memory_percent}%) | PIDs ${s.pids}`,
+      `Network: rx ${formatBytes(s.network_rx_bytes)} / tx ${formatBytes(s.network_tx_bytes)}`,
+      `Block I/O: read ${formatBytes(s.block_read_bytes)} / write ${formatBytes(s.block_write_bytes)}`,
+    ];
+    return { content: [{ type: "text", text: lines.join("\n") }] };
+  },
+);
+
 function formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
   const units = ["B", "KB", "MB", "GB", "TB"];
