@@ -9,6 +9,7 @@ import {
   buildStatsResponse,
   type ContainerStatsResponse,
   type DockerStatsPayload,
+  isStoppedPayload,
   NOT_RUNNING,
 } from "../container-stats";
 import db from "../db";
@@ -48,6 +49,13 @@ export async function handleContainerStats(req: Request, url: URL): Promise<Resp
       );
     }
     const payload = (await res.json()) as DockerStatsPayload;
+    // Docker returns 200 (not 404) for a container that still exists but is
+    // exited — with `read` set to the Go zero-time and stats fields null.
+    // Without this check the route reported running=true with all zeros for
+    // a stopped container, contradicting the documented contract.
+    if (isStoppedPayload(payload)) {
+      return Response.json(NOT_RUNNING satisfies ContainerStatsResponse);
+    }
     return Response.json(buildStatsResponse(payload) satisfies ContainerStatsResponse);
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Unknown error";

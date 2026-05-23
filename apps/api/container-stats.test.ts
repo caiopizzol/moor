@@ -6,6 +6,7 @@ import {
   buildStatsResponse,
   computeCpuPercent,
   computeMemory,
+  isStoppedPayload,
   sumBlockIo,
   sumNetwork,
 } from "./container-stats";
@@ -211,5 +212,43 @@ describe("#52 buildStatsResponse — full route shape", () => {
       block_write_bytes: 7,
       pids: 3,
     });
+  });
+});
+
+describe("#52 isStoppedPayload — detect exited container's /stats response", () => {
+  // Real fixture from a stopped (exit 137) container on the production host.
+  // Docker returns 200 with `read` = Go zero-time and system_cpu_usage = null.
+  test("zero-time `read` field is the explicit not-running signal", () => {
+    expect(
+      isStoppedPayload({
+        read: "0001-01-01T00:00:00Z",
+        cpu_stats: { cpu_usage: { total_usage: 0 } },
+        memory_stats: {},
+      }),
+    ).toBe(true);
+  });
+
+  test("null system_cpu_usage also signals not-running", () => {
+    expect(
+      isStoppedPayload({
+        read: "2026-05-23T15:00:00Z",
+        cpu_stats: { cpu_usage: { total_usage: 0 } },
+        memory_stats: {},
+      }),
+    ).toBe(true);
+  });
+
+  test("running container with both fields populated is not stopped", () => {
+    expect(
+      isStoppedPayload({
+        read: "2026-05-23T15:00:00Z",
+        cpu_stats: {
+          cpu_usage: { total_usage: 100 },
+          system_cpu_usage: 1000,
+          online_cpus: 4,
+        },
+        memory_stats: { usage: 1000, limit: 4000 },
+      }),
+    ).toBe(false);
   });
 });
