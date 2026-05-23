@@ -47,7 +47,7 @@ export const NOT_RUNNING: NotRunningResponse = {
 
 export type DockerStatsPayload = {
   cpu_stats?: {
-    cpu_usage?: { total_usage?: number };
+    cpu_usage?: { total_usage?: number; percpu_usage?: number[] };
     system_cpu_usage?: number;
     online_cpus?: number;
   };
@@ -58,9 +58,9 @@ export type DockerStatsPayload = {
   memory_stats?: {
     usage?: number;
     limit?: number;
-    // cgroup v2 names; cgroup v1 uses different keys but we treat both
-    // permissively — whichever exists, subtract it from usage.
-    stats?: { inactive_file?: number; cache?: number };
+    // cgroup v1 emits `total_inactive_file`; cgroup v2 emits `inactive_file`.
+    // Matches Docker CLI's calculateMemUsageUnixNoCache.
+    stats?: { total_inactive_file?: number; inactive_file?: number };
   };
   networks?: Record<string, { rx_bytes?: number; tx_bytes?: number }>;
   blkio_stats?: {
@@ -73,24 +73,28 @@ export type DockerStatsPayload = {
  *  (cpu_stats - precpu_stats) interval Docker took on its own.
  *
  *  Per Docker Engine API: percent = (cpu_delta / system_delta) * online_cpus * 100.
- *  When the daemon's prior sample is missing (system_delta <= 0), there's no
- *  delta to compute against — return 0 rather than a divide-by-zero.
+ *  When `online_cpus` is absent (older daemons), Docker CLI falls back to
+ *  `len(cpu_usage.percpu_usage)` — we mirror that. When neither is present
+ *  there's nothing to normalize against, return 0. Same for system_delta <= 0
+ *  (no prior sample).
  */
 export function computeCpuPercent(payload: DockerStatsPayload): number {
   const cur = payload.cpu_stats ?? {};
   const pre = payload.precpu_stats ?? {};
   const cpuDelta = (cur.cpu_usage?.total_usage ?? 0) - (pre.cpu_usage?.total_usage ?? 0);
   const sysDelta = (cur.system_cpu_usage ?? 0) - (pre.system_cpu_usage ?? 0);
-  const cpus = cur.online_cpus ?? 0;
+  const cpus = cur.online_cpus ?? cur.cpu_usage?.percpu_usage?.length ?? 0;
   if (cpuDelta <= 0 || sysDelta <= 0 || cpus <= 0) return 0;
   const pct = (cpuDelta / sysDelta) * cpus * 100;
   return Math.round(pct * 100) / 100;
 }
 
-/** Return container memory accounting that matches `docker stats`:
- *  usage minus the page cache portion (inactive_file on cgroup v2,
- *  cache on cgroup v1). The raw `usage` includes cache and overstates
- *  what the process is really holding. */
+/** Return container memory accounting that matches `docker stats`'s
+ *  calculateMemUsageUnixNoCache: usage minus inactive_file. The key
+ *  differs by cgroup version — `total_inactive_file` on cgroup v1,
+ *  `inactive_file` on cgroup v2. If neither is present, fall through
+ *  to raw usage (rather than the legacy `cache` field, which is
+ *  Docker 19.03 behavior and overstates the "active" memory). */
 export function computeMemory(payload: DockerStatsPayload): {
   bytes: number;
   limit_bytes: number;
@@ -99,8 +103,8 @@ export function computeMemory(payload: DockerStatsPayload): {
   const m = payload.memory_stats ?? {};
   const usage = m.usage ?? 0;
   const limit = m.limit ?? 0;
-  const cacheLike = m.stats?.inactive_file ?? m.stats?.cache ?? 0;
-  const bytes = Math.max(0, usage - cacheLike);
+  const inactive = m.stats?.total_inactive_file ?? m.stats?.inactive_file ?? 0;
+  const bytes = Math.max(0, usage - inactive);
   const percent = limit > 0 ? Math.round((bytes / limit) * 10000) / 100 : 0;
   return { bytes, limit_bytes: limit, percent };
 }
@@ -122,10 +126,13 @@ export function sumNetwork(payload: DockerStatsPayload): {
   return { rx_bytes: rx, tx_bytes: tx };
 }
 
-/** Sum Read/Write bytes from blkio.io_service_bytes_recursive. On
- *  cgroup v2 hosts this array is sometimes empty even when there's
- *  real I/O (kernel doesn't always expose per-device counters); we
- *  surface 0 in that case rather than fabricating a number. */
+/** Sum Read/Write bytes from blkio.io_service_bytes_recursive. Docker
+ *  CLI classifies entries by the first character case-insensitively
+ *  ("Read"/"read"/"r"... → read), so we do the same — different daemon
+ *  versions have used different casing. On cgroup v2 hosts the array
+ *  is sometimes empty even when there's real I/O (kernel doesn't
+ *  always expose per-device counters); we surface 0 in that case
+ *  rather than fabricating a number. */
 export function sumBlockIo(payload: DockerStatsPayload): {
   read_bytes: number;
   write_bytes: number;
@@ -135,8 +142,9 @@ export function sumBlockIo(payload: DockerStatsPayload): {
   let write = 0;
   for (const e of entries) {
     const v = e.value ?? 0;
-    if (e.op === "Read") read += v;
-    else if (e.op === "Write") write += v;
+    const tag = (e.op ?? "")[0]?.toLowerCase();
+    if (tag === "r") read += v;
+    else if (tag === "w") write += v;
   }
   return { read_bytes: read, write_bytes: write };
 }

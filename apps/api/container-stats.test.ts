@@ -58,21 +58,33 @@ describe("#52 computeCpuPercent", () => {
     ).toBe(0);
   });
 
-  test("missing online_cpus returns 0 — can't normalize without it", () => {
+  test("missing online_cpus falls back to percpu_usage.length (Docker CLI behavior)", () => {
+    // Older daemons don't set online_cpus; docker stats uses the percpu_usage
+    // array length as the cpu count. cpu_delta=50, system_delta=100, cpus=4,
+    // pct = (50/100) * 4 * 100 = 200.
     expect(
       computeCpuPercent({
         cpu_stats: {
-          cpu_usage: { total_usage: 100 },
+          cpu_usage: { total_usage: 150, percpu_usage: [0, 0, 0, 0] },
           system_cpu_usage: 200,
         },
-        precpu_stats: { cpu_usage: { total_usage: 50 }, system_cpu_usage: 100 },
+        precpu_stats: { cpu_usage: { total_usage: 100 }, system_cpu_usage: 100 },
+      }),
+    ).toBe(200);
+  });
+
+  test("returns 0 only when both online_cpus and percpu_usage are absent", () => {
+    expect(
+      computeCpuPercent({
+        cpu_stats: { cpu_usage: { total_usage: 150 }, system_cpu_usage: 200 },
+        precpu_stats: { cpu_usage: { total_usage: 100 }, system_cpu_usage: 100 },
       }),
     ).toBe(0);
   });
 });
 
-describe("#52 computeMemory", () => {
-  test("subtracts inactive_file (cgroup v2) from usage", () => {
+describe("#52 computeMemory — matches docker stats calculateMemUsageUnixNoCache", () => {
+  test("cgroup v2: subtracts inactive_file from usage", () => {
     const m = computeMemory({
       memory_stats: {
         usage: 1_000_000,
@@ -85,24 +97,30 @@ describe("#52 computeMemory", () => {
     expect(m.percent).toBe(20);
   });
 
-  test("falls back to cache (cgroup v1) when inactive_file is absent", () => {
+  test("cgroup v1: prefers total_inactive_file over inactive_file", () => {
+    // cgroup v1 reports both keys; total_inactive_file is the authoritative
+    // one (the non-`total_` variant excludes child cgroup memory).
     const m = computeMemory({
       memory_stats: {
         usage: 1_000_000,
         limit: 4_000_000,
-        stats: { cache: 100_000 },
+        stats: { total_inactive_file: 300_000, inactive_file: 200_000 },
       },
     });
-    expect(m.bytes).toBe(900_000);
+    expect(m.bytes).toBe(700_000);
   });
 
-  test("clamps bytes to 0 if cache > usage (rare cgroup edge)", () => {
+  test("falls through to raw usage when no inactive_file is reported", () => {
+    // Avoid the legacy `cache` fallback (Docker 19.03 behavior overstates).
     const m = computeMemory({
-      memory_stats: {
-        usage: 100,
-        limit: 1000,
-        stats: { inactive_file: 200 },
-      },
+      memory_stats: { usage: 1_000_000, limit: 4_000_000, stats: {} },
+    });
+    expect(m.bytes).toBe(1_000_000);
+  });
+
+  test("clamps bytes to 0 if inactive_file > usage (rare cgroup edge)", () => {
+    const m = computeMemory({
+      memory_stats: { usage: 100, limit: 1000, stats: { inactive_file: 200 } },
     });
     expect(m.bytes).toBe(0);
     expect(m.percent).toBe(0);
@@ -134,14 +152,16 @@ describe("#52 sumNetwork", () => {
 });
 
 describe("#52 sumBlockIo", () => {
-  test("splits Read vs Write from io_service_bytes_recursive", () => {
+  test("classifies by first char case-insensitively (R/r → read, W/w → write)", () => {
+    // Different Docker versions have emitted "Read"/"read"/"r" etc.; CLI
+    // classifies by the first character case-insensitively.
     expect(
       sumBlockIo({
         blkio_stats: {
           io_service_bytes_recursive: [
             { op: "Read", value: 1000 },
-            { op: "Write", value: 500 },
-            { op: "Read", value: 250 },
+            { op: "write", value: 500 }, // lowercase
+            { op: "r", value: 250 }, // single char
             { op: "Sync", value: 9999 }, // ignored
           ],
         },
