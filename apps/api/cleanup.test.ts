@@ -72,6 +72,12 @@ describe("#54 validateExecuteCandidates — strips caller metadata to identifier
     expect(validateExecuteCandidates({}).ok).toBe(false);
     expect(validateExecuteCandidates("nope").ok).toBe(false);
   });
+
+  test("rejects empty array — no silent no-op audit row", () => {
+    const v = validateExecuteCandidates([]);
+    expect(v.ok).toBe(false);
+    if (!v.ok) expect(v.error).toContain("must not be empty");
+  });
 });
 
 describe("#54 summarizeBuildCachePlan", () => {

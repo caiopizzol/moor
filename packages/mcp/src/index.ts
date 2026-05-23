@@ -582,7 +582,7 @@ server.registerTool(
     }
     const lines = [
       `${data.candidates.length} candidate(s), total reclaimable: ${formatBytes(data.total_reclaimable_bytes)}.`,
-      "Pass these candidates back to moor_cleanup_execute to delete.",
+      "Pass the candidates_json block below back to moor_cleanup_execute to delete.",
       "",
     ];
     for (const c of data.candidates) {
@@ -597,6 +597,11 @@ server.registerTool(
         );
       }
     }
+    // Emit candidates_json so the agent doesn't have to reconstruct identifiers
+    // from the prose lines above. The execute side ignores extra fields, so
+    // passing the whole candidate objects (label, reclaimable_bytes, etc.) is
+    // safe — server re-validates eligibility and computes actual freed bytes.
+    lines.push("", "candidates_json:", JSON.stringify(data.candidates, null, 2));
     return { content: [{ type: "text", text: lines.join("\n") }] };
   },
 );

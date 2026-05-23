@@ -83,6 +83,12 @@ export function validateExecuteCandidates(input: unknown):
     }
   | { ok: false; error: string } {
   if (!Array.isArray(input)) return { ok: false, error: "candidates must be an array" };
+  if (input.length === 0) {
+    return {
+      ok: false,
+      error: "candidates must not be empty — call moor_cleanup_plan first, then pass the result",
+    };
+  }
   const out: ExecuteCandidate[] = [];
   for (const raw of input) {
     if (!raw || typeof raw !== "object")
