@@ -326,7 +326,7 @@ server.registerTool(
   {
     title: "Rebuild Project",
     description:
-      "Rebuild a project from source (git pull + docker build) and restart the container. Returns the build output.",
+      "Rebuild a project from source (git pull + docker build) and restart the container. Returns the build output. Use this for code changes, Dockerfile changes, or base-image updates. For env vars / resource limits / port / volume / restart-policy changes, or to recover a crashed container from the existing image, use moor_restart — it skips the build and is much faster.",
     inputSchema: z.object({
       project: z.string().describe("Project name or ID"),
       no_cache: z.boolean().optional().default(false).describe("Build without Docker cache"),
@@ -346,7 +346,8 @@ server.registerTool(
   "moor_restart",
   {
     title: "Restart Project",
-    description: "Stop and start a project's container.",
+    description:
+      "Stop and recreate a project's container from its existing image. Does NOT pull from git or rebuild — uses the existing image_tag. Right tool for: applying changed env vars / resource limits / ports / volumes / restart policy, recovering a crashed container, or simply bouncing the process. Wrong tool for: code or Dockerfile changes (use moor_rebuild — those need a new image).",
     inputSchema: z.object({
       project: z.string().describe("Project name or ID"),
     }),
