@@ -95,8 +95,13 @@ db.exec(`
     timeout_ms INTEGER NOT NULL,
     killed_pid TEXT,
     error_message TEXT,
+    -- Text timestamps are second-precision (SQLite datetime). Kept for human-
+    -- readable display; duration_ms computation prefers the _ms columns below
+    -- which are written from Date.now() in JS at insert/finalize time. See #45.
     started_at TEXT NOT NULL DEFAULT (datetime('now')),
-    finished_at TEXT
+    finished_at TEXT,
+    started_at_ms INTEGER,
+    finished_at_ms INTEGER
   );
 
   CREATE INDEX IF NOT EXISTS idx_exec_runs_project_started
@@ -136,6 +141,29 @@ try {
 
 try {
   db.exec("ALTER TABLE projects ADD COLUMN restart_policy TEXT DEFAULT 'unless-stopped'");
+} catch {
+  // Column already exists
+}
+
+// #45: millisecond timestamps for exec_runs. New rows write Date.now() from
+// JS in exec-async.ts. Old rows are backfilled best-effort from the text
+// columns, which are SQLite second-precision so the backfilled values are
+// snapped to the start of their wall-clock second (good enough for runs that
+// pre-date this migration). New rows get true millisecond precision.
+try {
+  db.exec("ALTER TABLE exec_runs ADD COLUMN started_at_ms INTEGER");
+  db.exec(
+    "UPDATE exec_runs SET started_at_ms = CAST(strftime('%s', started_at) AS INTEGER) * 1000 WHERE started_at_ms IS NULL AND started_at IS NOT NULL",
+  );
+} catch {
+  // Column already exists
+}
+
+try {
+  db.exec("ALTER TABLE exec_runs ADD COLUMN finished_at_ms INTEGER");
+  db.exec(
+    "UPDATE exec_runs SET finished_at_ms = CAST(strftime('%s', finished_at) AS INTEGER) * 1000 WHERE finished_at_ms IS NULL AND finished_at IS NOT NULL",
+  );
 } catch {
   // Column already exists
 }
