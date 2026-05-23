@@ -1,13 +1,24 @@
 import { execSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { SOCKET as SOCKET_PATH } from "../docker";
 import {
   computeLoadPercent,
   type DockerDisk,
   type LoadInfo,
   parseLoadAvg,
+  parseProcMeminfo,
+  parseProcUptime,
   parseSystemDf,
   type SystemDfResponse,
 } from "../server-stats";
+
+function tryReadProc(path: string): string | null {
+  try {
+    return readFileSync(path, "utf-8");
+  } catch {
+    return null;
+  }
+}
 
 export async function handleServer(_req: Request, url: URL): Promise<Response | null> {
   if (url.pathname === "/api/server/stats" && _req.method === "GET") {
@@ -76,6 +87,13 @@ function getOsInfo(): string {
 }
 
 function getUptime(): string {
+  // The production image (oven/bun:1-slim) does not ship `uptime`. Read
+  // /proc/uptime directly; only fall back to the shell for macOS dev.
+  const proc = tryReadProc("/proc/uptime");
+  if (proc) {
+    const formatted = parseProcUptime(proc);
+    if (formatted) return formatted;
+  }
   const raw = tryExec("uptime -p 2>/dev/null || uptime");
   const match = raw.match(/up\s+(.+)/);
   return match ? match[1].replace(/,\s*$/, "").trim() : raw;
@@ -99,19 +117,21 @@ function getCpuUsage(): { percent: number; cores: number } {
 }
 
 function getMemoryInfo(): { total: string; used: string; percent: number } {
-  const freeOut = tryExec("free -b 2>/dev/null | grep Mem");
-  if (freeOut) {
-    const parts = freeOut.split(/\s+/);
-    const total = Number(parts[1]);
-    const used = Number(parts[2]);
-    return {
-      total: formatBytes(total),
-      used: formatBytes(used),
-      percent: Math.round((used / total) * 100),
-    };
+  // The production image (oven/bun:1-slim) does not ship `free`. Read
+  // /proc/meminfo directly; only fall back to macOS sysctl/vm_stat for dev.
+  const proc = tryReadProc("/proc/meminfo");
+  if (proc) {
+    const parsed = parseProcMeminfo(proc);
+    if (parsed) {
+      return {
+        total: formatBytes(parsed.totalBytes),
+        used: formatBytes(parsed.usedBytes),
+        percent: parsed.percent,
+      };
+    }
   }
 
-  // macOS fallback
+  // macOS fallback (dev only)
   const totalRaw = tryExec("sysctl -n hw.memsize 2>/dev/null");
   const total = Number(totalRaw) || 0;
   const vmStat = tryExec("vm_stat 2>/dev/null");
