@@ -2,6 +2,7 @@ import { syncCaddyRoutes } from "../caddy";
 import db from "../db";
 import { removeContainer, stopContainer } from "../docker";
 import { reconcileGithubUrl, redactCredentials, serializeProject } from "../redact";
+import { validateCpus, validateMemoryLimitMb } from "../resource-limits";
 
 /** Run Caddy sync. On failure, return a 500 with a clear message that the DB write
  *  succeeded but the route is not active, plus the manual recovery command. The
@@ -89,9 +90,11 @@ async function handleCreate(req: Request): Promise<Response> {
     domain,
     domain_port,
     restart_policy,
+    memory_limit_mb,
+    cpus,
   } = body;
   console.log(
-    `[projects] create: name=${name} github_url=${redactCredentials(github_url) ?? ""} docker_image=${docker_image} branch=${branch || "main"} dockerfile=${dockerfile || "Dockerfile"} domain=${domain || ""} domain_port=${domain_port || ""}`,
+    `[projects] create: name=${name} github_url=${redactCredentials(github_url) ?? ""} docker_image=${docker_image} branch=${branch || "main"} dockerfile=${dockerfile || "Dockerfile"} domain=${domain || ""} domain_port=${domain_port || ""} memory_limit_mb=${memory_limit_mb ?? ""} cpus=${cpus ?? ""}`,
   );
   if (!name) return new Response("name is required", { status: 400 });
   if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/.test(name)) {
@@ -99,6 +102,11 @@ async function handleCreate(req: Request): Promise<Response> {
       status: 400,
     });
   }
+
+  const memErr = validateMemoryLimitMb(memory_limit_mb);
+  if (memErr) return new Response(memErr, { status: 400 });
+  const cpuErr = validateCpus(cpus);
+  if (cpuErr) return new Response(cpuErr, { status: 400 });
 
   const existing = db.query("SELECT id FROM projects WHERE name = ?").get(name);
   if (existing) {
@@ -110,7 +118,7 @@ async function handleCreate(req: Request): Promise<Response> {
 
   const result = db
     .query(
-      "INSERT INTO projects (name, github_url, docker_image, branch, dockerfile, domain, domain_port, restart_policy) VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING *",
+      "INSERT INTO projects (name, github_url, docker_image, branch, dockerfile, domain, domain_port, restart_policy, memory_limit_mb, cpus) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *",
     )
     .get(
       name,
@@ -121,6 +129,8 @@ async function handleCreate(req: Request): Promise<Response> {
       domain?.trim() || null,
       domain_port ?? null,
       policy,
+      memory_limit_mb ?? null,
+      cpus ?? null,
     );
 
   if (domain?.trim()) {
@@ -139,6 +149,15 @@ async function handleUpdate(req: Request, id: number): Promise<Response> {
   const values: (string | number | null)[] = [];
 
   const validPolicies = ["no", "on-failure", "always", "unless-stopped"];
+
+  if ("memory_limit_mb" in body) {
+    const err = validateMemoryLimitMb(body.memory_limit_mb);
+    if (err) return new Response(err, { status: 400 });
+  }
+  if ("cpus" in body) {
+    const err = validateCpus(body.cpus);
+    if (err) return new Response(err, { status: 400 });
+  }
 
   // Reconciliation: if the incoming github_url matches the redacted form of the
   // stored URL, the caller is round-tripping a previous read (the web UI's edit
@@ -161,6 +180,8 @@ async function handleUpdate(req: Request, id: number): Promise<Response> {
     "domain",
     "domain_port",
     "restart_policy",
+    "memory_limit_mb",
+    "cpus",
   ]) {
     if (key === "github_url" && skipGithubUrl) continue;
     if (key in body) {
@@ -170,6 +191,7 @@ async function handleUpdate(req: Request, id: number): Promise<Response> {
       } else if (key === "restart_policy") {
         values.push(validPolicies.includes(body[key]) ? body[key] : "unless-stopped");
       } else {
+        // memory_limit_mb and cpus: null is the clear signal, numbers persist as-is.
         values.push(body[key]);
       }
     }

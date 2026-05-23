@@ -325,9 +325,10 @@ export async function createAndStartContainer(
   envVars: { key: string; value: string }[],
   ports: { host_port: number; container_port: number }[] = [],
   restartPolicy = "unless-stopped",
+  limits: { memoryLimitMb?: number | null; cpus?: number | null } = {},
 ): Promise<string> {
   console.log(
-    `[createContainer] image=${imageTag} name=${name} envVars=${envVars.length} ports=${ports.length}`,
+    `[createContainer] image=${imageTag} name=${name} envVars=${envVars.length} ports=${ports.length} mem_mb=${limits.memoryLimitMb ?? ""} cpus=${limits.cpus ?? ""}`,
   );
   // Remove existing container with this name if it exists
   try {
@@ -349,14 +350,29 @@ export async function createAndStartContainer(
     portBindings[key] = [{ HostIp: "127.0.0.1", HostPort: String(host_port) }];
   }
 
+  // #36: per-project memory and CPU limits. Setting Memory and MemorySwap to
+  // the same value gives the container a hard memory cap with no swap headroom
+  // — without this, a memory-limited container could still page heavily into
+  // host swap. NanoCpus is Docker's cgroup CPU quota (cpus * 1e9 = nanoseconds
+  // of CPU time per second).
+  const hostConfig: Record<string, unknown> = {
+    RestartPolicy: { Name: restartPolicy },
+    PortBindings: portBindings,
+  };
+  if (limits.memoryLimitMb != null) {
+    const bytes = limits.memoryLimitMb * 1024 * 1024;
+    hostConfig.Memory = bytes;
+    hostConfig.MemorySwap = bytes;
+  }
+  if (limits.cpus != null) {
+    hostConfig.NanoCpus = Math.round(limits.cpus * 1e9);
+  }
+
   const body = {
     Image: imageTag,
     Env: envVars.map((e) => `${e.key}=${e.value}`),
     ExposedPorts: exposedPorts,
-    HostConfig: {
-      RestartPolicy: { Name: restartPolicy },
-      PortBindings: portBindings,
-    },
+    HostConfig: hostConfig,
   };
 
   const createRes = await dockerFetch(`/v1.44/containers/create?name=${name}`, {

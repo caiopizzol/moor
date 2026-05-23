@@ -168,4 +168,22 @@ try {
   // Column already exists
 }
 
+// #36: per-project memory and CPU limits. NULL = unbounded (current behavior,
+// no Docker HostConfig fields set). When set: memory_limit_mb maps to Memory
+// (and equal MemorySwap so the container can't burn through host swap) and
+// cpus maps to NanoCpus (cpus * 1e9). Limits take effect on container
+// recreate — handleStart/handleRun all call createAndStartContainer which
+// force-removes the existing container by name and creates fresh.
+try {
+  db.exec("ALTER TABLE projects ADD COLUMN memory_limit_mb INTEGER");
+} catch {
+  // Column already exists
+}
+
+try {
+  db.exec("ALTER TABLE projects ADD COLUMN cpus REAL");
+} catch {
+  // Column already exists
+}
+
 export default db;

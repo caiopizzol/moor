@@ -28,6 +28,8 @@ type Project = {
   domain: string | null;
   domain_port: number | null;
   restart_policy: string;
+  memory_limit_mb: number | null;
+  cpus: number | null;
 };
 
 function validateGithubUrl(url: string): string | null {
@@ -196,6 +198,7 @@ async function handleRun(req: Request, project: Project): Promise<Response> {
           envs,
           ports,
           project.restart_policy,
+          { memoryLimitMb: project.memory_limit_mb, cpus: project.cpus },
         );
         console.log(`[run] container started: ${containerId}`);
 
@@ -386,6 +389,7 @@ async function handleStart(project: Project): Promise<Response> {
       envs,
       ports,
       project.restart_policy,
+      { memoryLimitMb: project.memory_limit_mb, cpus: project.cpus },
     );
     console.log(`[start] container started: ${containerId}`);
     db.query("UPDATE projects SET container_id = ?, status = 'running' WHERE id = ?").run(
