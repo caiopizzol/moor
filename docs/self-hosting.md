@@ -137,6 +137,18 @@ Moor can also run the same cleanup on a schedule. Off by default; opt in via:
 MOOR_CLEANUP_DANGLING_INTERVAL_HOURS=24
 ```
 
+**Existing installs:** if your `docker-compose.yml` predates this feature, the var also has to be declared in the moor service's `environment` block. Add it next to `MOOR_API_KEY`:
+
+```yaml
+services:
+  moor:
+    environment:
+      - MOOR_API_KEY
+      - MOOR_CLEANUP_DANGLING_INTERVAL_HOURS
+```
+
+Compose only forwards env vars listed there — setting it in `.env` alone is not enough. New installs from the installer get this automatically.
+
 Accepted range: from `0.0167` (1 minute) up to `596` hours (about 24 days — the underlying `setInterval` ms cap). Values outside that range are logged and ignored, and the scheduler stays off.
 
 The scheduler reuses the manual code path — same eligibility filter (`noprune=true`, dangling images only), same `cleanup_audit` rows, same per-candidate re-validation at execute time. If a cleanup cycle is still running when the next tick fires, it's skipped rather than overlapped. Failures are logged but never crash the moor process.
