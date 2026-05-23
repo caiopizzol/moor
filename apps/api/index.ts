@@ -9,6 +9,7 @@ import {
   validateSession,
 } from "./auth";
 import { ensureRoutesFile } from "./caddy";
+import { startCleanupScheduler, stopCleanupScheduler } from "./cleanup-scheduler";
 import { interruptActiveRuns, startCronScheduler } from "./cron";
 import { hostTerminalHandlers, isHostTerminal, upgradeHostTerminal } from "./host-terminal";
 import { handleAuth } from "./routes/auth";
@@ -169,12 +170,14 @@ const server = Bun.serve({
 startCronScheduler();
 startSessionCleanup();
 setInterval(cleanExpiredSessions, 3600_000);
+startCleanupScheduler();
 
 // Graceful shutdown
 const shutdown = () => {
   console.log("[moor] Shutting down...");
   interruptActiveRuns();
   clearAllSessions();
+  stopCleanupScheduler();
   server.stop();
   process.exit(0);
 };
