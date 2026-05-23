@@ -138,34 +138,82 @@ describe("#65 orphan sweep on Moor restart", () => {
     db.query("DELETE FROM projects").run();
   });
 
+  // The sweep SQL is duplicated here from db.ts because Bun's module cache
+  // makes re-importing db.ts mid-test impractical. Keep in sync with db.ts.
+  const SWEEP_SQL = `
+    UPDATE runs
+    SET finished_at = datetime('now'),
+        finished_at_ms = CAST((strftime('%s', 'now') * 1000) AS INTEGER),
+        exit_code = 1,
+        stderr = COALESCE(stderr, '') ||
+                 CASE WHEN stderr IS NULL OR stderr = '' THEN '' ELSE char(10) END ||
+                 '[moor restarted; terminal state unknown]',
+        stderr_total_bytes = COALESCE(stderr_total_bytes, 0) +
+          length(CAST(
+            CASE WHEN stderr IS NULL OR stderr = ''
+                 THEN '[moor restarted; terminal state unknown]'
+                 ELSE char(10) || '[moor restarted; terminal state unknown]'
+            END
+          AS BLOB))
+    WHERE finished_at IS NULL AND cron_id IS NULL
+  `;
+
   test("in-progress build/manual runs are marked failed with an honest stderr note", () => {
     const projectId = makeProject();
     const inserted = db
       .query(
-        `INSERT INTO runs (project_id, cron_id, started_at)
-         VALUES (?, NULL, datetime('now')) RETURNING id`,
+        `INSERT INTO runs (project_id, cron_id, started_at, stderr_total_bytes)
+         VALUES (?, NULL, datetime('now'), 0) RETURNING id`,
       )
       .get(projectId) as { id: number };
 
-    db.exec(`
-      UPDATE runs
-      SET finished_at = datetime('now'),
-          finished_at_ms = CAST((strftime('%s', 'now') * 1000) AS INTEGER),
-          exit_code = COALESCE(exit_code, 1),
-          stderr = COALESCE(stderr, '') ||
-                   CASE WHEN stderr IS NULL OR stderr = '' THEN '' ELSE char(10) END ||
-                   '[moor restarted; terminal state unknown]'
-      WHERE finished_at IS NULL AND cron_id IS NULL
-    `);
+    db.exec(SWEEP_SQL);
 
     const row = db.query("SELECT * FROM runs WHERE id = ?").get(inserted.id) as {
       finished_at: string | null;
       exit_code: number;
       stderr: string;
+      stderr_total_bytes: number;
     };
     expect(row.finished_at).not.toBeNull();
     expect(row.exit_code).toBe(1);
     expect(row.stderr).toContain("moor restarted");
+    // Total bytes must reflect the appended note — otherwise moor_runs
+    // would report stderr=0B for a row whose stderr we just wrote.
+    expect(row.stderr_total_bytes).toBe(row.stderr.length);
+  });
+
+  test("sweep forces exit_code=1 (does not preserve a partial value mid-run)", () => {
+    const projectId = makeProject();
+    // Imagine a previous codepath had set exit_code optimistically before
+    // crashing. An interrupted row's outcome is unknown — preserve nothing.
+    const inserted = db
+      .query(
+        `INSERT INTO runs (project_id, cron_id, started_at, exit_code)
+         VALUES (?, NULL, datetime('now'), 0) RETURNING id`,
+      )
+      .get(projectId) as { id: number };
+    db.exec(SWEEP_SQL);
+    const row = db.query("SELECT exit_code FROM runs WHERE id = ?").get(inserted.id) as {
+      exit_code: number;
+    };
+    expect(row.exit_code).toBe(1);
+  });
+
+  test("sweep appends a newline separator when prior stderr exists, and totals match", () => {
+    const projectId = makeProject();
+    const inserted = db
+      .query(
+        `INSERT INTO runs (project_id, cron_id, started_at, stderr, stderr_total_bytes)
+         VALUES (?, NULL, datetime('now'), 'prior stderr', 12) RETURNING id`,
+      )
+      .get(projectId) as { id: number };
+    db.exec(SWEEP_SQL);
+    const row = db
+      .query("SELECT stderr, stderr_total_bytes FROM runs WHERE id = ?")
+      .get(inserted.id) as { stderr: string; stderr_total_bytes: number };
+    expect(row.stderr).toBe("prior stderr\n[moor restarted; terminal state unknown]");
+    expect(row.stderr_total_bytes).toBe(row.stderr.length);
   });
 
   test("in-progress cron runs are NOT touched by the build sweep", () => {
@@ -182,11 +230,7 @@ describe("#65 orphan sweep on Moor restart", () => {
       )
       .get(projectId, cron.id) as { id: number };
 
-    db.exec(`
-      UPDATE runs
-      SET finished_at = datetime('now')
-      WHERE finished_at IS NULL AND cron_id IS NULL
-    `);
+    db.exec(SWEEP_SQL);
 
     const row = db.query("SELECT finished_at FROM runs WHERE id = ?").get(cronRun.id) as {
       finished_at: string | null;
@@ -204,11 +248,7 @@ describe("#65 orphan sweep on Moor restart", () => {
       )
       .get(projectId) as { id: number };
 
-    db.exec(`
-      UPDATE runs
-      SET finished_at = datetime('now')
-      WHERE finished_at IS NULL AND cron_id IS NULL
-    `);
+    db.exec(SWEEP_SQL);
 
     const row = db.query("SELECT * FROM runs WHERE id = ?").get(done.id) as {
       exit_code: number;

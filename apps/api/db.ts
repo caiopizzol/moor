@@ -278,14 +278,27 @@ try {
 // matching the #34 Phase B pattern for exec_runs. Cron runs follow a
 // different lifecycle (cron.ts owns its own sweep) and are excluded by
 // the cron_id IS NOT NULL guard.
+//
+// Force exit_code = 1 rather than COALESCE: an interrupted row has
+// terminal-unknown outcome, and preserving any earlier value would be
+// dishonest. The appended stderr note has to also bump
+// stderr_total_bytes — moor_runs reports bytes from total, and
+// reporting "0 B" while we just wrote a note would mislead.
 db.exec(`
   UPDATE runs
   SET finished_at = datetime('now'),
       finished_at_ms = CAST((strftime('%s', 'now') * 1000) AS INTEGER),
-      exit_code = COALESCE(exit_code, 1),
+      exit_code = 1,
       stderr = COALESCE(stderr, '') ||
                CASE WHEN stderr IS NULL OR stderr = '' THEN '' ELSE char(10) END ||
-               '[moor restarted; terminal state unknown]'
+               '[moor restarted; terminal state unknown]',
+      stderr_total_bytes = COALESCE(stderr_total_bytes, 0) +
+        length(CAST(
+          CASE WHEN stderr IS NULL OR stderr = ''
+               THEN '[moor restarted; terminal state unknown]'
+               ELSE char(10) || '[moor restarted; terminal state unknown]'
+          END
+        AS BLOB))
   WHERE finished_at IS NULL AND cron_id IS NULL
 `);
 

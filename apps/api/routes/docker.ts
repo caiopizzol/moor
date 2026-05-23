@@ -2,7 +2,6 @@ import { BuildRun } from "../build-runs";
 import { syncCaddyRoutes } from "../caddy";
 import db from "../db";
 import {
-  buildImage,
   buildImageStreaming,
   createAndStartContainer,
   EXEC_TIMEOUT_MAX_MS,
@@ -343,38 +342,35 @@ async function handleBuild(project: Project): Promise<Response> {
   console.log(`[build] tag=${tag} branch=${project.branch} dockerfile=${project.dockerfile}`);
   db.query("UPDATE projects SET status = 'building' WHERE id = ?").run(project.id);
 
+  // /build is the legacy non-SSE path used by api.projects.build in the web
+  // wrapper. We still wire it through BuildRun + buildImageStreaming so the
+  // row shape (started_at_ms, totals, exit_code, orphan-sweep eligibility)
+  // matches /run and moor_run_get can tail it mid-build. Returns when the
+  // build finishes, like the old contract.
+  const run = new BuildRun(project.id);
+
   try {
     console.log("[build] starting docker build...");
-    const buildStart = Date.now();
-    const buildOutput = await buildImage(
-      project.github_url,
-      project.branch,
-      project.dockerfile,
-      tag,
-    );
-    console.log(
-      `[build] completed in ${((Date.now() - buildStart) / 1000).toFixed(1)}s (${buildOutput.length} chars)`,
+    await buildImageStreaming(project.github_url, project.branch, project.dockerfile, tag, (line) =>
+      run.appendStdout(line),
     );
     db.query("UPDATE projects SET image_tag = ?, status = 'stopped' WHERE id = ?").run(
       tag,
       project.id,
     );
 
-    // Store build output in runs table
-    db.query(
-      `INSERT INTO runs (project_id, started_at, finished_at, exit_code, stdout, cron_id)
-       VALUES (?, datetime('now'), datetime('now'), 0, ?, NULL)`,
-    ).run(project.id, buildOutput);
-
     // Auto-detect exposed ports from image (always re-detect on rebuild)
     await autoDetectPorts(project.id, tag, true);
 
+    run.finalize(0);
     console.log("[build] done — status set to 'stopped'");
     return Response.json({ message: "Build complete" });
   } catch (e) {
     db.query("UPDATE projects SET status = 'error' WHERE id = ?").run(project.id);
     const message = e instanceof Error ? e.message : "Unknown error";
     console.error(`[build] FAILED: ${message}`);
+    run.appendStderr(`${message}\n`);
+    run.finalize(1);
     return new Response(message, { status: 500 });
   }
 }
