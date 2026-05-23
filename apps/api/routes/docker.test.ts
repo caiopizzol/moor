@@ -111,7 +111,11 @@ describe("#34 POST /exec timeout_ms validation", () => {
       command: "echo hi",
       timeout_ms: 30_000,
     });
+    // #73: container_id is null → "no_container" → 400 with more
+    // specific wording. Previously this was "Container is not running"
+    // for both no-container and not-running cases; #73 distinguishes
+    // them (no_container=400, not_running=409 with live_status).
     expect(res.status).toBe(400);
-    expect(await res.text()).toBe("Container is not running");
+    expect(await res.text()).toBe("Project has no container; build/start it first");
   });
 });

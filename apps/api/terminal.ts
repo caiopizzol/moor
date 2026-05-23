@@ -1,6 +1,7 @@
 import type { ServerWebSocket } from "bun";
 import db from "./db";
 import { inspectExec, SOCKET as SOCKET_PATH } from "./docker";
+import { liveRequireErrorResponse, requireLiveContainer } from "./status-reconciler";
 import {
   getLastCommand,
   hasRecentOutput,
@@ -23,24 +24,31 @@ type WsExt = {
   _cmdBuffer: string;
 };
 
-/** Upgrade an HTTP request to a terminal WebSocket */
-export function upgradeTerminal(
+/** Upgrade an HTTP request to a terminal WebSocket. Async because #73
+ *  gates on a fresh Docker inspect — the cached project.status field
+ *  can lie about runtime truth and approve a terminal upgrade against
+ *  a dead container. */
+export async function upgradeTerminal(
   req: Request,
   server: ReturnType<typeof Bun.serve>,
-): Response | true {
+): Promise<Response | true> {
   const url = new URL(req.url);
   const match = url.pathname.match(/^\/api\/projects\/(\d+)\/terminal$/);
   if (!match) return new Response("Not found", { status: 404 });
 
   const projectId = Number(match[1]);
-  const project = db.query("SELECT * FROM projects WHERE id = ?").get(projectId) as {
+  const project = db
+    .query("SELECT id, container_id, status FROM projects WHERE id = ?")
+    .get(projectId) as {
+    id: number;
     container_id: string | null;
     status: string;
   } | null;
+  if (!project) return new Response("Project not found", { status: 404 });
 
-  if (!project?.container_id || project.status !== "running") {
-    return new Response("Container is not running", { status: 400 });
-  }
+  const live = await requireLiveContainer(project);
+  const errorRes = liveRequireErrorResponse(live);
+  if (errorRes) return errorRes;
 
   const upgraded = server.upgrade(req, {
     data: { projectId, containerId: project.container_id },

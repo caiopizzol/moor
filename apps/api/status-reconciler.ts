@@ -143,3 +143,86 @@ export function stopStatusReconciler(): void {
     intervalHandle = null;
   }
 }
+
+/** #73: action-path gate. Routes that are about to execute against
+ *  the container (exec, terminal upgrade, cron run — manual AND tick)
+ *  should call this BEFORE acting. Cached live_status from the 30s
+ *  reconciler loop is appropriate for display, but actions need
+ *  current truth — a stale "running" snapshot can approve an exec
+ *  against a dead container.
+ *
+ *  Also explicitly distinguishes "Docker unreachable" (docker_error,
+ *  caller should return 503) from "container not running" (the
+ *  current code can't tell those apart and rejects everything
+ *  identically with 400). Surfacing the difference matters for
+ *  operator debugging — "my exec failed" vs "moor can't reach
+ *  Docker" are very different problems.
+ *
+ *  Opportunistically writes the live_* columns from the fresh
+ *  inspect; the next reconciler tick would have done it anyway and
+ *  we already have the response. Never mutates projects.status —
+ *  preserves the #71 dual-field semantic.
+ *
+ *  Inspector is injectable for tests; production uses realInspect. */
+export type LiveRequireResult =
+  | { ok: true }
+  | { ok: false; reason: "no_container" }
+  | { ok: false; reason: "not_running"; live_status: Exclude<LiveStatus, "missing"> }
+  | { ok: false; reason: "missing" }
+  | { ok: false; reason: "docker_error"; message: string };
+
+export async function requireLiveContainer(
+  project: { id: number; container_id: string | null },
+  inspect: Inspector = realInspect,
+): Promise<LiveRequireResult> {
+  if (!project.container_id) {
+    return { ok: false, reason: "no_container" };
+  }
+  const result = await inspect(project.container_id);
+  if (!result.ok) {
+    if (result.kind === "missing") {
+      writeLiveOk(project.id, "missing", null);
+      return { ok: false, reason: "missing" };
+    }
+    writeLiveError(project.id, result.message);
+    return { ok: false, reason: "docker_error", message: result.message };
+  }
+  const parsed = parseContainerState(result.state);
+  writeLiveOk(project.id, parsed.live_status, parsed.live_exit_code);
+  if (parsed.live_status === "running") return { ok: true };
+  return { ok: false, reason: "not_running", live_status: parsed.live_status };
+}
+
+/** Convert a LiveRequireResult into the HTTP response a route should
+ *  send when ok is false. Returns null when ok (caller proceeds).
+ *  Centralized so every action route uses the same status codes and
+ *  body shape — 400 for "no container yet" (user error: build first),
+ *  409 for "wrong state" (project conflict, body carries the live
+ *  status), 503 for Docker unreachable (infrastructure failure, not
+ *  the project's fault). */
+export function liveRequireErrorResponse(result: LiveRequireResult): Response | null {
+  if (result.ok) return null;
+  switch (result.reason) {
+    case "no_container":
+      return new Response("Project has no container; build/start it first", { status: 400 });
+    case "missing":
+      return Response.json(
+        { error: "Container record is stale (Docker has no such container)", reason: "missing" },
+        { status: 409 },
+      );
+    case "not_running":
+      return Response.json(
+        {
+          error: "Container is not running",
+          reason: "not_running",
+          live_status: result.live_status,
+        },
+        { status: 409 },
+      );
+    case "docker_error":
+      return Response.json(
+        { error: "Docker unreachable", reason: "docker_error", message: result.message },
+        { status: 503 },
+      );
+  }
+}

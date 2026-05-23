@@ -95,7 +95,7 @@ const server = Bun.serve({
             if (wsRes === true) return;
             return wsRes ?? new Response("Upgrade failed", { status: 500 });
           }
-          const wsRes = upgradeTerminal(req, server);
+          const wsRes = await upgradeTerminal(req, server);
           if (wsRes === true) return;
           return wsRes ?? new Response("Upgrade failed", { status: 500 });
         }

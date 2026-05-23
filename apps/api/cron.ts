@@ -1,5 +1,6 @@
 import db from "./db";
 import { execInContainer, killExec } from "./docker";
+import { requireLiveContainer } from "./status-reconciler";
 
 /** Exported so the /api/runs/:id/stop dispatch path (#68) and its
  *  tests can observe active cron runs without going through the
@@ -91,11 +92,32 @@ async function tickInner() {
     const project = db
       .query("SELECT id, container_id, status FROM projects WHERE id = ?")
       .get(cron.project_id) as ProjectRow | null;
+    if (!project) continue;
 
-    if (!project || project.status !== "running" || !project.container_id) continue;
+    // #73: fresh inspect, not cached project.status. Cached would
+    // silently skip a scheduled job with no run record when stale;
+    // that's the exact lying-about-runtime-truth pattern we just
+    // fixed for moor_status. Skipping IS still a valid outcome
+    // (container missing / not running / Docker unreachable), but
+    // it should leave an observable run row, not vanish.
+    const live = await requireLiveContainer(project);
+    if (!live.ok) {
+      const reason =
+        live.reason === "not_running"
+          ? `container is ${live.live_status}`
+          : live.reason === "docker_error"
+            ? `Docker unreachable: ${live.message}`
+            : live.reason; // "no_container" | "missing"
+      db.query(
+        `INSERT INTO runs (cron_id, project_id, started_at, finished_at, exit_code, stderr)
+         VALUES (?, ?, datetime('now'), datetime('now'), -1, ?)`,
+      ).run(cron.id, cron.project_id, `cron skipped: ${reason}`);
+      console.log(`[cron] skipped cron=${cron.id} reason=${reason}`);
+      continue;
+    }
 
     // Run in background — don't block the tick
-    runCron(cron, project.container_id);
+    runCron(cron, project.container_id as string);
   }
 }
 
