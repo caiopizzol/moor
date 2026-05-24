@@ -297,21 +297,46 @@ async function handleRun(req: Request, project: Project): Promise<Response> {
 }
 
 async function handleLogs(project: Project, url: URL): Promise<Response> {
+  // #74: distinguish the four failure modes that used to collapse to
+  // empty-logs. state field lets MCP/UI render honestly, error field
+  // carries the underlying message for docker_error so an operator
+  // can act on Docker daemon failures instead of seeing silence.
   if (!project.container_id) {
-    return Response.json({ logs: "", lastTimestamp: 0 });
+    return Response.json({ logs: "", lastTimestamp: 0, state: "no_container" });
   }
 
   const sinceParam = url.searchParams.get("since");
   const tailParam = url.searchParams.get("tail");
-  try {
-    const opts: { since?: number; tail?: number } = {};
-    if (sinceParam) opts.since = Number(sinceParam);
-    if (tailParam) opts.tail = Number(tailParam);
-    const { logs, lastTimestamp } = await getContainerLogs(project.container_id, opts);
-    return Response.json({ logs, lastTimestamp });
-  } catch {
-    return Response.json({ logs: "", lastTimestamp: 0 });
+  const opts: { since?: number; tail?: number } = {};
+  if (sinceParam) opts.since = Number(sinceParam);
+  if (tailParam) opts.tail = Number(tailParam);
+
+  const result = await getContainerLogs(project.container_id, opts);
+  if (!result.ok) {
+    if (result.kind === "missing") {
+      // container_id was set but Docker doesn't have it (manual `docker rm`,
+      // or moor's record is stale). Distinct from no_container (never started)
+      // and from docker_error (daemon failure).
+      return Response.json({ logs: "", lastTimestamp: 0, state: "missing" });
+    }
+    // docker_error → 502 Bad Gateway so callers can distinguish
+    // infrastructure failure from app silence.
+    return Response.json(
+      { logs: "", lastTimestamp: 0, state: "docker_error", error: result.message },
+      { status: 502 },
+    );
   }
+
+  // Logs fetched successfully. Use cached live_status (from the #71
+  // reconciler) to label exited vs ok. We deliberately don't do a fresh
+  // inspect here — for log fetching, a 30s cache is appropriate (this
+  // isn't an action path). live_status null means the reconciler hasn't
+  // ticked yet on this row; default to "ok" in that case.
+  const live = db.query("SELECT live_status FROM projects WHERE id = ?").get(project.id) as {
+    live_status: string | null;
+  } | null;
+  const state = live?.live_status && live.live_status !== "running" ? "exited" : "ok";
+  return Response.json({ logs: result.logs, lastTimestamp: result.lastTimestamp, state });
 }
 
 async function handleExec(req: Request, project: Project): Promise<Response> {

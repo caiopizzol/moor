@@ -119,3 +119,44 @@ describe("#34 POST /exec timeout_ms validation", () => {
     expect(await res.text()).toBe("Project has no container; build/start it first");
   });
 });
+
+describe("#74 GET /api/projects/:id/logs honest failure modes", () => {
+  beforeEach(() => {
+    db.query("DELETE FROM projects").run();
+  });
+
+  test("no container_id → state='no_container', empty logs, 200", async () => {
+    const p = db
+      .query("INSERT INTO projects (name, status) VALUES ('a', 'stopped') RETURNING id")
+      .get() as { id: number };
+    const res = await call("GET", `/api/projects/${p.id}/logs`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { logs: string; lastTimestamp: number; state: string };
+    expect(body).toEqual({ logs: "", lastTimestamp: 0, state: "no_container" });
+  });
+
+  test("container_id set but Docker has no such container → state='missing' (or docker_error)", async () => {
+    // In a test env with Docker reachable, "fake-container-id" → 404 →
+    // state='missing' (200). Without Docker reachable, fetch throws →
+    // state='docker_error' (502). Pre-#74 both collapsed to empty
+    // logs with 200 — operator couldn't tell either case apart from
+    // "container has no logs yet."
+    const p = db
+      .query(
+        `INSERT INTO projects (name, status, container_id)
+         VALUES ('b', 'running', 'fake-container-id') RETURNING id`,
+      )
+      .get() as { id: number };
+    const res = await call("GET", `/api/projects/${p.id}/logs`);
+    if (res.status === 502) {
+      const body = (await res.json()) as { state: string; error?: string };
+      expect(body.state).toBe("docker_error");
+      expect(body.error).toBeTruthy();
+    } else {
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { logs: string; state: string };
+      expect(body.state).toBe("missing");
+      expect(body.logs).toBe("");
+    }
+  });
+});

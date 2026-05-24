@@ -780,10 +780,20 @@ export async function getImageExposedPorts(imageTag: string): Promise<number[]> 
   }
 }
 
+/** #74: discriminated union so callers can distinguish 404 (container
+ *  missing) from other Docker failures (socket unreachable, 5xx, parse
+ *  errors). The route used to collapse all of these into an empty-logs
+ *  response, which made "why am I seeing nothing?" debugging
+ *  impossible. */
+export type LogsFetchResult =
+  | { ok: true; logs: string; lastTimestamp: number }
+  | { ok: false; kind: "missing" }
+  | { ok: false; kind: "error"; message: string };
+
 export async function getContainerLogs(
   containerId: string,
   opts: { tail?: number; since?: number } = {},
-): Promise<{ logs: string; lastTimestamp: number }> {
+): Promise<LogsFetchResult> {
   const params = new URLSearchParams({
     stdout: "true",
     stderr: "true",
@@ -791,40 +801,59 @@ export async function getContainerLogs(
   });
   if (opts.tail !== undefined) params.set("tail", String(opts.tail));
   if (opts.since !== undefined) params.set("since", String(opts.since));
-  const res = await dockerFetch(`/v1.44/containers/${containerId}/logs?${params}`);
+
+  let res: Response;
+  try {
+    res = await dockerFetch(`/v1.44/containers/${containerId}/logs?${params}`);
+  } catch (e) {
+    return { ok: false, kind: "error", message: e instanceof Error ? e.message : String(e) };
+  }
+
+  if (res.status === 404) return { ok: false, kind: "missing" };
   if (!res.ok) {
     const body = await res.text();
-    throw new Error(`Container logs failed: ${res.status} ${body}`);
+    return { ok: false, kind: "error", message: `Container logs failed: ${res.status} ${body}` };
   }
 
-  // Docker returns multiplexed stream — strip 8-byte frame headers
-  const raw = new Uint8Array(await res.arrayBuffer());
-  const decoder = new TextDecoder();
-  let output = "";
-  let offset = 0;
-  while (offset + 8 <= raw.length) {
-    const size =
-      (raw[offset + 4] << 24) | (raw[offset + 5] << 16) | (raw[offset + 6] << 8) | raw[offset + 7];
-    offset += 8;
-    output += decoder.decode(raw.slice(offset, offset + size));
-    offset += size;
-  }
-
-  // Strip Docker timestamps from each line and track the latest one
-  let lastTimestamp = opts.since || 0;
-  const lines = output.split("\n");
-  const cleaned = lines.map((line) => {
-    // Docker timestamp format: 2024-01-01T00:00:00.000000000Z <log>
-    const match = line.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z)\s(.*)/);
-    if (match) {
-      const ts = Math.ceil(new Date(match[1]).getTime() / 1000);
-      if (ts > lastTimestamp) lastTimestamp = ts;
-      return match[2];
+  try {
+    // Docker returns multiplexed stream — strip 8-byte frame headers
+    const raw = new Uint8Array(await res.arrayBuffer());
+    const decoder = new TextDecoder();
+    let output = "";
+    let offset = 0;
+    while (offset + 8 <= raw.length) {
+      const size =
+        (raw[offset + 4] << 24) |
+        (raw[offset + 5] << 16) |
+        (raw[offset + 6] << 8) |
+        raw[offset + 7];
+      offset += 8;
+      output += decoder.decode(raw.slice(offset, offset + size));
+      offset += size;
     }
-    return line;
-  });
 
-  return { logs: cleaned.join("\n"), lastTimestamp };
+    // Strip Docker timestamps from each line and track the latest one
+    let lastTimestamp = opts.since || 0;
+    const lines = output.split("\n");
+    const cleaned = lines.map((line) => {
+      // Docker timestamp format: 2024-01-01T00:00:00.000000000Z <log>
+      const match = line.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z)\s(.*)/);
+      if (match) {
+        const ts = Math.ceil(new Date(match[1]).getTime() / 1000);
+        if (ts > lastTimestamp) lastTimestamp = ts;
+        return match[2];
+      }
+      return line;
+    });
+
+    return { ok: true, logs: cleaned.join("\n"), lastTimestamp };
+  } catch (e) {
+    return {
+      ok: false,
+      kind: "error",
+      message: `Container logs parse failed: ${e instanceof Error ? e.message : String(e)}`,
+    };
+  }
 }
 
 export async function inspectContainer(containerId: string): Promise<{ running: boolean }> {

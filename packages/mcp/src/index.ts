@@ -320,7 +320,8 @@ server.registerTool(
   "moor_logs",
   {
     title: "Get Container Logs",
-    description: "Get recent logs from a project's container.",
+    description:
+      "Get recent logs from a project's container. Annotates output with state: ok (container running), exited (container is stopped but Docker still has logs), no_container (project never started), or missing (container_id is set but Docker doesn't have it). Throws only on docker_error (Docker daemon 5xx / unreachable) so an operator can distinguish infrastructure failure from app silence — pre-#74 the tool returned empty logs for all of these.",
     inputSchema: z.object({
       project: z.string().describe("Project name or ID"),
       lines: z.number().optional().default(100).describe("Number of log lines to retrieve"),
@@ -329,11 +330,43 @@ server.registerTool(
   async ({ project, lines }) => {
     const p = await resolveProject(project);
     const res = await apiGet(`/api/projects/${p.id}/logs?tail=${lines}`);
-    if (!res.ok) throw new Error(`Failed: ${res.status}`);
-    const data = (await res.json()) as { logs: string };
-    return {
-      content: [{ type: "text", text: data.logs || "(no logs)" }],
-    };
+    // 502 = API surfaced a Docker daemon failure. Throw so the agent
+    // gets a tool error, not silent empty logs.
+    if (res.status === 502) {
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      throw new Error(`Docker error: ${data.error ?? "unknown"}`);
+    }
+    if (!res.ok) throw new Error(`Failed: ${res.status} ${await res.text()}`);
+    const data = (await res.json()) as { logs: string; state?: string };
+    switch (data.state) {
+      case "no_container":
+        return {
+          content: [{ type: "text", text: "(project hasn't been started yet — no container)" }],
+        };
+      case "missing":
+        return {
+          content: [
+            {
+              type: "text",
+              text: "(container_id was recorded but Docker doesn't have it; moor may need to recreate the project)",
+            },
+          ],
+        };
+      case "exited":
+        return {
+          content: [
+            {
+              type: "text",
+              text: `${data.logs || "(no logs captured)"}\n\n(container is exited; logs above are from before)`,
+            },
+          ],
+        };
+      default:
+        // "ok" or undefined (older API) — render raw.
+        return {
+          content: [{ type: "text", text: data.logs || "(no logs)" }],
+        };
+    }
   },
 );
 
