@@ -24,6 +24,29 @@ type ActiveRun = {
 
 const activeRuns = new Map<number, ActiveRun>();
 
+/** Test-only seam (#82). Seeds an entry in the otherwise-private activeRuns
+ *  map so interruptActiveExecRuns can be unit-tested without spinning up real
+ *  Docker. Production code uses startAsyncExec; this is not for general use.
+ *  Returns the AbortController so tests can assert it was aborted. */
+export function _seedActiveExecRunForTest(runId: number, execId: string): AbortController {
+  const abort = new AbortController();
+  activeRuns.set(runId, {
+    execId,
+    abort,
+    stdout: new TailBuffer(),
+    stderr: new TailBuffer(),
+    startedAtMs: Date.now(),
+  });
+  return abort;
+}
+
+/** Test-only seam (#82). True iff the run is still in the in-memory map.
+ *  interruptActiveExecRuns deletes its entries on finalize, so the absence
+ *  of a key after the call is the "we finalized it" assertion. */
+export function _hasActiveExecRunForTest(runId: number): boolean {
+  return activeRuns.has(runId);
+}
+
 export type RunState = "running" | "exited" | "stopped" | "timed_out" | "error";
 
 type ExecRunRow = {
@@ -271,6 +294,81 @@ export async function stopAsyncExec(runId: number): Promise<{
     "kill could not locate the process (no pidfile); container may need restart",
   );
   return finalizedResponse(runId, "kill could not locate the process; marked as error");
+}
+
+/** #82: shutdown-path interrupt. Symmetric to interruptActiveBuildRuns and
+ *  cron's interruptActiveRuns, but exec is async + needs a Docker round-trip
+ *  to actually kill the container-side process (`/exec/start` is a single
+ *  attach point — closing our HTTP connection does NOT cancel the exec).
+ *
+ *  Per-exec kill is bounded by PER_KILL_TIMEOUT_MS so one slow Docker call
+ *  can't burn the entire shutdown budget; Promise.allSettled means others
+ *  proceed in parallel. If a kill times out the row still gets finalized
+ *  honestly with the reason in stderr — orphan sweep on next boot is the
+ *  fallback.
+ *
+ *  Returns the run IDs we transitioned to 'stopped' (won the race against
+ *  natural completion / safety timer / operator stop). The WHERE state =
+ *  'running' guard in tryFinalize is the race protection; this function
+ *  just reports what it actually did.
+ *
+ *  killer is injectable so tests don't need real Docker. */
+export type ExecKiller = (execId: string) => Promise<{ sentTo: string | null; live: number }>;
+
+const PER_KILL_TIMEOUT_MS = 1000;
+
+export async function interruptActiveExecRuns(
+  reason: string,
+  killer: ExecKiller = killExec,
+): Promise<number[]> {
+  const entries = [...activeRuns.entries()];
+  if (entries.length === 0) return [];
+
+  const reasonBytes = new TextEncoder().encode(`\n${reason}\n`);
+
+  const results = await Promise.allSettled(
+    entries.map(async ([runId, active]) => {
+      // Abort first so the streaming reader returns via its abort branch
+      // (same ordering rationale as stopAsyncExec); the background task's
+      // own tryFinalize is then guarded by abort.signal.aborted and skips.
+      active.abort.abort();
+
+      // Append the reason to the live stderr tail BEFORE finalize so the
+      // persisted row's stderr column carries why-it-stopped along with
+      // whatever output the process produced.
+      active.stderr.appendBytes(reasonBytes);
+
+      if (active.execId) {
+        try {
+          await Promise.race([
+            killer(active.execId),
+            new Promise<never>((_, reject) =>
+              setTimeout(
+                () => reject(new Error(`kill timeout after ${PER_KILL_TIMEOUT_MS}ms`)),
+                PER_KILL_TIMEOUT_MS,
+              ),
+            ),
+          ]);
+        } catch (e) {
+          // Don't block the finalize on a slow / failed kill — orphan
+          // sweep will catch any genuinely-still-running process on next
+          // boot, and the row is honestly marked stopped either way.
+          console.warn(`[exec-async] kill on shutdown failed for run ${runId}:`, e);
+        }
+      }
+
+      const won = tryFinalize(runId, "stopped", null, null, null);
+      return won ? runId : null;
+    }),
+  );
+
+  const interrupted: number[] = [];
+  for (const r of results) {
+    if (r.status === "fulfilled" && r.value !== null) {
+      interrupted.push(r.value);
+    }
+  }
+  return interrupted;
 }
 
 /** Read a run's current state. For in-flight runs the in-memory tail buffers

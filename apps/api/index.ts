@@ -15,6 +15,7 @@ import { interruptActiveRuns, startCronScheduler, stopCronScheduler } from "./cr
 // Initialize DB (side-effect import runs migrations)
 import db from "./db";
 import { maybeAutoClearForBoot } from "./drain";
+import { interruptActiveExecRuns } from "./exec-async";
 import { hostTerminalHandlers, isHostTerminal, upgradeHostTerminal } from "./host-terminal";
 import { handleAuth } from "./routes/auth";
 import { handleCaddy } from "./routes/caddy";
@@ -237,9 +238,17 @@ const shutdown = async () => {
       "[moor shutting down; build/pull aborted]",
     );
     interruptActiveRuns();
+    // #82: async exec wasn't covered by #77 because exec-async kept active
+    // state private and needed a Docker kill round-trip per row. Each kill
+    // is bounded to 1s; allSettled means a slow daemon can't stall the
+    // whole shutdown. The 5s shutdown hard cap is still the outer guard.
+    const interruptedExecIds = await interruptActiveExecRuns("[moor shutting down; exec killed]");
     clearAllSessions();
     if (interruptedProjectIds.length > 0) {
       console.log(`[moor] interrupted ${interruptedProjectIds.length} in-flight build/pull`);
+    }
+    if (interruptedExecIds.length > 0) {
+      console.log(`[moor] killed ${interruptedExecIds.length} in-flight async exec`);
     }
 
     // Reconcile projects.status for each interrupted build so the
