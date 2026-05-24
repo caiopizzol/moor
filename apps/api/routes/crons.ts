@@ -1,5 +1,6 @@
 import { runCron } from "../cron";
 import db from "../db";
+import { liveRequireErrorResponse, requireLiveContainer } from "../status-reconciler";
 
 export async function handleCrons(req: Request, url: URL): Promise<Response | null> {
   // Project-scoped: /api/projects/:id/crons
@@ -48,11 +49,15 @@ export async function handleCrons(req: Request, url: URL): Promise<Response | nu
     const project = db
       .query("SELECT id, container_id, status FROM projects WHERE id = ?")
       .get(cron.project_id) as { id: number; container_id: string | null; status: string } | null;
-    if (!project || project.status !== "running" || !project.container_id) {
-      return Response.json({ error: "Container is not running" }, { status: 400 });
-    }
+    if (!project) return new Response("Project not found", { status: 404 });
 
-    runCron(cron, project.container_id);
+    // #73: fresh inspect, not cached project.status — a manual cron
+    // trigger is about to exec into the container.
+    const live = await requireLiveContainer(project);
+    const errorRes = liveRequireErrorResponse(live);
+    if (errorRes) return errorRes;
+
+    runCron(cron, project.container_id as string);
     return Response.json({ ok: true });
   }
 

@@ -7,7 +7,8 @@ process.env.MOOR_DB_PATH = ":memory:";
 import { beforeEach, describe, expect, test } from "bun:test";
 
 const { default: db } = await import("./db");
-const { parseContainerState, reconcileOnce } = await import("./status-reconciler");
+const { parseContainerState, reconcileOnce, requireLiveContainer, liveRequireErrorResponse } =
+  await import("./status-reconciler");
 
 import type { Inspector } from "./status-reconciler";
 
@@ -224,5 +225,113 @@ describe("#71 reconcileOnce — dual-field model, both directions", () => {
     expect(rows[0]).toMatchObject({ status: "running", live_status: "error" });
     expect(rows[1]).toMatchObject({ status: "stopped", live_status: "running" });
     expect(rows[2]).toMatchObject({ status: "error", live_status: "running" });
+  });
+});
+
+describe("#73 requireLiveContainer — action-path gate", () => {
+  beforeEach(() => {
+    db.query("DELETE FROM projects").run();
+  });
+
+  function mockInspect(map: Record<string, Awaited<ReturnType<Inspector>>>): Inspector {
+    return async (containerId: string) => {
+      const r = map[containerId];
+      if (!r) throw new Error(`mockInspect missing fixture for ${containerId}`);
+      return r;
+    };
+  }
+
+  test("container_id null → no_container (no Docker call)", async () => {
+    const p = db
+      .query("INSERT INTO projects (name, status) VALUES ('a', 'running') RETURNING id")
+      .get() as { id: number };
+    let inspectCalls = 0;
+    const result = await requireLiveContainer({ id: p.id, container_id: null }, async () => {
+      inspectCalls++;
+      throw new Error("should not be called");
+    });
+    expect(result).toEqual({ ok: false, reason: "no_container" });
+    expect(inspectCalls).toBe(0);
+  });
+
+  test("Docker says Running:true → ok, opportunistically writes live_*", async () => {
+    const p = db
+      .query(
+        "INSERT INTO projects (name, status, container_id) VALUES ('a', 'error', 'C') RETURNING id",
+      )
+      .get() as { id: number };
+    const result = await requireLiveContainer(
+      { id: p.id, container_id: "C" },
+      mockInspect({ C: { ok: true, state: { Running: true, ExitCode: 0 } } }),
+    );
+    expect(result).toEqual({ ok: true });
+    // Side effect: live_* updated from the fresh inspect.
+    const row = db
+      .query("SELECT live_status, live_exit_code FROM projects WHERE id = ?")
+      .get(p.id) as { live_status: string; live_exit_code: number | null };
+    expect(row.live_status).toBe("running");
+    expect(row.live_exit_code).toBeNull();
+  });
+
+  test("Docker says exited(1) → not_running with live_status='error'", async () => {
+    const p = db
+      .query(
+        "INSERT INTO projects (name, status, container_id) VALUES ('a', 'running', 'C') RETURNING id",
+      )
+      .get() as { id: number };
+    const result = await requireLiveContainer(
+      { id: p.id, container_id: "C" },
+      mockInspect({ C: { ok: true, state: { Running: false, ExitCode: 1 } } }),
+    );
+    expect(result).toEqual({ ok: false, reason: "not_running", live_status: "error" });
+  });
+
+  test("Docker 404 → missing", async () => {
+    const p = db
+      .query(
+        "INSERT INTO projects (name, status, container_id) VALUES ('a', 'running', 'C') RETURNING id",
+      )
+      .get() as { id: number };
+    const result = await requireLiveContainer(
+      { id: p.id, container_id: "C" },
+      mockInspect({ C: { ok: false, kind: "missing" } }),
+    );
+    expect(result).toEqual({ ok: false, reason: "missing" });
+  });
+
+  test("Docker unreachable → docker_error (distinct from not_running)", async () => {
+    const p = db
+      .query(
+        "INSERT INTO projects (name, status, container_id) VALUES ('a', 'running', 'C') RETURNING id",
+      )
+      .get() as { id: number };
+    const result = await requireLiveContainer(
+      { id: p.id, container_id: "C" },
+      mockInspect({ C: { ok: false, kind: "error", message: "ECONNREFUSED" } }),
+    );
+    expect(result).toEqual({ ok: false, reason: "docker_error", message: "ECONNREFUSED" });
+  });
+
+  test("liveRequireErrorResponse maps each variant to the right HTTP code", async () => {
+    expect(liveRequireErrorResponse({ ok: true })).toBeNull();
+    expect(
+      (liveRequireErrorResponse({ ok: false, reason: "no_container" }) as Response).status,
+    ).toBe(400);
+    expect((liveRequireErrorResponse({ ok: false, reason: "missing" }) as Response).status).toBe(
+      409,
+    );
+    expect(
+      (
+        liveRequireErrorResponse({
+          ok: false,
+          reason: "not_running",
+          live_status: "error",
+        }) as Response
+      ).status,
+    ).toBe(409);
+    expect(
+      (liveRequireErrorResponse({ ok: false, reason: "docker_error", message: "x" }) as Response)
+        .status,
+    ).toBe(503);
   });
 });

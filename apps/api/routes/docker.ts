@@ -15,6 +15,7 @@ import {
 } from "../docker";
 import { autoDetectPorts, getProjectPorts } from "../ports";
 import { redactCredentials } from "../redact";
+import { liveRequireErrorResponse, requireLiveContainer } from "../status-reconciler";
 import { getProjectVolumes } from "./volumes";
 
 type Project = {
@@ -317,11 +318,10 @@ async function handleExec(req: Request, project: Project): Promise<Response> {
   console.log(
     `[exec] project=${project.name} container=${project.container_id} status=${project.status}`,
   );
-  if (!project.container_id || project.status !== "running") {
-    console.log("[exec] rejected — container not running");
-    return new Response("Container is not running", { status: 400 });
-  }
 
+  // Validate cheap inputs first (no I/O). Live container check happens
+  // AFTER so an operator sending bad timeout_ms gets a useful 400
+  // rather than a 503 "Docker unreachable" they can't act on.
   const body = (await req.json()) as { command?: string; timeout_ms?: number };
   if (!body.command) {
     return new Response("Missing command", { status: 400 });
@@ -342,9 +342,20 @@ async function handleExec(req: Request, project: Project): Promise<Response> {
     timeout_ms = body.timeout_ms;
   }
 
+  // #73: fresh Docker inspect, not cached project.status — the
+  // recorded status field can lie about runtime truth (see #71).
+  const live = await requireLiveContainer(project);
+  const errorRes = liveRequireErrorResponse(live);
+  if (errorRes) {
+    console.log(`[exec] rejected — ${live.ok ? "" : live.reason}`);
+    return errorRes;
+  }
+
   console.log(`[exec] command: ${body.command}${timeout_ms ? ` timeout_ms=${timeout_ms}` : ""}`);
   try {
-    const result = await execInContainer(project.container_id, body.command, { timeout_ms });
+    const result = await execInContainer(project.container_id as string, body.command, {
+      timeout_ms,
+    });
     console.log(
       `[exec] exitCode=${result.exitCode} stdout=${result.stdout.length}chars stderr=${result.stderr.length}chars`,
     );

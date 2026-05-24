@@ -7,6 +7,7 @@ import {
   startAsyncExec,
   stopAsyncExec,
 } from "../exec-async";
+import { liveRequireErrorResponse, requireLiveContainer } from "../status-reconciler";
 
 type Project = { id: number; container_id: string | null; status: string };
 
@@ -19,10 +20,9 @@ export async function handleExec(req: Request, url: URL): Promise<Response | nul
       .query("SELECT id, container_id, status FROM projects WHERE id = ?")
       .get(projectId) as Project | null;
     if (!project) return new Response("Project not found", { status: 404 });
-    if (!project.container_id || project.status !== "running") {
-      return new Response("Container is not running", { status: 400 });
-    }
 
+    // Validate cheap inputs first (no I/O); fresh live check after so
+    // an operator with bad timeout_ms gets a useful 400, not a 503.
     const body = (await req.json()) as { command?: string; timeout_ms?: number };
     if (!body.command) return new Response("Missing command", { status: 400 });
 
@@ -41,12 +41,19 @@ export async function handleExec(req: Request, url: URL): Promise<Response | nul
       timeoutMs = body.timeout_ms;
     }
 
+    // #73: fresh inspect, not cached project.status — exec is about
+    // to talk to the container; stale cache can approve against a
+    // dead one.
+    const live = await requireLiveContainer(project);
+    const errorRes = liveRequireErrorResponse(live);
+    if (errorRes) return errorRes;
+
     console.log(
       `[exec-async] start project=${projectId} command="${body.command}" timeout_ms=${timeoutMs}`,
     );
     const { runId } = startAsyncExec({
       projectId,
-      containerId: project.container_id,
+      containerId: project.container_id as string,
       command: body.command,
       timeoutMs,
     });
