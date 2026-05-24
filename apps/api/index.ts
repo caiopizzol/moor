@@ -40,6 +40,12 @@ import {
 import { terminalWebSocket, upgradeTerminal } from "./terminal";
 import { clearAllSessions, startSessionCleanup } from "./terminal-sessions";
 import { sweepStaleInProgress } from "./update-audit";
+import {
+  defaultMarkerDir,
+  ingestAllMarkers,
+  startMarkerPoller,
+  stopMarkerPoller,
+} from "./update-marker";
 
 checkInitialPassword();
 checkPasswordReset();
@@ -50,11 +56,30 @@ ensureRoutesFile();
 // Mismatched version (failed upgrade) keeps the drain — TTL or operator
 // intervention required.
 maybeAutoClearForBoot();
+// #80 PR #2: ingest any respawner-result markers that landed during
+// downtime BEFORE the in_progress sweep runs. The order matters: a
+// valid success/rolled_back marker for a row >30min old must beat the
+// sweep, otherwise the sweep would mark it 'crashed' first and the
+// marker would then no-op (finalizeAudit's WHERE state='in_progress'
+// guard). The boot-order test in update-marker.test.ts codifies this.
+{
+  const dir = defaultMarkerDir();
+  if (dir !== "") {
+    const ingestResults = ingestAllMarkers(dir);
+    if (ingestResults.length > 0) {
+      console.log(
+        `[update-marker] boot ingest: ${ingestResults.length} marker(s); kinds: ${ingestResults
+          .map((r) => r.kind)
+          .join(",")}`,
+      );
+    }
+  }
+}
 // #80 PR #1: one-shot sweep at boot for any update_audit row left
 // 'in_progress' past the 30-min grace window — happens when a respawner
 // crashed before writing its marker, OR no respawner ever ran but a row
-// was somehow orphaned. Periodic re-sweep arrives with marker ingestion
-// in PR #2. Logs the IDs swept so an operator can dig in.
+// was somehow orphaned. Runs AFTER ingest above so a valid late marker
+// gets its chance first. Logs the IDs swept so an operator can dig in.
 {
   const sweptIds = sweepStaleInProgress();
   if (sweptIds.length > 0) {
@@ -201,6 +226,10 @@ setInterval(cleanExpiredSessions, 3600_000);
 startCleanupScheduler();
 startStatusReconciler();
 startBackupScheduler();
+// #80 PR #2: background poller for respawner-result markers. Fast
+// 5s ticks for the first 2 min after boot (catches markers landing
+// post-startup), then slow 30s thereafter.
+startMarkerPoller();
 
 // #77: async-tolerant shutdown coordinator. Order matters: stop the
 // schedulers and HTTP server first so no NEW work is scheduled or
@@ -232,6 +261,7 @@ const shutdown = async () => {
     // drain window).
     stopCleanupScheduler();
     stopBackupScheduler();
+    stopMarkerPoller();
     stopStatusReconciler();
     stopCronScheduler();
     server.stop();
