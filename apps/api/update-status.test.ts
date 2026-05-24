@@ -227,9 +227,16 @@ describe("#78 buildUpdateStatus integration with injected GhcrFetcher", () => {
 });
 
 describe("#78 readPackageVersion", () => {
-  test("returns a non-empty string (the API package version) or 'unknown' fallback", () => {
-    const v = readPackageVersion();
-    expect(typeof v).toBe("string");
-    expect(v.length).toBeGreaterThan(0);
+  test("matches the root package.json version (the one semantic-release bumps), not apps/api/package.json", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const rootPath = join(import.meta.dir, "..", "..", "package.json");
+    const apiPath = join(import.meta.dir, "package.json");
+    const rootVersion = (JSON.parse(readFileSync(rootPath, "utf-8")) as { version: string })
+      .version;
+    const apiVersion = (JSON.parse(readFileSync(apiPath, "utf-8")) as { version: string }).version;
+    // Guard: this test is only meaningful while the two diverge.
+    expect(rootVersion).not.toBe(apiVersion);
+    expect(readPackageVersion()).toBe(rootVersion);
   });
 });

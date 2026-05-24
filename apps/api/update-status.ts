@@ -119,11 +119,13 @@ export function buildUnsafeReasons(input: {
   return reasons;
 }
 
-/** Read the API's version from the package.json shipped in the image.
+/** Read moor's release version from the root package.json shipped in
+ *  the image. The root package.json (not apps/api/package.json) is the
+ *  one bumped by semantic-release and tracks the published image tag.
  *  Falls back to "unknown" on any failure — don't block on this. */
 export function readPackageVersion(): string {
   try {
-    const path = join(import.meta.dir, "package.json");
+    const path = join(import.meta.dir, "..", "..", "package.json");
     const json = JSON.parse(readFileSync(path, "utf-8")) as { version?: string };
     return json.version ?? "unknown";
   } catch {
