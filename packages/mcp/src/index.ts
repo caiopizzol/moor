@@ -782,6 +782,34 @@ server.registerTool(
   },
 );
 
+// #90: operator-initiated DB snapshot. Uses VACUUM INTO on the server so
+// hot WAL state is captured safely (cp would copy a corrupt-looking file).
+// Backups land next to moor.db; retention prunes to the N most recent.
+// Pair with MOOR_DB_BACKUP_INTERVAL_HOURS for scheduled snapshots — this
+// tool is for taking one right before a manual update.
+server.registerTool(
+  "moor_db_backup",
+  {
+    title: "DB Backup (snapshot)",
+    description:
+      "Take a SQLite snapshot of moor.db via VACUUM INTO. The file lands next to the main DB as moor.db.backup-<epoch-ms>. Retention is enforced after each snapshot (keeps the 7 most recent by default; older ones are pruned). After this returns, moor_update_status' db_backup.age_seconds will read close to 0. Use before a manual `docker compose pull moor && up -d` if you don't have MOOR_DB_BACKUP_INTERVAL_HOURS scheduled.",
+  },
+  async () => {
+    const res = await apiPost("/api/server/backup", {});
+    if (!res.ok) throw new Error(`db backup failed: ${res.status} ${await res.text()}`);
+    const r = (await res.json()) as { path: string; sizeBytes: number; durationMs: number };
+    const mb = (r.sizeBytes / (1024 * 1024)).toFixed(2);
+    return {
+      content: [
+        {
+          type: "text",
+          text: `Snapshot written: ${r.path}\nsize: ${r.sizeBytes}B (${mb} MB)\nduration: ${r.durationMs}ms`,
+        },
+      ],
+    };
+  },
+);
+
 server.registerTool(
   "moor_cleanup_plan",
   {
