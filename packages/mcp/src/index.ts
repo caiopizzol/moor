@@ -671,6 +671,117 @@ server.registerTool(
   },
 );
 
+// #79: drain mode. Operator-facing primitive that gates new work-against-
+// container actions (deploys, builds, async/sync execs, manual cron
+// triggers, terminal upgrades) so an upgrade can wait for in-flight work
+// to complete cleanly. Drain refuses NEW work; it never kills in-flight
+// work. The TTL is load-bearing — every refusal carries expires_at and
+// the row auto-clears at expiry so a forgotten drain doesn't lock moor
+// forever.
+
+type DrainStateResponse = {
+  state: {
+    enabled: boolean;
+    reason: string | null;
+    started_at: string | null;
+    expires_at: string | null;
+    clear_after_version: string | null;
+  };
+};
+
+type DrainStatusResponse = DrainStateResponse & {
+  active_work: {
+    builds_in_flight: number;
+    execs_in_flight: number;
+    crons_in_flight: number;
+    terminals_open: number;
+  };
+};
+
+function renderDrainState(s: DrainStateResponse["state"]): string[] {
+  if (!s.enabled) return ["drain: OFF"];
+  const lines = [`drain: ON (reason: ${s.reason ?? "(none)"})`];
+  if (s.started_at) lines.push(`  started_at:  ${s.started_at}`);
+  if (s.expires_at) lines.push(`  expires_at:  ${s.expires_at} (auto-clear)`);
+  if (s.clear_after_version) {
+    lines.push(
+      `  clear_after_version: ${s.clear_after_version} (auto-clear on matching boot version)`,
+    );
+  }
+  return lines;
+}
+
+server.registerTool(
+  "moor_drain_status",
+  {
+    title: "Drain Status",
+    description:
+      "Read-only: current drain state (enabled, reason, expires_at, clear_after_version) plus counts of active work the operator should wait on before an update. active_work uses the same counter as moor_update_status so the two never disagree.",
+  },
+  async () => {
+    const res = await apiGet("/api/server/drain");
+    if (!res.ok) throw new Error(`drain status failed: ${res.status} ${await res.text()}`);
+    const s = (await res.json()) as DrainStatusResponse;
+    const lines = renderDrainState(s.state);
+    lines.push(
+      `active: builds=${s.active_work.builds_in_flight} execs=${s.active_work.execs_in_flight} crons=${s.active_work.crons_in_flight} terminals=${s.active_work.terminals_open}`,
+    );
+    return { content: [{ type: "text", text: lines.join("\n") }] };
+  },
+);
+
+server.registerTool(
+  "moor_drain_enable",
+  {
+    title: "Enable Drain Mode",
+    description:
+      "Refuse new builds, deploys, execs, manual cron runs, and terminal upgrades with a 503 carrying { reason, expires_at, hint }. Existing in-flight work runs to completion — drain does NOT kill anything. Scheduled cron ticks during drain write a synthetic 'skipped due to drain' run row instead of executing. Read-only routes (status, logs, runs) keep working. Default TTL is 30 minutes; set ttl_minutes to override. clear_after_version is the updater's hook — when set, the drain auto-clears on boot if the running moor version matches.",
+    inputSchema: z.object({
+      reason: z
+        .string()
+        .optional()
+        .describe(
+          "Freeform reason shown in every refusal response (e.g. 'preparing for 0.34 upgrade').",
+        ),
+      ttl_minutes: z
+        .number()
+        .optional()
+        .describe("Auto-clear after this many minutes. Default 30. Clamped to [0.05 min, 7 days]."),
+      clear_after_version: z
+        .string()
+        .optional()
+        .describe(
+          "Optional: on next boot, if the running moor version equals this value, auto-clear the drain. Typically set by the updater path; safe for manual use too.",
+        ),
+    }),
+  },
+  async ({ reason, ttl_minutes, clear_after_version }) => {
+    const res = await apiPost("/api/server/drain/enable", {
+      reason,
+      ttl_minutes,
+      clear_after_version,
+    });
+    if (!res.ok) throw new Error(`drain enable failed: ${res.status} ${await res.text()}`);
+    const s = (await res.json()) as DrainStateResponse;
+    return { content: [{ type: "text", text: renderDrainState(s.state).join("\n") }] };
+  },
+);
+
+server.registerTool(
+  "moor_drain_disable",
+  {
+    title: "Disable Drain Mode",
+    description:
+      "Explicit operator action to clear drain immediately. Does not kill or restart anything — just removes the gate so new builds/deploys/execs/cron triggers/terminal upgrades succeed again.",
+  },
+  async () => {
+    const res = await apiPost("/api/server/drain/disable", {});
+    if (!res.ok) throw new Error(`drain disable failed: ${res.status} ${await res.text()}`);
+    const s = (await res.json()) as DrainStateResponse;
+    return { content: [{ type: "text", text: renderDrainState(s.state).join("\n") }] };
+  },
+);
+
 server.registerTool(
   "moor_cleanup_plan",
   {

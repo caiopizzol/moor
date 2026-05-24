@@ -14,6 +14,7 @@ import { startCleanupScheduler, stopCleanupScheduler } from "./cleanup-scheduler
 import { interruptActiveRuns, startCronScheduler, stopCronScheduler } from "./cron";
 // Initialize DB (side-effect import runs migrations)
 import db from "./db";
+import { maybeAutoClearForBoot } from "./drain";
 import { hostTerminalHandlers, isHostTerminal, upgradeHostTerminal } from "./host-terminal";
 import { handleAuth } from "./routes/auth";
 import { handleCaddy } from "./routes/caddy";
@@ -40,6 +41,12 @@ import { clearAllSessions, startSessionCleanup } from "./terminal-sessions";
 checkInitialPassword();
 checkPasswordReset();
 ensureRoutesFile();
+// #79: if drain was enabled with clear_after_version for an upgrade, and the
+// upgrade actually landed (running version === clear_after_version), the row
+// auto-clears here so post-upgrade boot starts in a normal serving state.
+// Mismatched version (failed upgrade) keeps the drain — TTL or operator
+// intervention required.
+maybeAutoClearForBoot();
 
 const PORT = Number(process.env.PORT || 3000);
 const clientDist = join(import.meta.dir, "..", "web", "dist");

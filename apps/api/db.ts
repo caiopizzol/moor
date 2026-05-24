@@ -147,6 +147,21 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_cleanup_audit_executed_at
     ON cleanup_audit(executed_at);
+
+  -- #79: singleton drain-mode flag. CHECK(id=1) enforces one row.
+  -- expires_at is the TTL auto-clear timestamp; drain.ts treats a past
+  -- expires_at as not-drained and lazily clears the row on read.
+  -- clear_after_version is the optional updater hook: if set and the
+  -- running moor version matches it on boot, the row clears (the
+  -- upgrade actually happened, so drain has served its purpose).
+  CREATE TABLE IF NOT EXISTS drain_state (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    enabled INTEGER NOT NULL DEFAULT 0,
+    reason TEXT,
+    started_at TEXT,
+    expires_at TEXT,
+    clear_after_version TEXT
+  );
 `);
 
 // #34 Phase B: orphan sweep. On moor restart, the in-memory map of active runs
