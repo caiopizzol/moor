@@ -189,12 +189,31 @@ export async function stopCronRun(runId: number): Promise<boolean> {
   return true;
 }
 
+let cronInterval: ReturnType<typeof setInterval> | null = null;
+
 export function startCronScheduler() {
   console.log("[cron] Scheduler started — checking every 60s");
-  setInterval(tick, 60_000);
+  cronInterval = setInterval(tick, 60_000);
 }
 
-/** Mark all active runs as interrupted (called during graceful shutdown) */
+/** #77: stop the periodic tick. Called from the shutdown coordinator
+ *  BEFORE interruptActiveRuns so no new cron run can start during the
+ *  brief drain window. The currently-executing tick (if any) finishes
+ *  naturally — tickRunning guard prevents overlap, and the in-flight
+ *  runs themselves get interrupted by interruptActiveRuns below. */
+export function stopCronScheduler() {
+  if (cronInterval !== null) {
+    clearInterval(cronInterval);
+    cronInterval = null;
+  }
+}
+
+/** #77: mark all active cron runs as interrupted during graceful
+ *  shutdown. Stderr message matches the convention used by
+ *  interruptActiveBuildRuns ("[moor shutting down; ...]") so a post-
+ *  restart inspector sees consistent terminal rows regardless of run
+ *  type. WHERE finished_at IS NULL preserves any row that's already
+ *  raced to its own terminal state. */
 export function interruptActiveRuns() {
   const now = Date.now();
   for (const [runId, active] of activeRuns) {
@@ -202,7 +221,7 @@ export function interruptActiveRuns() {
     db.query(
       `UPDATE runs SET finished_at = ?, finished_at_ms = ?, exit_code = -1, stderr = ?
        WHERE id = ? AND finished_at IS NULL`,
-    ).run(new Date(now).toISOString(), now, "Server shutting down", runId);
+    ).run(new Date(now).toISOString(), now, "[moor shutting down; cron run aborted]", runId);
   }
   activeRuns.clear();
 }

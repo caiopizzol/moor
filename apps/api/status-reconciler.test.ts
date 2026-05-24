@@ -7,8 +7,13 @@ process.env.MOOR_DB_PATH = ":memory:";
 import { beforeEach, describe, expect, test } from "bun:test";
 
 const { default: db } = await import("./db");
-const { parseContainerState, reconcileOnce, requireLiveContainer, liveRequireErrorResponse } =
-  await import("./status-reconciler");
+const {
+  parseContainerState,
+  reconcileOnce,
+  requireLiveContainer,
+  liveRequireErrorResponse,
+  reconcileProjectStatusAfterInterrupt,
+} = await import("./status-reconciler");
 
 import type { Inspector } from "./status-reconciler";
 
@@ -333,5 +338,96 @@ describe("#73 requireLiveContainer — action-path gate", () => {
       (liveRequireErrorResponse({ ok: false, reason: "docker_error", message: "x" }) as Response)
         .status,
     ).toBe(503);
+  });
+});
+
+describe("#77 reconcileProjectStatusAfterInterrupt (extracted helper)", () => {
+  beforeEach(() => {
+    db.query("DELETE FROM projects").run();
+  });
+
+  function mockInspect(map: Record<string, Awaited<ReturnType<Inspector>>>): Inspector {
+    return async (containerId: string) => {
+      const r = map[containerId];
+      if (!r) throw new Error(`mockInspect missing fixture for ${containerId}`);
+      return r;
+    };
+  }
+
+  test("null container_id → status='stopped' (no Docker call)", async () => {
+    const p = db
+      .query("INSERT INTO projects (name, status) VALUES ('a', 'building') RETURNING id")
+      .get() as { id: number };
+    const result = await reconcileProjectStatusAfterInterrupt(p.id, null, async () => {
+      throw new Error("should not be called");
+    });
+    expect(result).toBe("stopped");
+    const row = db.query("SELECT status FROM projects WHERE id = ?").get(p.id) as {
+      status: string;
+    };
+    expect(row.status).toBe("stopped");
+  });
+
+  test("container is running → status='running' (existing container survived the interrupt)", async () => {
+    const p = db
+      .query(
+        "INSERT INTO projects (name, status, container_id) VALUES ('a', 'building', 'C') RETURNING id",
+      )
+      .get() as { id: number };
+    const result = await reconcileProjectStatusAfterInterrupt(
+      p.id,
+      "C",
+      mockInspect({ C: { ok: true, state: { Running: true, ExitCode: 0 } } }),
+    );
+    expect(result).toBe("running");
+    const row = db.query("SELECT status FROM projects WHERE id = ?").get(p.id) as {
+      status: string;
+    };
+    expect(row.status).toBe("running");
+  });
+
+  test("container exists but stopped → status='stopped'", async () => {
+    const p = db
+      .query(
+        "INSERT INTO projects (name, status, container_id) VALUES ('a', 'building', 'C') RETURNING id",
+      )
+      .get() as { id: number };
+    const result = await reconcileProjectStatusAfterInterrupt(
+      p.id,
+      "C",
+      mockInspect({ C: { ok: true, state: { Running: false, ExitCode: 0 } } }),
+    );
+    expect(result).toBe("stopped");
+  });
+
+  test("Docker 404 or unreachable → status='stopped' (don't claim running without proof)", async () => {
+    const p = db
+      .query(
+        "INSERT INTO projects (name, status, container_id) VALUES ('a', 'building', 'C') RETURNING id",
+      )
+      .get() as { id: number };
+    const result = await reconcileProjectStatusAfterInterrupt(
+      p.id,
+      "C",
+      mockInspect({ C: { ok: false, kind: "error", message: "ECONNREFUSED" } }),
+    );
+    expect(result).toBe("stopped");
+  });
+
+  test("deliberately does NOT return 'error' — that would conflate interrupted-deploy with broken-project", async () => {
+    const p = db
+      .query(
+        "INSERT INTO projects (name, status, container_id) VALUES ('a', 'building', 'C') RETURNING id",
+      )
+      .get() as { id: number };
+    // Even with a "missing" container, status reflects the actual state
+    // (stopped — no container to talk to), not 'error'.
+    const result = await reconcileProjectStatusAfterInterrupt(
+      p.id,
+      "C",
+      mockInspect({ C: { ok: false, kind: "missing" } }),
+    );
+    expect(result).toBe("stopped");
+    expect(result).not.toBe("error");
   });
 });
