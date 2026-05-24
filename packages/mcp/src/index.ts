@@ -599,6 +599,79 @@ server.registerTool(
 );
 
 server.registerTool(
+  "moor_update_status",
+  {
+    title: "Update status / preflight",
+    description:
+      "Report moor's current version + image digest, the latest available digest on GHCR, active in-flight work counts, DB backup recency, and a safe_to_update boolean. update_available is null (not false) when either the local repo_digest or the registry digest is unknown — never lies by comparing across identifier spaces. unsafe_reasons is a human-readable array; render inline rather than re-deriving from booleans. Read-only diagnostic — does NOT perform any update.",
+  },
+  async () => {
+    const res = await apiGet("/api/server/update-status");
+    if (!res.ok) throw new Error(`Failed: ${res.status} ${await res.text()}`);
+    const s = (await res.json()) as {
+      current: {
+        version: string;
+        image_id: string | null;
+        repo_digest: string | null;
+        started_at: string;
+      };
+      available: {
+        latest_tag: string;
+        latest_digest: string | null;
+        update_available: boolean | null;
+        registry_error: string | null;
+      };
+      active_work: {
+        builds_in_flight: number;
+        execs_in_flight: number;
+        crons_in_flight: number;
+        terminals_open: number;
+      };
+      db_backup: {
+        last_backup_at: string | null;
+        age_seconds: number | null;
+        location: string | null;
+      };
+      safe_to_update: boolean;
+      unsafe_reasons: string[];
+      recommended_command: string;
+    };
+    const lines: string[] = [];
+    lines.push(`moor ${s.current.version} (image_id: ${s.current.image_id ?? "unknown"})`);
+    lines.push(
+      `repo_digest: ${s.current.repo_digest ?? "(none — locally built or stale inspect)"}`,
+    );
+
+    if (s.available.update_available === true) {
+      lines.push(`update AVAILABLE → latest: ${s.available.latest_digest}`);
+    } else if (s.available.update_available === false) {
+      lines.push(`up to date (latest: ${s.available.latest_digest})`);
+    } else {
+      // null — explain WHICH side is unknown.
+      const why = s.available.registry_error
+        ? `registry unreachable: ${s.available.registry_error}`
+        : s.current.repo_digest === null
+          ? "no local repo_digest (built locally?)"
+          : "comparison unavailable";
+      lines.push(`update availability unknown — ${why}`);
+    }
+
+    lines.push(
+      `active: builds=${s.active_work.builds_in_flight} execs=${s.active_work.execs_in_flight} crons=${s.active_work.crons_in_flight} terminals=${s.active_work.terminals_open}`,
+    );
+
+    if (s.safe_to_update) {
+      lines.push("safe_to_update: YES");
+    } else {
+      lines.push("safe_to_update: NO");
+      for (const r of s.unsafe_reasons) lines.push(`  - ${r}`);
+    }
+    lines.push(`recommended: ${s.recommended_command}`);
+    return { content: [{ type: "text", text: lines.join("\n") }] };
+  },
+);
+
+server.registerTool(
   "moor_cleanup_plan",
   {
     title: "Cleanup Plan (dry-run)",
