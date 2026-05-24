@@ -8,10 +8,12 @@ import {
   validateBearerToken,
   validateSession,
 } from "./auth";
-import { interruptActiveBuildRuns } from "./build-runs";
+import { activeBuildRuns, interruptActiveBuildRuns } from "./build-runs";
 import { ensureRoutesFile } from "./caddy";
 import { startCleanupScheduler, stopCleanupScheduler } from "./cleanup-scheduler";
-import { interruptActiveRuns, startCronScheduler } from "./cron";
+import { interruptActiveRuns, startCronScheduler, stopCronScheduler } from "./cron";
+// Initialize DB (side-effect import runs migrations)
+import db from "./db";
 import { hostTerminalHandlers, isHostTerminal, upgradeHostTerminal } from "./host-terminal";
 import { handleAuth } from "./routes/auth";
 import { handleCaddy } from "./routes/caddy";
@@ -27,12 +29,13 @@ import { handleRuns } from "./routes/runs";
 import { handleServer } from "./routes/server";
 import { handleTerminalSessions } from "./routes/terminal-sessions";
 import { handleVolumes } from "./routes/volumes";
-import { startStatusReconciler, stopStatusReconciler } from "./status-reconciler";
+import {
+  reconcileProjectStatusAfterInterrupt,
+  startStatusReconciler,
+  stopStatusReconciler,
+} from "./status-reconciler";
 import { terminalWebSocket, upgradeTerminal } from "./terminal";
 import { clearAllSessions, startSessionCleanup } from "./terminal-sessions";
-
-// Initialize DB (side-effect import runs migrations)
-import "./db";
 
 checkInitialPassword();
 checkPasswordReset();
@@ -199,20 +202,53 @@ const shutdown = async () => {
   hardExit.unref?.();
 
   try {
+    // Stop all schedulers first so nothing kicks off NEW work while
+    // we're interrupting in-flight. Cron is included now (previously
+    // missed — left a race where a tick could land work during the
+    // drain window).
     stopCleanupScheduler();
     stopStatusReconciler();
+    stopCronScheduler();
     server.stop();
 
-    const buildsAborted = interruptActiveBuildRuns("[moor shutting down; build/pull aborted]");
-    interruptActiveRuns();
-    clearAllSessions();
-    if (buildsAborted > 0) {
-      console.log(`[moor] interrupted ${buildsAborted} in-flight build/pull`);
+    // Snapshot project IDs + container IDs BEFORE interrupting, because
+    // interruptActiveBuildRuns removes entries from activeBuildRuns
+    // (via each finalize). We need the container_id to reconcile each
+    // project's status afterward.
+    const interruptedTargets: Array<{ projectId: number; containerId: string | null }> = [];
+    for (const run of activeBuildRuns.values()) {
+      const project = db
+        .query("SELECT container_id FROM projects WHERE id = ?")
+        .get(run.projectId) as { container_id: string | null } | null;
+      interruptedTargets.push({
+        projectId: run.projectId,
+        containerId: project?.container_id ?? null,
+      });
     }
 
-    // One brief tick so the fetch aborts settle before exit. The kernel
-    // closes sockets on exit anyway, but giving microtasks a moment
-    // keeps the ordering deterministic for the daemon-side teardown.
+    const interruptedProjectIds = interruptActiveBuildRuns(
+      "[moor shutting down; build/pull aborted]",
+    );
+    interruptActiveRuns();
+    clearAllSessions();
+    if (interruptedProjectIds.length > 0) {
+      console.log(`[moor] interrupted ${interruptedProjectIds.length} in-flight build/pull`);
+    }
+
+    // Reconcile projects.status for each interrupted build so the
+    // recorded status doesn't stay 'building' / 'pulling' across
+    // restart. Each call does a fresh Docker inspect (short timeout)
+    // and updates the row. Bounded by the 5s shutdown hard cap.
+    const reconciledIds = new Set(interruptedProjectIds);
+    await Promise.allSettled(
+      interruptedTargets
+        .filter((t) => reconciledIds.has(t.projectId))
+        .map((t) => reconcileProjectStatusAfterInterrupt(t.projectId, t.containerId)),
+    );
+
+    // Brief tick so the fetch aborts settle before exit. The kernel
+    // closes sockets on exit anyway, but the explicit yield keeps the
+    // daemon-side teardown ordering deterministic.
     await new Promise((r) => setTimeout(r, 250));
   } finally {
     clearTimeout(hardExit);

@@ -377,15 +377,18 @@ describe("#77 BuildRun.interrupt + interruptActiveBuildRuns", () => {
     expect(run.interrupt("[moor shutting down]")).toBe("already_finished");
   });
 
-  test("interruptActiveBuildRuns finalizes every active run and returns the count actually interrupted", () => {
+  test("interruptActiveBuildRuns finalizes every active run and returns project IDs for interrupted ones", () => {
     const a = new BuildRun(projectId);
     const b = new BuildRun(projectId);
     const c = new BuildRun(projectId);
     // c is past streaming — should NOT be counted as interrupted.
     c.markStreamingDone();
 
-    const count = interruptActiveBuildRuns("[moor shutting down; build/pull aborted]");
-    expect(count).toBe(2);
+    const interrupted = interruptActiveBuildRuns("[moor shutting down; build/pull aborted]");
+    // Two runs interrupted (a, b); both belong to the same project so the
+    // returned array has the project id twice. Callers can dedupe via Set.
+    expect(interrupted).toHaveLength(2);
+    expect(interrupted.every((id) => id === projectId)).toBe(true);
 
     const rowA = db.query("SELECT exit_code, stderr FROM runs WHERE id = ?").get(a.id) as {
       exit_code: number;
@@ -404,13 +407,30 @@ describe("#77 BuildRun.interrupt + interruptActiveBuildRuns", () => {
 
   test("calling interruptActiveBuildRuns twice is a no-op for already-finalized rows", () => {
     const run = new BuildRun(projectId);
-    expect(interruptActiveBuildRuns("[shutdown]")).toBe(1);
-    expect(interruptActiveBuildRuns("[shutdown again]")).toBe(0);
+    expect(interruptActiveBuildRuns("[shutdown]")).toHaveLength(1);
+    expect(interruptActiveBuildRuns("[shutdown again]")).toHaveLength(0);
     // First message wins; second call doesn't re-write.
     const row = db.query("SELECT stderr FROM runs WHERE id = ?").get(run.id) as {
       stderr: string;
     };
     expect(row.stderr).toContain("[shutdown]");
     expect(row.stderr).not.toContain("[shutdown again]");
+  });
+
+  test("interruptActiveBuildRuns returns project IDs so the shutdown coordinator can reconcile status", () => {
+    // The shutdown coordinator needs to know which projects had their
+    // builds interrupted so it can reset projects.status from the
+    // actual container state. Otherwise status stays 'building' /
+    // 'pulling' across restart until the next 30s reconciler tick.
+    const p2 = makeProject("second");
+    const a = new BuildRun(projectId);
+    const b = new BuildRun(p2);
+
+    const interruptedIds = interruptActiveBuildRuns("[shutdown]");
+    expect(interruptedIds.sort()).toEqual([projectId, p2].sort());
+
+    // BuildRun.projectId is the source of truth — verify it's accessible.
+    expect(a.projectId).toBe(projectId);
+    expect(b.projectId).toBe(p2);
   });
 });

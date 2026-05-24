@@ -9,13 +9,16 @@ import {
   ExecTimeoutError,
   execInContainer,
   getContainerLogs,
-  inspectContainer,
   pullImageStreaming,
   stopContainer,
 } from "../docker";
 import { autoDetectPorts, getProjectPorts } from "../ports";
 import { redactCredentials } from "../redact";
-import { liveRequireErrorResponse, requireLiveContainer } from "../status-reconciler";
+import {
+  liveRequireErrorResponse,
+  reconcileProjectStatusAfterInterrupt,
+  requireLiveContainer,
+} from "../status-reconciler";
 import { getProjectVolumes } from "./volumes";
 
 type Project = {
@@ -45,31 +48,9 @@ function validateGithubUrl(url: string): string | null {
   return null;
 }
 
-/** #68 polish: after a cancelled build/pull, reconcile the project's
- *  status field with the actual container state. The cancel only
- *  aborts the build/pull HTTP stream — any previously-running
- *  container is untouched. Hard-coding status='error' lied about that.
- *
- *  Mapping:
- *  - no container_id → "stopped" (no image yet, or never started)
- *  - container exists and running → "running" (the old container is fine)
- *  - container exists but stopped, OR inspect fails / 404 → "stopped"
- *
- *  We deliberately don't return "error" here. The cancelled run row
- *  carries exit_code=130 and "[cancelled by user]" — that's the
- *  honest signal that the build was cancelled. The project itself
- *  isn't in an error state. */
-async function reconcileStatusAfterCancel(
-  containerId: string | null,
-): Promise<"running" | "stopped"> {
-  if (!containerId) return "stopped";
-  try {
-    const { running } = await inspectContainer(containerId);
-    return running ? "running" : "stopped";
-  } catch {
-    return "stopped";
-  }
-}
+// #77: reconcileStatusAfterCancel moved to status-reconciler.ts as
+// reconcileProjectStatusAfterInterrupt so the shutdown coordinator can
+// reuse the same logic. Route callsites below import it from there.
 
 export async function handleDocker(req: Request, url: URL): Promise<Response | null> {
   const match = url.pathname.match(/^\/api\/projects\/(\d+)\/(build|start|stop|run|logs|exec)$/);
@@ -219,8 +200,7 @@ async function handleRun(req: Request, project: Project): Promise<Response> {
         // didn't touch the previously-running container, so leaving
         // status='error' would lie about the project state.
         if (run.abort.signal.aborted) {
-          const reconciled = await reconcileStatusAfterCancel(project.container_id);
-          db.query("UPDATE projects SET status = ? WHERE id = ?").run(reconciled, project.id);
+          await reconcileProjectStatusAfterInterrupt(project.id, project.container_id);
           send("error", "cancelled by user");
           safeClose();
           return;
@@ -480,8 +460,7 @@ async function handleBuild(project: Project): Promise<Response> {
     // don't overwrite with a generic failure. Reconcile status from the
     // actual container state — the cancel didn't touch a running container.
     if (run.abort.signal.aborted) {
-      const reconciled = await reconcileStatusAfterCancel(project.container_id);
-      db.query("UPDATE projects SET status = ? WHERE id = ?").run(reconciled, project.id);
+      await reconcileProjectStatusAfterInterrupt(project.id, project.container_id);
       return new Response("cancelled by user", { status: 499 });
     }
     db.query("UPDATE projects SET status = 'error' WHERE id = ?").run(project.id);

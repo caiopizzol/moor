@@ -36,7 +36,7 @@ export class BuildRun {
   private cancellable = true;
   private readonly startedAtMs: number;
 
-  constructor(projectId: number) {
+  constructor(public readonly projectId: number) {
     this.startedAtMs = Date.now();
     const row = db
       .query(
@@ -160,18 +160,24 @@ export class BuildRun {
 }
 
 /** #77: interrupt every in-flight build/pull during shutdown. Returns
- *  the count actually interrupted (some may already be finalized or past
- *  the cancellable window). The reason string is written to each row's
- *  stderr — typical use is "[moor shutting down; build/pull aborted]"
- *  so a post-restart inspector sees a truthful terminal state instead
- *  of the orphan-sweep's generic "Moor restarted; terminal state
+ *  the project IDs whose builds were actually interrupted (some may
+ *  already be finalized or past the cancellable streaming window — those
+ *  aren't included). Callers use this list to reconcile
+ *  `projects.status` from the actual container state, since each
+ *  interrupted build was probably driving status='building' /
+ *  'pulling'. The reason string is written to each row's stderr —
+ *  typical use is "[moor shutting down; build/pull aborted]" so a
+ *  post-restart inspector sees a truthful terminal state instead of
+ *  the orphan-sweep's generic "Moor restarted; terminal state
  *  unknown". */
-export function interruptActiveBuildRuns(reason: string): number {
-  let count = 0;
+export function interruptActiveBuildRuns(reason: string): number[] {
+  const interruptedProjectIds: number[] = [];
   for (const run of activeBuildRuns.values()) {
-    if (run.interrupt(reason) === "cancelled") count++;
+    if (run.interrupt(reason) === "cancelled") {
+      interruptedProjectIds.push(run.projectId);
+    }
   }
-  return count;
+  return interruptedProjectIds;
 }
 
 /** Active in-flight BuildRun handles by run id. Populated in the

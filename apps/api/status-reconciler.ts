@@ -226,3 +226,32 @@ export function liveRequireErrorResponse(result: LiveRequireResult): Response | 
       );
   }
 }
+
+/** #77: after work that was driving a project's recorded status to
+ *  'building' / 'pulling' is interrupted (cancel, shutdown, crash),
+ *  reset projects.status to the actual container state. Same logic the
+ *  cancel path used to call locally — extracted so shutdown can reuse it.
+ *  - no container_id → 'stopped' (no image yet or never started)
+ *  - container exists and running → 'running'
+ *  - container exists but stopped, OR inspect fails / 404 → 'stopped'
+ *
+ *  Deliberately doesn't return 'error' — that would conflate "build was
+ *  interrupted" with "project is broken." The interrupted run row
+ *  itself carries the failed/cancelled signal (exit_code=130 + stderr
+ *  reason). Project status reflects whether the container is actually
+ *  up, not whether the latest deploy attempt completed.
+ *
+ *  Inspector is injectable for tests; production uses realInspect. */
+export async function reconcileProjectStatusAfterInterrupt(
+  projectId: number,
+  containerId: string | null,
+  inspect: Inspector = realInspect,
+): Promise<"running" | "stopped"> {
+  let next: "running" | "stopped" = "stopped";
+  if (containerId) {
+    const result = await inspect(containerId);
+    if (result.ok && result.state.Running) next = "running";
+  }
+  db.query("UPDATE projects SET status = ? WHERE id = ?").run(next, projectId);
+  return next;
+}
