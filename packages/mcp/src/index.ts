@@ -1752,6 +1752,32 @@ server.registerTool(
       throw new Error("Cannot set both github_url and docker_image");
     }
 
+    // #79: drain-mode preflight. moor_deploy is a composition: by the
+    // time the run step (Step 3) hits the drain 503 from /api/projects/
+    // :id/run, the create/update/volume/env side effects have already
+    // landed. Check drain server-side BEFORE any writes so a drained
+    // deploy fails cleanly without leaving partial state.
+    //
+    // Skipped when run: false because the no-run mode is metadata-only —
+    // no container work, so drain doesn't apply.
+    if (input.run !== false) {
+      const drainRes = await apiGet("/api/server/drain");
+      if (drainRes.ok) {
+        const { state } = (await drainRes.json()) as {
+          state: { enabled: boolean; reason: string | null; expires_at: string | null };
+        };
+        if (state.enabled) {
+          throw new Error(
+            `[drain] moor is draining (reason: ${state.reason ?? "(none)"}; expires_at: ${state.expires_at}). Refusing deploy before any project create/update side effects. Use moor_drain_disable to re-enable, or retry after expiry. Pass run: false if you only need metadata changes.`,
+          );
+        }
+      }
+      // If the drain endpoint is unreachable (older moor or transient
+      // failure), don't block the deploy — the per-route gate inside
+      // /api/projects/:id/run will still catch it before container work
+      // starts. Preflight is an optimization, not the guarantee.
+    }
+
     // Resolve existence and check domain conflicts from a single project list.
     const listRes = await apiGet("/api/projects");
     if (!listRes.ok) throw new Error(`Failed to list projects: ${listRes.status}`);

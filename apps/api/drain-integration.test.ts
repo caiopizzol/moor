@@ -15,6 +15,7 @@ const { handleDocker } = await import("./routes/docker");
 const { handleExec: handleExecRoute } = await import("./routes/exec");
 const { handleCrons } = await import("./routes/crons");
 const { handleServer } = await import("./routes/server");
+const { upgradeTerminal } = await import("./terminal");
 
 async function call(
   handler: (req: Request, url: URL) => Promise<Response | null>,
@@ -134,6 +135,28 @@ describe("#79 drain gates on action routes", () => {
     enableDrain({ reason: "upgrading", ttl_minutes: 30 });
     const res = await call(handleDocker, "GET", `/api/projects/${p.id}/logs`);
     expect(res.status).not.toBe(503);
+  });
+
+  test("upgradeTerminal returns 503 when drained, WITHOUT calling server.upgrade", async () => {
+    const p = insertProject("p");
+    enableDrain({ reason: "upgrading", ttl_minutes: 30 });
+    let upgradeCalled = false;
+    const fakeServer = {
+      upgrade: () => {
+        upgradeCalled = true;
+        return true;
+      },
+      // Other Bun.serve members aren't touched by the drain path.
+    } as unknown as ReturnType<typeof Bun.serve>;
+    const req = new Request(`http://localhost/api/projects/${p.id}/terminal`);
+    const res = await upgradeTerminal(req, fakeServer);
+    expect(upgradeCalled).toBe(false);
+    expect(res).not.toBe(true);
+    if (res === true) throw new Error("unreachable");
+    expect(res.status).toBe(503);
+    const body = (await res.json()) as { error: string; hint: string };
+    expect(body.error).toBe("moor is draining");
+    expect(body.hint).toContain("moor_drain_disable");
   });
 });
 
