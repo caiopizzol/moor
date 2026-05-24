@@ -328,7 +328,17 @@ export async function stopAsyncExec(runId: number): Promise<{
  *  killer is injectable so tests don't need real Docker. */
 export type ExecKiller = (execId: string) => Promise<{ sentTo: string | null; live: number }>;
 
-const PER_KILL_TIMEOUT_MS = 1000;
+// Per-kill bound on the shutdown path. Must exceed the kill script's own
+// internal floor: EXEC_KILL_GRACE_S (1s SIGTERM grace) + ~0.2s post-SIGKILL
+// verify + Docker /exec/start round-trip. The first cut used 1000ms (#82),
+// and every clean shutdown reported state='error' / "kill outcome unknown"
+// because the wrapper timed out before the sidecar could return live=0 —
+// verified on prod v0.35.0 (issue #88).
+//
+// Parallel kills via Promise.allSettled means each entry can use up to this
+// budget without serializing the others; the outer 5s shutdown hard cap in
+// index.ts still bounds total wall time.
+const PER_KILL_TIMEOUT_MS = 3000;
 
 export async function interruptActiveExecRuns(
   reason: string,
