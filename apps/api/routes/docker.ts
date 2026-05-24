@@ -296,22 +296,68 @@ async function handleRun(req: Request, project: Project): Promise<Response> {
   });
 }
 
+/** #74 pure helper: shape the response body + status from a
+ *  LogsFetchResult and the cached live_status. Extracted so tests can
+ *  drive each branch deterministically without depending on a real
+ *  Docker daemon. */
+export function buildLogsResponse(
+  fetchResult: import("../docker").LogsFetchResult,
+  liveStatus: string | null,
+): { body: Record<string, unknown>; status: number } {
+  if (!fetchResult.ok) {
+    if (fetchResult.kind === "missing") {
+      return { body: { logs: "", lastTimestamp: 0, state: "missing" }, status: 200 };
+    }
+    // docker_error → 502 Bad Gateway so callers can distinguish
+    // infrastructure failure from app silence.
+    return {
+      body: { logs: "", lastTimestamp: 0, state: "docker_error", error: fetchResult.message },
+      status: 502,
+    };
+  }
+  // Logs fetched successfully. Use cached live_status (from the #71
+  // reconciler) to label exited vs ok. We deliberately don't do a fresh
+  // inspect here — for log fetching, a 30s cache is appropriate (this
+  // isn't an action path). live_status null means the reconciler hasn't
+  // ticked yet on this row; default to "ok" in that case.
+  const state = liveStatus && liveStatus !== "running" ? "exited" : "ok";
+  return {
+    body: { logs: fetchResult.logs, lastTimestamp: fetchResult.lastTimestamp, state },
+    status: 200,
+  };
+}
+
 async function handleLogs(project: Project, url: URL): Promise<Response> {
   if (!project.container_id) {
-    return Response.json({ logs: "", lastTimestamp: 0 });
+    return Response.json({ logs: "", lastTimestamp: 0, state: "no_container" });
   }
 
   const sinceParam = url.searchParams.get("since");
   const tailParam = url.searchParams.get("tail");
-  try {
-    const opts: { since?: number; tail?: number } = {};
-    if (sinceParam) opts.since = Number(sinceParam);
-    if (tailParam) opts.tail = Number(tailParam);
-    const { logs, lastTimestamp } = await getContainerLogs(project.container_id, opts);
-    return Response.json({ logs, lastTimestamp });
-  } catch {
-    return Response.json({ logs: "", lastTimestamp: 0 });
+  const opts: { since?: number; tail?: number } = {};
+  if (sinceParam) opts.since = Number(sinceParam);
+  if (tailParam) opts.tail = Number(tailParam);
+
+  const result = await getContainerLogs(project.container_id, opts);
+
+  // #74: opportunistically update live_status when we just learned the
+  // container is gone. Matches the #73 requireLiveContainer pattern of
+  // syncing the cache when we got the truth for free. Without this,
+  // moor_status could keep showing stale live_status='running' even
+  // though moor_logs just observed a 404.
+  if (!result.ok && result.kind === "missing") {
+    db.query(
+      `UPDATE projects SET live_status = 'missing', live_exit_code = NULL,
+                           live_checked_at = datetime('now'), live_error = NULL
+       WHERE id = ?`,
+    ).run(project.id);
   }
+
+  const live = db.query("SELECT live_status FROM projects WHERE id = ?").get(project.id) as {
+    live_status: string | null;
+  } | null;
+  const { body, status } = buildLogsResponse(result, live?.live_status ?? null);
+  return Response.json(body, { status });
 }
 
 async function handleExec(req: Request, project: Project): Promise<Response> {

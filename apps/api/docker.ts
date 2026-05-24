@@ -780,28 +780,27 @@ export async function getImageExposedPorts(imageTag: string): Promise<number[]> 
   }
 }
 
-export async function getContainerLogs(
-  containerId: string,
-  opts: { tail?: number; since?: number } = {},
-): Promise<{ logs: string; lastTimestamp: number }> {
-  const params = new URLSearchParams({
-    stdout: "true",
-    stderr: "true",
-    timestamps: "true",
-  });
-  if (opts.tail !== undefined) params.set("tail", String(opts.tail));
-  if (opts.since !== undefined) params.set("since", String(opts.since));
-  const res = await dockerFetch(`/v1.44/containers/${containerId}/logs?${params}`);
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`Container logs failed: ${res.status} ${body}`);
-  }
+/** #74: discriminated union so callers can distinguish 404 (container
+ *  missing) from other Docker failures (socket unreachable, 5xx, parse
+ *  errors). The route used to collapse all of these into an empty-logs
+ *  response, which made "why am I seeing nothing?" debugging
+ *  impossible. */
+export type LogsFetchResult =
+  | { ok: true; logs: string; lastTimestamp: number }
+  | { ok: false; kind: "missing" }
+  | { ok: false; kind: "error"; message: string };
 
-  // Docker returns multiplexed stream — strip 8-byte frame headers
-  const raw = new Uint8Array(await res.arrayBuffer());
+/** Pure: turn the Docker `/logs` framed body into clean text +
+ *  lastTimestamp. Extracted so tests can hit the parser with
+ *  synthesized buffers without dragging in dockerFetch. */
+export function parseDockerLogsBody(
+  raw: Uint8Array,
+  sinceParam: number,
+): { logs: string; lastTimestamp: number } {
   const decoder = new TextDecoder();
   let output = "";
   let offset = 0;
+  // Docker returns a multiplexed stream — strip 8-byte frame headers.
   while (offset + 8 <= raw.length) {
     const size =
       (raw[offset + 4] << 24) | (raw[offset + 5] << 16) | (raw[offset + 6] << 8) | raw[offset + 7];
@@ -810,8 +809,7 @@ export async function getContainerLogs(
     offset += size;
   }
 
-  // Strip Docker timestamps from each line and track the latest one
-  let lastTimestamp = opts.since || 0;
+  let lastTimestamp = sinceParam || 0;
   const lines = output.split("\n");
   const cleaned = lines.map((line) => {
     // Docker timestamp format: 2024-01-01T00:00:00.000000000Z <log>
@@ -823,8 +821,49 @@ export async function getContainerLogs(
     }
     return line;
   });
-
   return { logs: cleaned.join("\n"), lastTimestamp };
+}
+
+/** Injectable fetcher for tests. Default is dockerFetch; tests pass a
+ *  function that returns synthetic Response objects for each branch. */
+export type LogsFetcher = (path: string) => Promise<Response>;
+
+export async function getContainerLogs(
+  containerId: string,
+  opts: { tail?: number; since?: number } = {},
+  fetcher: LogsFetcher = dockerFetch,
+): Promise<LogsFetchResult> {
+  const params = new URLSearchParams({
+    stdout: "true",
+    stderr: "true",
+    timestamps: "true",
+  });
+  if (opts.tail !== undefined) params.set("tail", String(opts.tail));
+  if (opts.since !== undefined) params.set("since", String(opts.since));
+
+  let res: Response;
+  try {
+    res = await fetcher(`/v1.44/containers/${containerId}/logs?${params}`);
+  } catch (e) {
+    return { ok: false, kind: "error", message: e instanceof Error ? e.message : String(e) };
+  }
+
+  if (res.status === 404) return { ok: false, kind: "missing" };
+  if (!res.ok) {
+    const body = await res.text();
+    return { ok: false, kind: "error", message: `Container logs failed: ${res.status} ${body}` };
+  }
+
+  try {
+    const raw = new Uint8Array(await res.arrayBuffer());
+    return { ok: true, ...parseDockerLogsBody(raw, opts.since || 0) };
+  } catch (e) {
+    return {
+      ok: false,
+      kind: "error",
+      message: `Container logs parse failed: ${e instanceof Error ? e.message : String(e)}`,
+    };
+  }
 }
 
 export async function inspectContainer(containerId: string): Promise<{ running: boolean }> {
