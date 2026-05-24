@@ -53,16 +53,19 @@ export type IngestResult =
   | { kind: "malformed"; quarantined: string; reason: string }
   | { kind: "id_mismatch"; filename_id: number; payload_id: number; quarantined: string };
 
+// Strict decimal-positive-integer matcher. No leading zeros, no scientific
+// notation (Number("1e3") would coerce to 1000), no sign, no decimal point.
+// This keeps the filename → audit_id mapping bijective.
+const AUDIT_ID_PATTERN = /^[1-9]\d*$/;
+
 /** Pure: extract audit_id from a marker filename. Returns null when the
  *  filename doesn't match the documented pattern. Used both by the poller
  *  filter AND by the id-mismatch check in ingestMarker. */
 export function parseMarkerFilename(name: string): number | null {
   if (!name.startsWith(MARKER_PREFIX) || !name.endsWith(MARKER_SUFFIX)) return null;
   const middle = name.slice(MARKER_PREFIX.length, -MARKER_SUFFIX.length);
-  if (middle.length === 0) return null;
-  const n = Number(middle);
-  if (!Number.isInteger(n) || n <= 0) return null;
-  return n;
+  if (!AUDIT_ID_PATTERN.test(middle)) return null;
+  return Number(middle);
 }
 
 /** Pure: validate the JSON payload shape. Returns the typed payload on

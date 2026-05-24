@@ -76,6 +76,13 @@ describe("#80 PR #2 parseMarkerFilename", () => {
   test("empty middle → null", () => {
     expect(parseMarkerFilename(".update-result-.json")).toBeNull();
   });
+  test("scientific notation NOT accepted (Number('1e3') would coerce to 1000)", () => {
+    expect(parseMarkerFilename(".update-result-1e3.json")).toBeNull();
+  });
+  test("leading-zero forms NOT accepted (filename → audit_id must be bijective)", () => {
+    expect(parseMarkerFilename(".update-result-001.json")).toBeNull();
+    expect(parseMarkerFilename(".update-result-0007.json")).toBeNull();
+  });
 });
 
 describe("#80 PR #2 parseMarkerPayload", () => {
