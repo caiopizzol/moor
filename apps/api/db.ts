@@ -162,6 +162,36 @@ db.exec(`
     expires_at TEXT,
     clear_after_version TEXT
   );
+
+  -- #80 PR #1: audit trail for moor's self-update flow.
+  -- Row is INSERTed before the backup runs so a backup failure is captured;
+  -- backup_path is therefore nullable. State transitions:
+  --   in_progress → success | rolled_back | rollback_failed | failed | crashed
+  -- 'crashed' is only set by the 30-min grace-window sweep — it means a
+  -- respawner-issued marker was never ingested. Operator should investigate.
+  -- from_digest / to_digest / prev_image_id pin the image identities at apply
+  -- time so a rollback path knows exactly where to revert to.
+  CREATE TABLE IF NOT EXISTS update_audit (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    started_at TEXT NOT NULL DEFAULT (datetime('now')),
+    started_at_ms INTEGER NOT NULL,
+    finished_at TEXT,
+    finished_at_ms INTEGER,
+    duration_ms INTEGER,
+    state TEXT NOT NULL DEFAULT 'in_progress',
+    from_digest TEXT,
+    to_digest TEXT,
+    prev_image_id TEXT,
+    backup_path TEXT,
+    rollback_error TEXT,
+    error_log TEXT
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_update_audit_started_at_ms
+    ON update_audit(started_at_ms DESC);
+
+  CREATE INDEX IF NOT EXISTS idx_update_audit_state
+    ON update_audit(state);
 `);
 
 // #34 Phase B: orphan sweep. On moor restart, the in-memory map of active runs

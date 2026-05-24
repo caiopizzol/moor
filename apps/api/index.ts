@@ -39,6 +39,7 @@ import {
 } from "./status-reconciler";
 import { terminalWebSocket, upgradeTerminal } from "./terminal";
 import { clearAllSessions, startSessionCleanup } from "./terminal-sessions";
+import { sweepStaleInProgress } from "./update-audit";
 
 checkInitialPassword();
 checkPasswordReset();
@@ -49,6 +50,19 @@ ensureRoutesFile();
 // Mismatched version (failed upgrade) keeps the drain — TTL or operator
 // intervention required.
 maybeAutoClearForBoot();
+// #80 PR #1: one-shot sweep at boot for any update_audit row left
+// 'in_progress' past the 30-min grace window — happens when a respawner
+// crashed before writing its marker, OR no respawner ever ran but a row
+// was somehow orphaned. Periodic re-sweep arrives with marker ingestion
+// in PR #2. Logs the IDs swept so an operator can dig in.
+{
+  const sweptIds = sweepStaleInProgress();
+  if (sweptIds.length > 0) {
+    console.warn(
+      `[update-audit] swept ${sweptIds.length} stale 'in_progress' row(s) to 'crashed': ${sweptIds.join(", ")}`,
+    );
+  }
+}
 
 const PORT = Number(process.env.PORT || 3000);
 const clientDist = join(import.meta.dir, "..", "web", "dist");
