@@ -32,6 +32,7 @@ jobs:
     outputs:
       version: ${{ steps.semrel.outputs.version }}
       sha: ${{ steps.semrel.outputs.sha }}
+      released: ${{ steps.semrel.outputs.released }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -41,20 +42,31 @@ jobs:
           node-version: 22
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
+      - id: pre
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
       - run: bunx semantic-release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       # semantic-release commits the version bump via @semantic-release/git,
-      # so HEAD here is the chore(release) commit. Capture its SHA so the
-      # publish job builds from the post-bump commit, not the triggering SHA.
+      # so HEAD here is the chore(release) commit when a release was cut.
+      # Compare against the pre-run SHA to know whether to publish at all —
+      # workflow_dispatch with no release-worthy commits would otherwise
+      # republish the existing tag and mutate it.
       - id: semrel
         run: |
+          head="$(git rev-parse HEAD)"
+          if [ "$head" = "${{ steps.pre.outputs.sha }}" ]; then
+            echo "released=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "released=true" >> "$GITHUB_OUTPUT"
+          fi
           echo "version=$(bun -e "console.log(require('./package.json').version)")" >> "$GITHUB_OUTPUT"
-          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "sha=$head" >> "$GITHUB_OUTPUT"
 
   publish:
     needs: release
+    if: needs.release.outputs.released == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
