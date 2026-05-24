@@ -177,9 +177,11 @@ describe("#82 interruptActiveExecRuns", () => {
     const elapsed = Date.now() - startMs;
 
     expect(ids).toEqual([rid]);
-    // Should have waited ~1s (PER_KILL_TIMEOUT_MS) — assert under 2.5s
-    // to leave plenty of slack for slow CI.
-    expect(elapsed).toBeLessThan(2500);
+    // Should have waited ~3s (PER_KILL_TIMEOUT_MS, bumped in #88 from 1s
+    // so a real kill script's SIGTERM grace + verify can return cleanly).
+    // Assert under 4.5s for slow CI slack.
+    expect(elapsed).toBeLessThan(4500);
+    expect(elapsed).toBeGreaterThanOrEqual(2500);
     const row = readRow(rid);
     expect(row.state).toBe("error");
     expect(row.error_message).toContain("kill outcome unknown");
