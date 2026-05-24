@@ -790,9 +790,48 @@ export type LogsFetchResult =
   | { ok: false; kind: "missing" }
   | { ok: false; kind: "error"; message: string };
 
+/** Pure: turn the Docker `/logs` framed body into clean text +
+ *  lastTimestamp. Extracted so tests can hit the parser with
+ *  synthesized buffers without dragging in dockerFetch. */
+export function parseDockerLogsBody(
+  raw: Uint8Array,
+  sinceParam: number,
+): { logs: string; lastTimestamp: number } {
+  const decoder = new TextDecoder();
+  let output = "";
+  let offset = 0;
+  // Docker returns a multiplexed stream — strip 8-byte frame headers.
+  while (offset + 8 <= raw.length) {
+    const size =
+      (raw[offset + 4] << 24) | (raw[offset + 5] << 16) | (raw[offset + 6] << 8) | raw[offset + 7];
+    offset += 8;
+    output += decoder.decode(raw.slice(offset, offset + size));
+    offset += size;
+  }
+
+  let lastTimestamp = sinceParam || 0;
+  const lines = output.split("\n");
+  const cleaned = lines.map((line) => {
+    // Docker timestamp format: 2024-01-01T00:00:00.000000000Z <log>
+    const match = line.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z)\s(.*)/);
+    if (match) {
+      const ts = Math.ceil(new Date(match[1]).getTime() / 1000);
+      if (ts > lastTimestamp) lastTimestamp = ts;
+      return match[2];
+    }
+    return line;
+  });
+  return { logs: cleaned.join("\n"), lastTimestamp };
+}
+
+/** Injectable fetcher for tests. Default is dockerFetch; tests pass a
+ *  function that returns synthetic Response objects for each branch. */
+export type LogsFetcher = (path: string) => Promise<Response>;
+
 export async function getContainerLogs(
   containerId: string,
   opts: { tail?: number; since?: number } = {},
+  fetcher: LogsFetcher = dockerFetch,
 ): Promise<LogsFetchResult> {
   const params = new URLSearchParams({
     stdout: "true",
@@ -804,7 +843,7 @@ export async function getContainerLogs(
 
   let res: Response;
   try {
-    res = await dockerFetch(`/v1.44/containers/${containerId}/logs?${params}`);
+    res = await fetcher(`/v1.44/containers/${containerId}/logs?${params}`);
   } catch (e) {
     return { ok: false, kind: "error", message: e instanceof Error ? e.message : String(e) };
   }
@@ -816,37 +855,8 @@ export async function getContainerLogs(
   }
 
   try {
-    // Docker returns multiplexed stream — strip 8-byte frame headers
     const raw = new Uint8Array(await res.arrayBuffer());
-    const decoder = new TextDecoder();
-    let output = "";
-    let offset = 0;
-    while (offset + 8 <= raw.length) {
-      const size =
-        (raw[offset + 4] << 24) |
-        (raw[offset + 5] << 16) |
-        (raw[offset + 6] << 8) |
-        raw[offset + 7];
-      offset += 8;
-      output += decoder.decode(raw.slice(offset, offset + size));
-      offset += size;
-    }
-
-    // Strip Docker timestamps from each line and track the latest one
-    let lastTimestamp = opts.since || 0;
-    const lines = output.split("\n");
-    const cleaned = lines.map((line) => {
-      // Docker timestamp format: 2024-01-01T00:00:00.000000000Z <log>
-      const match = line.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z)\s(.*)/);
-      if (match) {
-        const ts = Math.ceil(new Date(match[1]).getTime() / 1000);
-        if (ts > lastTimestamp) lastTimestamp = ts;
-        return match[2];
-      }
-      return line;
-    });
-
-    return { ok: true, logs: cleaned.join("\n"), lastTimestamp };
+    return { ok: true, ...parseDockerLogsBody(raw, opts.since || 0) };
   } catch (e) {
     return {
       ok: false,
