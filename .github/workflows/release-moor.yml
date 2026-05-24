@@ -7,6 +7,7 @@ on:
     paths:
       - "apps/api/**"
       - "apps/web/**"
+      - "apps/respawner/**"
       - "Dockerfile"
       - "docker-compose.yml"
       - "package.json"
@@ -22,6 +23,13 @@ jobs:
       - run: bunx biome check .
       - run: bunx tsc --noEmit -p apps/api/tsconfig.json
       - run: cd apps/web && bunx tsc -b
+      # #80 PR #3: respawner image build + self-test. Fails the check
+      # job (before publish) if the image can't even self-validate
+      # against the runner's mounted Docker socket.
+      - name: Build moor-respawner (test only)
+        run: docker build -t moor-respawner-test apps/respawner
+      - name: Respawner self-test
+        run: docker run --rm -v /var/run/docker.sock:/var/run/docker.sock moor-respawner-test --self-test
 
   release:
     needs: check
@@ -86,12 +94,29 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/build-push-action@v6
+      - name: Build & push moor
+        uses: docker/build-push-action@v6
         with:
           context: .
           push: true
           tags: |
             ghcr.io/caiopizzol/moor:latest
             ghcr.io/caiopizzol/moor:${{ needs.release.outputs.version }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=moor
+          cache-to: type=gha,mode=max,scope=moor
+      # #80 PR #3: build/push moor-respawner from the SAME release SHA
+      # and tag with the SAME version as moor. The respawner is an
+      # implementation detail of a moor release, not its own product —
+      # tagging them together means moor can pull
+      # ghcr.io/caiopizzol/moor-respawner:<its-own-version> and be
+      # confident the contracts match.
+      - name: Build & push moor-respawner
+        uses: docker/build-push-action@v6
+        with:
+          context: apps/respawner
+          push: true
+          tags: |
+            ghcr.io/caiopizzol/moor-respawner:latest
+            ghcr.io/caiopizzol/moor-respawner:${{ needs.release.outputs.version }}
+          cache-from: type=gha,scope=respawner
+          cache-to: type=gha,mode=max,scope=respawner
