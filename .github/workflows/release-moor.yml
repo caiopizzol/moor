@@ -31,6 +31,7 @@ jobs:
       issues: write
     outputs:
       version: ${{ steps.semrel.outputs.version }}
+      sha: ${{ steps.semrel.outputs.sha }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -44,8 +45,13 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      # semantic-release commits the version bump via @semantic-release/git,
+      # so HEAD here is the chore(release) commit. Capture its SHA so the
+      # publish job builds from the post-bump commit, not the triggering SHA.
       - id: semrel
-        run: echo "version=$(bun -e "console.log(require('./package.json').version)")" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "version=$(bun -e "console.log(require('./package.json').version)")" >> "$GITHUB_OUTPUT"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
   publish:
     needs: release
@@ -55,6 +61,13 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release.outputs.sha }}
+      - name: Verify build context matches release tag
+        run: |
+          echo "HEAD: $(git rev-parse HEAD)"
+          echo "package.json version: $(node -e "console.log(require('./package.json').version)")"
+          echo "tag to publish: ${{ needs.release.outputs.version }}"
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
         with:
