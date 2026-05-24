@@ -139,15 +139,39 @@ export class BuildRun {
    *  Doesn't return "not_active" — that's the route's responsibility when
    *  the registry doesn't have an entry. */
   cancel(): CancelResult {
+    return this.interrupt("[cancelled by user]");
+  }
+
+  /** #77: shared abort path used by both operator-initiated cancel and
+   *  shutdown-coordinator interrupt. Reason is written to stderr verbatim
+   *  (no trailing newline — added here) so callers can use a context-
+   *  appropriate message instead of always seeing "[cancelled by user]"
+   *  for shutdowns/restarts/crashes. */
+  interrupt(reason: string): CancelResult {
     if (this.finalized) return "already_finished";
     if (!this.cancellable) return "not_cancellable";
-    this.appendStderr("[cancelled by user]\n");
+    this.appendStderr(`${reason}\n`);
     this.abort.abort();
     // 130 is the conventional SIGINT exit code; deriveRunStatus in MCP
     // treats anything non-zero as failed, which is correct for now.
     this.finalize(130);
     return "cancelled";
   }
+}
+
+/** #77: interrupt every in-flight build/pull during shutdown. Returns
+ *  the count actually interrupted (some may already be finalized or past
+ *  the cancellable window). The reason string is written to each row's
+ *  stderr — typical use is "[moor shutting down; build/pull aborted]"
+ *  so a post-restart inspector sees a truthful terminal state instead
+ *  of the orphan-sweep's generic "Moor restarted; terminal state
+ *  unknown". */
+export function interruptActiveBuildRuns(reason: string): number {
+  let count = 0;
+  for (const run of activeBuildRuns.values()) {
+    if (run.interrupt(reason) === "cancelled") count++;
+  }
+  return count;
 }
 
 /** Active in-flight BuildRun handles by run id. Populated in the

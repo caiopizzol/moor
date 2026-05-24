@@ -194,7 +194,12 @@ export function startCronScheduler() {
   setInterval(tick, 60_000);
 }
 
-/** Mark all active runs as interrupted (called during graceful shutdown) */
+/** #77: mark all active cron runs as interrupted during graceful
+ *  shutdown. Stderr message matches the convention used by
+ *  interruptActiveBuildRuns ("[moor shutting down; ...]") so a post-
+ *  restart inspector sees consistent terminal rows regardless of run
+ *  type. WHERE finished_at IS NULL preserves any row that's already
+ *  raced to its own terminal state. */
 export function interruptActiveRuns() {
   const now = Date.now();
   for (const [runId, active] of activeRuns) {
@@ -202,7 +207,7 @@ export function interruptActiveRuns() {
     db.query(
       `UPDATE runs SET finished_at = ?, finished_at_ms = ?, exit_code = -1, stderr = ?
        WHERE id = ? AND finished_at IS NULL`,
-    ).run(new Date(now).toISOString(), now, "Server shutting down", runId);
+    ).run(new Date(now).toISOString(), now, "[moor shutting down; cron run aborted]", runId);
   }
   activeRuns.clear();
 }

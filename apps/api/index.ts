@@ -8,6 +8,7 @@ import {
   validateBearerToken,
   validateSession,
 } from "./auth";
+import { interruptActiveBuildRuns } from "./build-runs";
 import { ensureRoutesFile } from "./caddy";
 import { startCleanupScheduler, stopCleanupScheduler } from "./cleanup-scheduler";
 import { interruptActiveRuns, startCronScheduler } from "./cron";
@@ -174,17 +175,55 @@ setInterval(cleanExpiredSessions, 3600_000);
 startCleanupScheduler();
 startStatusReconciler();
 
-// Graceful shutdown
-const shutdown = () => {
+// #77: async-tolerant shutdown coordinator. Order matters: stop the
+// schedulers and HTTP server first so no NEW work is scheduled or
+// accepted, then interrupt active work with truthful terminal-state
+// reasons (not generic "user cancelled"), then yield briefly so the
+// fetch aborts can propagate before the process dies. 5s hard cap so
+// a stuck cleanup can't block SIGTERM indefinitely.
+//
+// Async exec is deliberately out of scope here (see ticket #77's
+// scope-correction comment) — exec-async.ts keeps active state private
+// and needs a separate interrupt API.
+const SHUTDOWN_HARD_TIMEOUT_MS = 5_000;
+let shuttingDown = false;
+const shutdown = async () => {
+  if (shuttingDown) return;
+  shuttingDown = true;
   console.log("[moor] Shutting down...");
-  interruptActiveRuns();
-  clearAllSessions();
-  stopCleanupScheduler();
-  stopStatusReconciler();
-  server.stop();
-  process.exit(0);
+
+  const hardExit = setTimeout(() => {
+    console.error("[moor] shutdown hard-timeout hit; forcing exit");
+    process.exit(1);
+  }, SHUTDOWN_HARD_TIMEOUT_MS);
+  hardExit.unref?.();
+
+  try {
+    stopCleanupScheduler();
+    stopStatusReconciler();
+    server.stop();
+
+    const buildsAborted = interruptActiveBuildRuns("[moor shutting down; build/pull aborted]");
+    interruptActiveRuns();
+    clearAllSessions();
+    if (buildsAborted > 0) {
+      console.log(`[moor] interrupted ${buildsAborted} in-flight build/pull`);
+    }
+
+    // One brief tick so the fetch aborts settle before exit. The kernel
+    // closes sockets on exit anyway, but giving microtasks a moment
+    // keeps the ordering deterministic for the daemon-side teardown.
+    await new Promise((r) => setTimeout(r, 250));
+  } finally {
+    clearTimeout(hardExit);
+    process.exit(0);
+  }
 };
-process.on("SIGTERM", shutdown);
-process.on("SIGINT", shutdown);
+process.on("SIGTERM", () => {
+  void shutdown();
+});
+process.on("SIGINT", () => {
+  void shutdown();
+});
 
 console.log(`Moor running at http://localhost:${server.port}`);

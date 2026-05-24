@@ -8,7 +8,7 @@ process.env.MOOR_DB_PATH = ":memory:";
 import { beforeEach, describe, expect, test } from "bun:test";
 
 const { default: db } = await import("./db");
-const { BuildRun, activeBuildRuns } = await import("./build-runs");
+const { BuildRun, activeBuildRuns, interruptActiveBuildRuns } = await import("./build-runs");
 const { TAIL_CAP_BYTES } = await import("./output-cap");
 
 function makeProject(name = "p"): number {
@@ -336,5 +336,81 @@ describe("#68 BuildRun.cancel lifecycle", () => {
       exit_code: number;
     };
     expect(row.exit_code).toBe(130);
+  });
+});
+
+describe("#77 BuildRun.interrupt + interruptActiveBuildRuns", () => {
+  let projectId: number;
+
+  beforeEach(() => {
+    db.query("DELETE FROM runs").run();
+    db.query("DELETE FROM projects").run();
+    activeBuildRuns.clear();
+    projectId = makeProject();
+  });
+
+  test("interrupt writes the caller's reason verbatim and finalizes 130", () => {
+    const run = new BuildRun(projectId);
+    const result = run.interrupt("[moor shutting down; build/pull aborted]");
+    expect(result).toBe("cancelled");
+
+    const row = db.query("SELECT exit_code, stderr FROM runs WHERE id = ?").get(run.id) as {
+      exit_code: number;
+      stderr: string;
+    };
+    expect(row.exit_code).toBe(130);
+    // Reason written verbatim — no default "cancelled by user" override.
+    expect(row.stderr).toContain("[moor shutting down; build/pull aborted]");
+    expect(row.stderr).not.toContain("cancelled by user");
+  });
+
+  test("interrupt past markStreamingDone → 'not_cancellable' (same gate as cancel)", () => {
+    const run = new BuildRun(projectId);
+    run.markStreamingDone();
+    expect(run.interrupt("[moor shutting down]")).toBe("not_cancellable");
+    run.finalize(0);
+  });
+
+  test("interrupt after finalize → 'already_finished'", () => {
+    const run = new BuildRun(projectId);
+    run.finalize(0);
+    expect(run.interrupt("[moor shutting down]")).toBe("already_finished");
+  });
+
+  test("interruptActiveBuildRuns finalizes every active run and returns the count actually interrupted", () => {
+    const a = new BuildRun(projectId);
+    const b = new BuildRun(projectId);
+    const c = new BuildRun(projectId);
+    // c is past streaming — should NOT be counted as interrupted.
+    c.markStreamingDone();
+
+    const count = interruptActiveBuildRuns("[moor shutting down; build/pull aborted]");
+    expect(count).toBe(2);
+
+    const rowA = db.query("SELECT exit_code, stderr FROM runs WHERE id = ?").get(a.id) as {
+      exit_code: number;
+      stderr: string;
+    };
+    expect(rowA.exit_code).toBe(130);
+    expect(rowA.stderr).toContain("[moor shutting down; build/pull aborted]");
+    const rowB = db.query("SELECT exit_code FROM runs WHERE id = ?").get(b.id) as {
+      exit_code: number;
+    };
+    expect(rowB.exit_code).toBe(130);
+
+    // c is still in flight — no finalize. Clean up before the next test.
+    c.finalize(0);
+  });
+
+  test("calling interruptActiveBuildRuns twice is a no-op for already-finalized rows", () => {
+    const run = new BuildRun(projectId);
+    expect(interruptActiveBuildRuns("[shutdown]")).toBe(1);
+    expect(interruptActiveBuildRuns("[shutdown again]")).toBe(0);
+    // First message wins; second call doesn't re-write.
+    const row = db.query("SELECT stderr FROM runs WHERE id = ?").get(run.id) as {
+      stderr: string;
+    };
+    expect(row.stderr).toContain("[shutdown]");
+    expect(row.stderr).not.toContain("[shutdown again]");
   });
 });
