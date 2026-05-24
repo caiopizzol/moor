@@ -10,9 +10,10 @@
 //   unknown, update_available is null (not false).
 // - safe_to_update is sugar for unsafe_reasons.length === 0. The
 //   array IS the contract; consumers should render it inline.
-// - db_backup until #80 ships: no backup convention exists, so v1
-//   reports null + adds "no backup marker configured (see #80)" to
-//   unsafe_reasons. Honest absence over fake green.
+// - db_backup is sourced from db-backup.ts (#90). When no snapshot
+//   exists, age_seconds is null and unsafe_reasons points operators
+//   at moor_db_backup / MOOR_DB_BACKUP_INTERVAL_HOURS so the absence
+//   is actionable, not a dead-end.
 // - Terminal count: project terminals only in v1. Host terminals
 //   aren't tracked; documented as a known limitation.
 

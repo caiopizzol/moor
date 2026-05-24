@@ -4,10 +4,11 @@
 // would copy mid-checkpoint state and produce a corrupt-looking file.
 //
 // Conventions:
-// - Backups live next to the main DB in the same directory (no cross-host
-//   destinations in #90 — out of scope; #80's transient updater can add
-//   that). Filename is `moor.db.backup-<epoch-ms>` so ordering is trivial
-//   and collisions impossible.
+// - Backups live next to the main DB in the same directory. Cross-host
+//   destinations and pre-update auto-backup are deliberately out of scope
+//   for #90 — the transient updater in #80 will layer those on top of
+//   this module. Filename is `moor.db.backup-<epoch-ms>` so ordering is
+//   trivial and collisions impossible.
 // - Retention is N most recent; older snapshots are pruned each cycle.
 //   N defaults to DEFAULT_KEEP_BACKUPS (7).
 // - Scheduler is off by default, opt-in via MOOR_DB_BACKUP_INTERVAL_HOURS
