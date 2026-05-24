@@ -98,7 +98,7 @@ describe("#78 buildUnsafeReasons", () => {
     expect(reasons).toContain("3 project terminal(s) open");
   });
 
-  test("null backup_age_seconds → 'no backup marker configured (see #80)'", () => {
+  test("null backup_age_seconds → 'no recent DB backup' with #90 hint", () => {
     const reasons = buildUnsafeReasons({
       builds_in_flight: 0,
       execs_in_flight: 0,
@@ -106,7 +106,11 @@ describe("#78 buildUnsafeReasons", () => {
       terminals_open: 0,
       backup_age_seconds: null,
     });
-    expect(reasons).toEqual(["no backup marker configured (see #80)"]);
+    expect(reasons.length).toBe(1);
+    expect(reasons[0]).toContain("no recent DB backup");
+    expect(reasons[0]).toContain("moor_db_backup");
+    expect(reasons[0]).toContain("MOOR_DB_BACKUP_INTERVAL_HOURS");
+    expect(reasons[0]).toContain("#90");
   });
 
   test("backup older than 24h → reports the age in hours", () => {
@@ -206,14 +210,18 @@ describe("#78 buildUpdateStatus integration with injected GhcrFetcher", () => {
     expect(status.available.update_available).toBeNull();
   });
 
-  test("safe_to_update mirrors unsafe_reasons.length === 0; default v1 is NOT safe (no backup)", async () => {
+  test("safe_to_update is false when no backup exists; reason references #90", async () => {
+    // The test env is in-memory (MOOR_DB_PATH=:memory:), so the backup
+    // directory is unavailable and getLatestBackupInfo degrades to null
+    // — same shape as a fresh install with no scheduler enabled.
     const status = await buildUpdateStatus(async () => ({
       ok: false,
       error: "stub",
     }));
-    // db_backup is null in v1 → always at least one reason.
     expect(status.safe_to_update).toBe(false);
-    expect(status.unsafe_reasons).toContain("no backup marker configured (see #80)");
+    const backupReason = status.unsafe_reasons.find((r) => r.includes("no recent DB backup"));
+    expect(backupReason).toBeDefined();
+    expect(backupReason).toContain("#90");
   });
 
   test("recommended_command uses --no-deps --wait", async () => {

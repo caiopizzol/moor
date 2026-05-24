@@ -38,7 +38,23 @@ export async function handleServer(_req: Request, url: URL): Promise<Response | 
   if (url.pathname === "/api/server/drain/disable" && _req.method === "POST") {
     return handleDrainDisable();
   }
+  // #90
+  if (url.pathname === "/api/server/backup" && _req.method === "POST") {
+    return handleDbBackup();
+  }
   return null;
+}
+
+async function handleDbBackup(): Promise<Response> {
+  const { DEFAULT_KEEP_BACKUPS, defaultBackupDir, runBackup } = await import("../db-backup");
+  try {
+    const dir = defaultBackupDir();
+    const result = runBackup({ dir, keep: DEFAULT_KEEP_BACKUPS });
+    return Response.json(result);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "Unknown error";
+    return Response.json({ error: msg }, { status: 500 });
+  }
 }
 
 async function handleUpdateStatus(): Promise<Response> {

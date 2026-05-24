@@ -14,6 +14,7 @@ import { startCleanupScheduler, stopCleanupScheduler } from "./cleanup-scheduler
 import { interruptActiveRuns, startCronScheduler, stopCronScheduler } from "./cron";
 // Initialize DB (side-effect import runs migrations)
 import db from "./db";
+import { startBackupScheduler, stopBackupScheduler } from "./db-backup";
 import { maybeAutoClearForBoot } from "./drain";
 import { interruptActiveExecRuns } from "./exec-async";
 import { hostTerminalHandlers, isHostTerminal, upgradeHostTerminal } from "./host-terminal";
@@ -185,6 +186,7 @@ startSessionCleanup();
 setInterval(cleanExpiredSessions, 3600_000);
 startCleanupScheduler();
 startStatusReconciler();
+startBackupScheduler();
 
 // #77: async-tolerant shutdown coordinator. Order matters: stop the
 // schedulers and HTTP server first so no NEW work is scheduled or
@@ -215,6 +217,7 @@ const shutdown = async () => {
     // missed — left a race where a tick could land work during the
     // drain window).
     stopCleanupScheduler();
+    stopBackupScheduler();
     stopStatusReconciler();
     stopCronScheduler();
     server.stop();

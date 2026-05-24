@@ -10,15 +10,17 @@
 //   unknown, update_available is null (not false).
 // - safe_to_update is sugar for unsafe_reasons.length === 0. The
 //   array IS the contract; consumers should render it inline.
-// - db_backup until #80 ships: no backup convention exists, so v1
-//   reports null + adds "no backup marker configured (see #80)" to
-//   unsafe_reasons. Honest absence over fake green.
+// - db_backup is sourced from db-backup.ts (#90). When no snapshot
+//   exists, age_seconds is null and unsafe_reasons points operators
+//   at moor_db_backup / MOOR_DB_BACKUP_INTERVAL_HOURS so the absence
+//   is actionable, not a dead-end.
 // - Terminal count: project terminals only in v1. Host terminals
 //   aren't tracked; documented as a known limitation.
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import db from "./db";
+import { getLatestBackupInfo } from "./db-backup";
 import { SOCKET as SOCKET_PATH } from "./docker";
 import { getActiveSessionCount } from "./terminal-sessions";
 
@@ -111,7 +113,9 @@ export function buildUnsafeReasons(input: {
     reasons.push(`${input.terminals_open} project terminal(s) open`);
   }
   if (input.backup_age_seconds === null) {
-    reasons.push("no backup marker configured (see #80)");
+    reasons.push(
+      "no recent DB backup (run moor_db_backup or set MOOR_DB_BACKUP_INTERVAL_HOURS; see #90)",
+    );
   } else if (input.backup_age_seconds > BACKUP_MAX_AGE_SECONDS) {
     const hours = Math.round(input.backup_age_seconds / 3600);
     reasons.push(`last backup ${hours}h ago (older than 24h)`);
@@ -246,9 +250,10 @@ export function getActiveWorkCounts(): UpdateStatusResponse["active_work"] {
 }
 
 export function getDbBackupInfo(): UpdateStatusResponse["db_backup"] {
-  // v1: no backup convention exists yet — see #80. Report honestly
-  // null so unsafe_reasons can explain WHY this is unsafe.
-  return { last_backup_at: null, age_seconds: null, location: null };
+  // #90: backed by db-backup.ts. Returns the freshness of the most
+  // recent VACUUM INTO snapshot in the backup directory, or the
+  // documented null shape when no snapshot exists.
+  return getLatestBackupInfo();
 }
 
 export async function buildUpdateStatus(

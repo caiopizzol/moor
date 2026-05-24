@@ -36,6 +36,14 @@ services:
       # Accepted range: ~0.017 hours (1 minute) to 596 hours (~24 days).
       # See docs/self-hosting.md.
       - MOOR_CLEANUP_DANGLING_INTERVAL_HOURS
+      # Optional. Set MOOR_DB_BACKUP_INTERVAL_HOURS=<hours> in .env to
+      # enable scheduled SQLite snapshots (VACUUM INTO) of moor.db. Off
+      # by default. Snapshots land next to moor.db; the 7 most recent
+      # are retained. Required for moor_update_status to report
+      # safe_to_update: YES on the manual update path.
+      # Accepted range: ~0.017 hours (1 minute) to 596 hours (~24 days).
+      # See docs/self-hosting.md.
+      - MOOR_DB_BACKUP_INTERVAL_HOURS
 
   caddy:
     image: caddy:2-alpine

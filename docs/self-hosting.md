@@ -155,6 +155,41 @@ The scheduler reuses the manual code path — same eligibility filter (`noprune=
 
 Tagged-but-unused images and volumes are not in scope of this scheduler — those need explicit operator action via the manual tools.
 
+## Scheduled DB backups
+
+Moor's state (projects, env vars, crons, run history) lives in a single SQLite file at `/app/data/moor.db`. Before a manual update — `docker compose pull moor && docker compose up -d --no-deps --wait moor` — take a snapshot so a failed migration or unexpected schema change is recoverable.
+
+Take one on demand from the MCP:
+
+```
+moor_db_backup
+```
+
+That writes `/app/data/moor.db.backup-<epoch-ms>` via SQLite's `VACUUM INTO` (atomic at the SQLite layer; plain `cp` of the hot WAL DB would copy mid-checkpoint state). After it returns, `moor_update_status` will report `db_backup.age_seconds` close to 0 and `safe_to_update` can flip to `YES` once active work is also zero.
+
+To take snapshots on a schedule instead, opt in via:
+
+```bash
+MOOR_DB_BACKUP_INTERVAL_HOURS=24
+```
+
+**Existing installs:** as with `MOOR_CLEANUP_DANGLING_INTERVAL_HOURS`, the var also has to be declared in the moor service's `environment` block. Add it next to the cleanup line:
+
+```yaml
+services:
+  moor:
+    environment:
+      - MOOR_API_KEY
+      - MOOR_CLEANUP_DANGLING_INTERVAL_HOURS
+      - MOOR_DB_BACKUP_INTERVAL_HOURS
+```
+
+Compose only forwards env vars listed there — setting it in `.env` alone is not enough. New installs from the installer get this automatically.
+
+Accepted range and out-of-range handling are the same as the cleanup scheduler. Retention keeps the 7 most recent snapshots; older ones are pruned at the end of each cycle.
+
+Restore (if ever needed): stop moor, replace `/app/data/moor.db` with a snapshot file, start moor again. Restore tooling beyond that is out of scope for now.
+
 ## Docker socket trust boundary
 
 Moor mounts `/var/run/docker.sock` on the host. That means:
