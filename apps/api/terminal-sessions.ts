@@ -14,6 +14,12 @@ type TerminalSession = {
 
 const sessions = new Map<string, TerminalSession>();
 
+/** #78: count of project terminals currently tracked. Host terminals
+ *  are NOT tracked here (see host-terminal.ts) and aren't counted. */
+export function getActiveSessionCount(): number {
+  return sessions.size;
+}
+
 export function trackSession(execId: string, projectId: number) {
   sessions.set(execId, {
     execId,

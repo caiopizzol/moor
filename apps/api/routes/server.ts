@@ -24,7 +24,21 @@ export async function handleServer(_req: Request, url: URL): Promise<Response | 
   if (url.pathname === "/api/server/stats" && _req.method === "GET") {
     return handleStats();
   }
+  // #78
+  if (url.pathname === "/api/server/update-status" && _req.method === "GET") {
+    return handleUpdateStatus();
+  }
   return null;
+}
+
+async function handleUpdateStatus(): Promise<Response> {
+  const { buildUpdateStatus } = await import("../update-status");
+  try {
+    return Response.json(await buildUpdateStatus());
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "Unknown error";
+    return Response.json({ error: msg }, { status: 500 });
+  }
 }
 
 async function handleStats(): Promise<Response> {
