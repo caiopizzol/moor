@@ -12,6 +12,7 @@ import {
   pullImageStreaming,
   stopContainer,
 } from "../docker";
+import { requireNotDraining } from "../drain";
 import { autoDetectPorts, getProjectPorts } from "../ports";
 import { redactCredentials } from "../redact";
 import {
@@ -80,6 +81,12 @@ export async function handleDocker(req: Request, url: URL): Promise<Response | n
 }
 
 async function handleRun(req: Request, project: Project): Promise<Response> {
+  // #79: drain-mode gate. Cheapest check first — refuse new deploys
+  // before parsing URL or touching Docker. handleStart fallback below
+  // also goes through its own gate.
+  const drained = requireNotDraining();
+  if (drained) return drained;
+
   const url = new URL(req.url);
   const noCache = url.searchParams.get("nocache") === "true";
   const isImageProject = !!project.docker_image;
@@ -341,6 +348,12 @@ async function handleLogs(project: Project, url: URL): Promise<Response> {
 }
 
 async function handleExec(req: Request, project: Project): Promise<Response> {
+  // #79: drain-mode gate. Sync exec is "new work against the container"
+  // — same category as builds and async exec, so same gate. Lands
+  // BEFORE the body parse and live-container check.
+  const drained = requireNotDraining();
+  if (drained) return drained;
+
   console.log(
     `[exec] project=${project.name} container=${project.container_id} status=${project.status}`,
   );
@@ -411,6 +424,12 @@ async function handleExec(req: Request, project: Project): Promise<Response> {
 }
 
 async function handleBuild(project: Project): Promise<Response> {
+  // #79: drain-mode gate. Builds are explicitly listed in the drain
+  // refusal scope — they're long-running work that an upgrade can't
+  // safely interleave with.
+  const drained = requireNotDraining();
+  if (drained) return drained;
+
   console.log(
     `[build] project=${project.name} github_url=${redactCredentials(project.github_url) ?? ""}`,
   );
@@ -473,6 +492,12 @@ async function handleBuild(project: Project): Promise<Response> {
 }
 
 async function handleStart(project: Project): Promise<Response> {
+  // #79: drain-mode gate. Starting a container is "new work" from
+  // moor's perspective — same gate as deploy/build. Stop/logs stay
+  // open so operators can quiesce things during drain.
+  const drained = requireNotDraining();
+  if (drained) return drained;
+
   console.log(`[start] project=${project.name} image=${project.image_tag}`);
   if (!project.image_tag) {
     console.log("[start] rejected — no image built");

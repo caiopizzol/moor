@@ -1,5 +1,6 @@
 import db from "./db";
 import { execInContainer, killExec } from "./docker";
+import { getDrainState, isActive as isDrainActive } from "./drain";
 import { requireLiveContainer } from "./status-reconciler";
 
 /** Exported so the /api/runs/:id/stop dispatch path (#68) and its
@@ -82,12 +83,45 @@ async function tick() {
   }
 }
 
-async function tickInner() {
+/** Exported for tests so the #79 drain-skip path can be exercised
+ *  without spinning up the 60s scheduler. Production callers should
+ *  use startCronScheduler() / tick(). */
+export async function tickInner() {
   const now = new Date();
   const crons = db.query("SELECT * FROM crons WHERE enabled = 1").all() as CronRow[];
 
+  // #79: read drain state ONCE per tick. The state can change
+  // mid-tick (operator disables), but treating it as a snapshot
+  // avoids the case where some crons in this tick see drain=true
+  // and others don't from a race against TTL auto-clear.
+  const drain = getDrainState();
+  const drainActive = isDrainActive(drain);
+
   for (const cron of crons) {
     if (!matchesCron(cron.schedule, now)) continue;
+
+    // #79: write a synthetic skip row when drained. Same shape as
+    // the not-running skip row below — exit_code=-1, finished_at
+    // set, started_at_ms populated so moor_runs sorts it as recent.
+    // The whole point of writing a skip row is observability; agents
+    // tailing moor_runs should see "this cron didn't run, and why."
+    if (drainActive) {
+      const nowMs = Date.now();
+      db.query(
+        `INSERT INTO runs (cron_id, project_id, started_at, started_at_ms,
+                           finished_at, finished_at_ms, exit_code,
+                           stderr, duration_ms)
+         VALUES (?, ?, datetime('now'), ?, datetime('now'), ?, -1, ?, 0)`,
+      ).run(
+        cron.id,
+        cron.project_id,
+        nowMs,
+        nowMs,
+        `cron skipped: skipped due to drain (${drain.reason ?? "no reason"})`,
+      );
+      console.log(`[cron] skipped cron=${cron.id} reason=drain`);
+      continue;
+    }
 
     const project = db
       .query("SELECT id, container_id, status FROM projects WHERE id = ?")

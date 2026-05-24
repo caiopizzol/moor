@@ -1,5 +1,6 @@
 import { runCron } from "../cron";
 import db from "../db";
+import { requireNotDraining } from "../drain";
 import { liveRequireErrorResponse, requireLiveContainer } from "../status-reconciler";
 
 export async function handleCrons(req: Request, url: URL): Promise<Response | null> {
@@ -35,6 +36,12 @@ export async function handleCrons(req: Request, url: URL): Promise<Response | nu
   // Trigger: /api/crons/:id/run
   const runMatch = url.pathname.match(/^\/api\/crons\/(\d+)\/run$/);
   if (runMatch && req.method === "POST") {
+    // #79: drain-mode gate. Manual cron triggers are explicitly in
+    // the drain refusal scope; scheduled-tick drain handling is in
+    // cron.ts (writes a "skipped due to drain" run row instead).
+    const drained = requireNotDraining();
+    if (drained) return drained;
+
     const id = Number(runMatch[1]);
     const cron = db.query("SELECT * FROM crons WHERE id = ?").get(id) as {
       id: number;

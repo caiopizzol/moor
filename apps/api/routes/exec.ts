@@ -1,4 +1,5 @@
 import db from "../db";
+import { requireNotDraining } from "../drain";
 import {
   EXEC_ASYNC_TIMEOUT_DEFAULT_MS,
   EXEC_ASYNC_TIMEOUT_MAX_MS,
@@ -15,6 +16,11 @@ export async function handleExec(req: Request, url: URL): Promise<Response | nul
   // POST /api/projects/:id/exec/async
   const startMatch = url.pathname.match(/^\/api\/projects\/(\d+)\/exec\/async$/);
   if (startMatch && req.method === "POST") {
+    // #79: drain-mode gate. Async exec is the canonical "new work" —
+    // gate it cheapest, before any other I/O.
+    const drained = requireNotDraining();
+    if (drained) return drained;
+
     const projectId = Number(startMatch[1]);
     const project = db
       .query("SELECT id, container_id, status FROM projects WHERE id = ?")

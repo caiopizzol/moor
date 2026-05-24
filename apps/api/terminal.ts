@@ -1,6 +1,7 @@
 import type { ServerWebSocket } from "bun";
 import db from "./db";
 import { inspectExec, SOCKET as SOCKET_PATH } from "./docker";
+import { requireNotDraining } from "./drain";
 import { liveRequireErrorResponse, requireLiveContainer } from "./status-reconciler";
 import {
   getLastCommand,
@@ -32,6 +33,11 @@ export async function upgradeTerminal(
   req: Request,
   server: ReturnType<typeof Bun.serve>,
 ): Promise<Response | true> {
+  // #79: drain-mode gate. Terminal upgrades start a new exec session
+  // in the container; same gate as builds/execs.
+  const drained = requireNotDraining();
+  if (drained) return drained;
+
   const url = new URL(req.url);
   const match = url.pathname.match(/^\/api\/projects\/(\d+)\/terminal$/);
   if (!match) return new Response("Not found", { status: 404 });

@@ -28,6 +28,16 @@ export async function handleServer(_req: Request, url: URL): Promise<Response | 
   if (url.pathname === "/api/server/update-status" && _req.method === "GET") {
     return handleUpdateStatus();
   }
+  // #79
+  if (url.pathname === "/api/server/drain" && _req.method === "GET") {
+    return handleDrainStatus();
+  }
+  if (url.pathname === "/api/server/drain/enable" && _req.method === "POST") {
+    return handleDrainEnable(_req);
+  }
+  if (url.pathname === "/api/server/drain/disable" && _req.method === "POST") {
+    return handleDrainDisable();
+  }
   return null;
 }
 
@@ -39,6 +49,34 @@ async function handleUpdateStatus(): Promise<Response> {
     const msg = e instanceof Error ? e.message : "Unknown error";
     return Response.json({ error: msg }, { status: 500 });
   }
+}
+
+async function handleDrainStatus(): Promise<Response> {
+  const { getDrainState } = await import("../drain");
+  const { getActiveWorkCounts } = await import("../update-status");
+  // active_work uses the same counter as update-status so the two
+  // tools never disagree about what's in flight.
+  return Response.json({
+    state: getDrainState(),
+    active_work: getActiveWorkCounts(),
+  });
+}
+
+async function handleDrainEnable(req: Request): Promise<Response> {
+  const { enableDrain } = await import("../drain");
+  const body = (await req.json().catch(() => ({}))) as {
+    reason?: string;
+    ttl_minutes?: number;
+    clear_after_version?: string;
+  };
+  const state = enableDrain(body);
+  return Response.json({ state });
+}
+
+async function handleDrainDisable(): Promise<Response> {
+  const { disableDrain, getDrainState } = await import("../drain");
+  disableDrain();
+  return Response.json({ state: getDrainState() });
 }
 
 async function handleStats(): Promise<Response> {
