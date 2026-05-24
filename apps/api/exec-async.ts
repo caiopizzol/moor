@@ -303,14 +303,27 @@ export async function stopAsyncExec(runId: number): Promise<{
  *
  *  Per-exec kill is bounded by PER_KILL_TIMEOUT_MS so one slow Docker call
  *  can't burn the entire shutdown budget; Promise.allSettled means others
- *  proceed in parallel. If a kill times out the row still gets finalized
- *  honestly with the reason in stderr — orphan sweep on next boot is the
- *  fallback.
+ *  proceed in parallel.
  *
- *  Returns the run IDs we transitioned to 'stopped' (won the race against
- *  natural completion / safety timer / operator stop). The WHERE state =
- *  'running' guard in tryFinalize is the race protection; this function
- *  just reports what it actually did.
+ *  State mapping is the same honest contract as stopAsyncExec — we do NOT
+ *  claim 'stopped' for a kill we couldn't verify. The #34 Phase B orphan
+ *  sweep only touches rows still in state='running', so a finalized-but-
+ *  uncertain row would never be corrected later. Better to record 'error'
+ *  with the reason now than to lie about the runtime:
+ *    - killer returns sentTo !== null && live === 0  → 'stopped' (clean kill)
+ *    - killer returns sentTo !== null && live > 0    → 'error' (survivors)
+ *    - killer returns sentTo === null                → 'error' (couldn't locate)
+ *    - killer throws / times out                     → 'error' (outcome unknown)
+ *    - execId === "" (exec never started)            → 'error' (nothing to kill)
+ *
+ *  In every case the reason string is appended to stderr so post-restart
+ *  inspection shows shutdown as the proximate cause. error_message carries
+ *  the kill-specific detail.
+ *
+ *  Returns the run IDs we transitioned to ANY terminal state (won the race
+ *  against natural completion / safety timer / operator stop). The
+ *  WHERE state='running' guard in tryFinalize is the race protection; this
+ *  function just reports what it actually claimed.
  *
  *  killer is injectable so tests don't need real Docker. */
 export type ExecKiller = (execId: string) => Promise<{ sentTo: string | null; live: number }>;
@@ -334,30 +347,55 @@ export async function interruptActiveExecRuns(
       active.abort.abort();
 
       // Append the reason to the live stderr tail BEFORE finalize so the
-      // persisted row's stderr column carries why-it-stopped along with
-      // whatever output the process produced.
+      // persisted row's stderr column shows shutdown was the proximate
+      // cause regardless of which terminal state we land on.
       active.stderr.appendBytes(reasonBytes);
 
-      if (active.execId) {
-        try {
-          await Promise.race([
-            killer(active.execId),
-            new Promise<never>((_, reject) =>
-              setTimeout(
-                () => reject(new Error(`kill timeout after ${PER_KILL_TIMEOUT_MS}ms`)),
-                PER_KILL_TIMEOUT_MS,
-              ),
-            ),
-          ]);
-        } catch (e) {
-          // Don't block the finalize on a slow / failed kill — orphan
-          // sweep will catch any genuinely-still-running process on next
-          // boot, and the row is honestly marked stopped either way.
-          console.warn(`[exec-async] kill on shutdown failed for run ${runId}:`, e);
-        }
+      // No exec was created yet — nothing to kill, but we can't honestly
+      // call this 'stopped' either. There's no process state to claim.
+      if (!active.execId) {
+        const won = tryFinalize(
+          runId,
+          "error",
+          null,
+          null,
+          `${reason} exec had not started before shutdown`,
+        );
+        return won ? runId : null;
       }
 
-      const won = tryFinalize(runId, "stopped", null, null, null);
+      let killResult: { sentTo: string | null; live: number } | null = null;
+      let killError: string | null = null;
+      try {
+        killResult = await Promise.race([
+          killer(active.execId),
+          new Promise<never>((_, reject) =>
+            setTimeout(
+              () => reject(new Error(`kill timeout after ${PER_KILL_TIMEOUT_MS}ms`)),
+              PER_KILL_TIMEOUT_MS,
+            ),
+          ),
+        ]);
+      } catch (e) {
+        killError = e instanceof Error ? e.message : String(e);
+        console.warn(`[exec-async] kill on shutdown failed for run ${runId}:`, killError);
+      }
+
+      // Clean kill verified: sentTo !== null AND live === 0.
+      if (killResult && killResult.sentTo !== null && killResult.live === 0) {
+        const won = tryFinalize(runId, "stopped", null, killResult.sentTo, null);
+        return won ? runId : null;
+      }
+
+      // Anything else is an honest 'error'. Build the most specific message
+      // we can so operators can decide whether to docker exec into the
+      // container and clean up by hand.
+      const errorMessage = killError
+        ? `${reason} kill outcome unknown (${killError}); process may have continued`
+        : killResult && killResult.sentTo !== null && killResult.live > 0
+          ? `${reason} kill attempted on pid ${killResult.sentTo} but ${killResult.live} descendant(s) remained; process state unknown`
+          : `${reason} kill could not locate the process; container may need restart`;
+      const won = tryFinalize(runId, "error", null, killResult?.sentTo ?? null, errorMessage);
       return won ? runId : null;
     }),
   );

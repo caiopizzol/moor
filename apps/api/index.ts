@@ -248,7 +248,10 @@ const shutdown = async () => {
       console.log(`[moor] interrupted ${interruptedProjectIds.length} in-flight build/pull`);
     }
     if (interruptedExecIds.length > 0) {
-      console.log(`[moor] killed ${interruptedExecIds.length} in-flight async exec`);
+      // "interrupted" not "killed": some rows may have landed on 'error' if
+      // killExec couldn't verify a clean termination. The rows themselves
+      // carry the per-run truth (state + stderr + error_message).
+      console.log(`[moor] interrupted ${interruptedExecIds.length} in-flight async exec`);
     }
 
     // Reconcile projects.status for each interrupted build so the

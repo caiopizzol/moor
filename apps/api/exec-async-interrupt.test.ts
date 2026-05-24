@@ -29,11 +29,14 @@ function makeRun(projectId: number): number {
 
 function readRow(runId: number) {
   return db
-    .query("SELECT state, stderr, killed_pid, finished_at_ms FROM exec_runs WHERE id = ?")
+    .query(
+      "SELECT state, stderr, killed_pid, error_message, finished_at_ms FROM exec_runs WHERE id = ?",
+    )
     .get(runId) as {
     state: string;
     stderr: string | null;
     killed_pid: string | null;
+    error_message: string | null;
     finished_at_ms: number | null;
   };
 }
@@ -54,7 +57,7 @@ describe("#82 interruptActiveExecRuns", () => {
     expect(killCalls).toBe(0);
   });
 
-  test("calls killer with the right execId, finalizes row to stopped, appends reason to stderr", async () => {
+  test("clean kill (sentTo set, live=0) → stopped with reason in stderr and killed_pid set", async () => {
     const pid = makeProject();
     const rid = makeRun(pid);
     const abort = _seedActiveExecRunForTest(rid, "exec-abc-123");
@@ -75,8 +78,47 @@ describe("#82 interruptActiveExecRuns", () => {
     const row = readRow(rid);
     expect(row.state).toBe("stopped");
     expect(row.stderr).toContain("[moor shutting down; exec killed]");
+    expect(row.killed_pid).toBe("42");
+    expect(row.error_message).toBeNull();
     expect(row.finished_at_ms).not.toBeNull();
     expect(_hasActiveExecRunForTest(rid)).toBe(false);
+  });
+
+  test("survivors (sentTo set, live>0) → error with survivor count, NOT stopped", async () => {
+    const pid = makeProject();
+    const rid = makeRun(pid);
+    _seedActiveExecRunForTest(rid, "exec-survivors");
+
+    const ids = await interruptActiveExecRuns("[reason]", async () => ({
+      sentTo: "42",
+      live: 3,
+    }));
+    expect(ids).toEqual([rid]);
+
+    const row = readRow(rid);
+    expect(row.state).toBe("error");
+    expect(row.killed_pid).toBe("42");
+    expect(row.error_message).toContain("3 descendant(s) remained");
+    expect(row.error_message).toContain("[reason]");
+    // The reason marker is still in stderr regardless of terminal state.
+    expect(row.stderr).toContain("[reason]");
+  });
+
+  test("kill couldn't locate process (sentTo=null) → error, NOT stopped", async () => {
+    const pid = makeProject();
+    const rid = makeRun(pid);
+    _seedActiveExecRunForTest(rid, "exec-no-pid");
+
+    const ids = await interruptActiveExecRuns("[reason]", async () => ({
+      sentTo: null,
+      live: 0,
+    }));
+    expect(ids).toEqual([rid]);
+
+    const row = readRow(rid);
+    expect(row.state).toBe("error");
+    expect(row.killed_pid).toBeNull();
+    expect(row.error_message).toContain("could not locate the process");
   });
 
   test("idempotent — second call on the same run does nothing (row already stopped)", async () => {
@@ -120,7 +162,7 @@ describe("#82 interruptActiveExecRuns", () => {
     expect(row.stderr).toBeFalsy(); // our finalize was a no-op; stderr unchanged
   });
 
-  test("slow killer is bounded — finalize still happens, kill timeout logged but not thrown", async () => {
+  test("slow killer (hangs past timeout) → error with 'outcome unknown', NOT stopped", async () => {
     const pid = makeProject();
     const rid = makeRun(pid);
     _seedActiveExecRunForTest(rid, "exec-slow");
@@ -128,8 +170,8 @@ describe("#82 interruptActiveExecRuns", () => {
     const startMs = Date.now();
     const ids = await interruptActiveExecRuns(
       "[reason]",
-      // Killer that hangs forever — the per-kill timeout should fire and
-      // the finalize should still happen.
+      // Killer that hangs forever — the per-kill timeout fires and we
+      // finalize as error (we can't verify the process died).
       () => new Promise(() => {}),
     );
     const elapsed = Date.now() - startMs;
@@ -138,10 +180,14 @@ describe("#82 interruptActiveExecRuns", () => {
     // Should have waited ~1s (PER_KILL_TIMEOUT_MS) — assert under 2.5s
     // to leave plenty of slack for slow CI.
     expect(elapsed).toBeLessThan(2500);
-    expect(readRow(rid).state).toBe("stopped");
+    const row = readRow(rid);
+    expect(row.state).toBe("error");
+    expect(row.error_message).toContain("kill outcome unknown");
+    expect(row.error_message).toContain("timeout");
+    expect(row.error_message).toContain("process may have continued");
   });
 
-  test("multiple active runs are processed in parallel and all finalized", async () => {
+  test("multiple active runs are processed in parallel and all finalized (clean kills)", async () => {
     const pid = makeProject();
     const rids = [makeRun(pid), makeRun(pid), makeRun(pid)];
     for (const rid of rids) _seedActiveExecRunForTest(rid, `exec-${rid}`);
@@ -163,7 +209,7 @@ describe("#82 interruptActiveExecRuns", () => {
     }
   });
 
-  test("kill that throws is tolerated — row still finalized stopped", async () => {
+  test("kill that throws → error with 'outcome unknown', NOT stopped", async () => {
     const pid = makeProject();
     const rid = makeRun(pid);
     _seedActiveExecRunForTest(rid, "exec-throws");
@@ -173,10 +219,13 @@ describe("#82 interruptActiveExecRuns", () => {
     });
 
     expect(ids).toEqual([rid]);
-    expect(readRow(rid).state).toBe("stopped");
+    const row = readRow(rid);
+    expect(row.state).toBe("error");
+    expect(row.error_message).toContain("kill outcome unknown");
+    expect(row.error_message).toContain("docker exploded");
   });
 
-  test("active entry with empty execId still aborts + finalizes, but never calls killer", async () => {
+  test("active entry with empty execId → error with 'exec had not started', never calls killer", async () => {
     const pid = makeProject();
     const rid = makeRun(pid);
     const abort = _seedActiveExecRunForTest(rid, ""); // exec hadn't started yet
@@ -190,6 +239,31 @@ describe("#82 interruptActiveExecRuns", () => {
     expect(ids).toEqual([rid]);
     expect(killCalls).toBe(0);
     expect(abort.signal.aborted).toBe(true);
-    expect(readRow(rid).state).toBe("stopped");
+    const row = readRow(rid);
+    expect(row.state).toBe("error");
+    expect(row.error_message).toContain("exec had not started");
+  });
+
+  test("mixed kill outcomes across runs → each row reflects its own truth", async () => {
+    const pid = makeProject();
+    const cleanRid = makeRun(pid);
+    const survivorsRid = makeRun(pid);
+    const throwsRid = makeRun(pid);
+    _seedActiveExecRunForTest(cleanRid, "exec-clean");
+    _seedActiveExecRunForTest(survivorsRid, "exec-survivors");
+    _seedActiveExecRunForTest(throwsRid, "exec-throws");
+
+    const ids = await interruptActiveExecRuns("[reason]", async (execId) => {
+      if (execId === "exec-clean") return { sentTo: "10", live: 0 };
+      if (execId === "exec-survivors") return { sentTo: "20", live: 2 };
+      throw new Error("daemon down");
+    });
+
+    expect(ids.sort((a, b) => a - b)).toEqual(
+      [cleanRid, survivorsRid, throwsRid].sort((a, b) => a - b),
+    );
+    expect(readRow(cleanRid).state).toBe("stopped");
+    expect(readRow(survivorsRid).state).toBe("error");
+    expect(readRow(throwsRid).state).toBe("error");
   });
 });
