@@ -16,3 +16,12 @@ jobs:
       - run: bunx biome check .
       - run: bunx tsc --noEmit -p apps/api/tsconfig.json
       - run: cd apps/web && bunx tsc -b
+      # #80 PR #3 follow-up: respawner build + self-test were added to
+      # release-moor.yml's check job, but that only runs on push to main /
+      # workflow_dispatch — PR CI was leaving the privileged image
+      # unvalidated. Mirror the same two steps here so a broken
+      # respawner can't reach main.
+      - name: Build moor-respawner (test only)
+        run: docker build -t moor-respawner-test apps/respawner
+      - name: Respawner self-test
+        run: docker run --rm -v /var/run/docker.sock:/var/run/docker.sock moor-respawner-test --self-test
