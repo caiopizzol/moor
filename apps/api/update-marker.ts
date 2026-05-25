@@ -27,6 +27,7 @@ import { readdirSync, readFileSync, renameSync, unlinkSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import db from "./db";
 import { disableDrain } from "./drain";
+import { sweepArtifactsForAudit } from "./update-artifacts";
 import { finalizeAudit } from "./update-audit";
 
 export const MARKER_PREFIX = ".update-result-";
@@ -212,6 +213,17 @@ export function ingestMarker(filePath: string): IngestResult {
     console.warn(
       `[update-marker] failed to unlink ${basename(filePath)} after ingest:`,
       e instanceof Error ? e.message : e,
+    );
+  }
+
+  // #98: row just reached a terminal state — sweep the matching
+  // context/override/rollback artifacts from /app/data. Targeted
+  // (audit_id-scoped); the startup sweep is the catch-all for rows
+  // finalized outside this path.
+  const swept = sweepArtifactsForAudit(dirname(filePath), parsed.payload.audit_id, true);
+  if (swept.length > 0) {
+    console.log(
+      `[update-artifacts] swept ${swept.length} artifact(s) for audit_id=${parsed.payload.audit_id}`,
     );
   }
 

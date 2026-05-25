@@ -1,12 +1,19 @@
-// Tests for #80 PR #2 marker-file ingestion. Synthetic marker JSON in a
-// per-test tmpdir; in-memory SQLite for the audit table. No Docker.
+// Tests for #80 PR #2 marker-file ingestion. Synthetic marker JSON in
+// a per-test tmpdir; in-memory SQLite for the audit table. No Docker.
+//
+// MOOR_DB_PATH MUST be `:memory:` even though we have a tmpdir — the
+// db module is a singleton across the whole bun test process, so a
+// file-backed DB colocated with the tmpdir races with #98's tests
+// (the first afterAll rmSync's the active DB path; subsequent
+// queries from the other file fail with disk I/O errors).
+
+process.env.MOOR_DB_PATH = ":memory:";
 
 import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const testRoot = mkdtempSync(join(tmpdir(), "moor-update-marker-test-"));
-process.env.MOOR_DB_PATH = join(testRoot, "moor.db");
 
 import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
 
@@ -40,8 +47,8 @@ function writeMarker(auditId: number | string, payload: unknown): string {
 }
 
 function clearMarkerDir() {
+  // testRoot only holds marker test files now — DB is in-memory.
   for (const name of readdirSync(markerDir)) {
-    if (name === "moor.db" || name.startsWith("moor.db-")) continue;
     try {
       rmSync(join(markerDir, name));
     } catch {

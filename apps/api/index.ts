@@ -39,6 +39,7 @@ import {
 } from "./status-reconciler";
 import { terminalWebSocket, upgradeTerminal } from "./terminal";
 import { clearAllSessions, startSessionCleanup } from "./terminal-sessions";
+import { sweepAllArtifacts } from "./update-artifacts";
 import { sweepStaleInProgress } from "./update-audit";
 import {
   defaultMarkerDir,
@@ -86,6 +87,27 @@ maybeAutoClearForBoot();
     console.warn(
       `[update-audit] swept ${sweptIds.length} stale 'in_progress' row(s) to 'crashed': ${sweptIds.join(", ")}`,
     );
+  }
+}
+// #98: one-shot sweep at boot for context/override/rollback artifacts
+// whose audit row is now in a terminal state. Runs AFTER the stale-
+// audit sweep so a row just transitioned to 'crashed' also gets its
+// artifacts cleaned in the same boot. The common-path cleanup happens
+// inline on each marker ingest (sweepArtifactsForAudit); this catches
+// rows finalized outside that path (operator SQL, crash recovery,
+// pre-#98 history).
+{
+  const dir = defaultMarkerDir();
+  if (dir !== "") {
+    const r = sweepAllArtifacts(dir);
+    if (r.deleted.length > 0) {
+      console.log(`[update-artifacts] boot sweep deleted ${r.deleted.length} stale artifact(s)`);
+    }
+    if (r.skipped_unknown_audit.length > 0) {
+      console.warn(
+        `[update-artifacts] ${r.skipped_unknown_audit.length} artifact(s) reference unknown audit_id(s): ${r.skipped_unknown_audit.join(",")} (manual cleanup only; see #98)`,
+      );
+    }
   }
 }
 
