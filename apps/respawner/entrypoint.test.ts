@@ -46,18 +46,17 @@ function newTestDir(): string {
 }
 
 function writeStubs(stubsDir: string, b: StubBehavior): void {
-  // The default `docker` stub is a multiplexer that lets each test
-  // override only the subcommands it cares about. Defaults log to
-  // stdout and exit 0 so the script can introspect what was called.
+  // Every docker invocation logs its full argv to $stubsDir/docker.log
+  // so tests can assert the -f stack was actually built and passed.
+  // (The previous build_compose_argv used `set --` inside a function,
+  // which POSIX sh doesn't propagate to the caller — silently dropped
+  // the -f stack. The log makes that class of bug impossible to hide.)
   const dockerBody =
     b.docker ??
     `case "$1" in
   version) exit 0 ;;
   compose)
     shift
-    # parse out the final positional (service name) by walking args.
-    last=""
-    for a in "$@"; do last="$a"; done
     echo "[stub-docker-compose] $@"
     exit 0
     ;;
@@ -66,10 +65,22 @@ function writeStubs(stubsDir: string, b: StubBehavior): void {
 esac`;
   const curlBody = b.curl ?? `exit 0`;
 
-  writeFileSync(join(stubsDir, "docker"), `#!/bin/sh\n${dockerBody}\n`);
+  const dockerLog = join(stubsDir, "docker.log");
+  // Prepend an argv-log line BEFORE the stub body so even stubs that
+  // exit early still record the call.
+  const dockerWithLog = `echo "$@" >> "${dockerLog}"\n${dockerBody}`;
+  writeFileSync(join(stubsDir, "docker"), `#!/bin/sh\n${dockerWithLog}\n`);
   chmodSync(join(stubsDir, "docker"), 0o755);
   writeFileSync(join(stubsDir, "curl"), `#!/bin/sh\n${curlBody}\n`);
   chmodSync(join(stubsDir, "curl"), 0o755);
+}
+
+function readDockerLog(stubsDir: string): string[] {
+  const p = join(stubsDir, "docker.log");
+  if (!existsSync(p)) return [];
+  return readFileSync(p, "utf-8")
+    .split("\n")
+    .filter((s) => s.length > 0);
 }
 
 function writeContext(
@@ -413,10 +424,13 @@ esac`,
 });
 
 describe("respawner entrypoint apply: happy path success", () => {
-  test("pull + up + health all pass → marker 'success', no rollback artifacts", async () => {
+  test("pull + up + health all pass → marker 'success', -f stack reaches docker, no rollback artifacts", async () => {
     const dir = newTestDir();
     const stubs = newTestDir();
-    writeContext(dir, 7);
+    writeContext(dir, 7, {
+      // Use multiple config_files to assert the full stack is replayed.
+      config_files: ["/root/moor/docker-compose.yml", "/root/moor/docker-compose.override.yml"],
+    });
     writeStubs(stubs, { curl: `exit 0` });
     const r = await runApply({ dataDir: dir, stubsDir: stubs, auditId: 7, shrinkTimeouts: true });
     expect(r.exitCode).toBe(0);
@@ -426,9 +440,72 @@ describe("respawner entrypoint apply: happy path success", () => {
     expect(marker.error_log).toBeUndefined();
     expect(marker.rollback_error).toBeUndefined();
 
+    // Both pull AND up must have received the full -f stack: every
+    // config_file from the context + the apply override. This catches
+    // the POSIX set-- propagation bug class (the old build_compose_argv
+    // silently dropped these).
+    const dockerCalls = readDockerLog(stubs);
+    const pullCall = dockerCalls.find((l) => l.includes(" pull "));
+    const upCall = dockerCalls.find((l) => l.includes(" up "));
+    expect(pullCall).toBeDefined();
+    expect(upCall).toBeDefined();
+    for (const call of [pullCall, upCall]) {
+      expect(call).toContain("-f /root/moor/docker-compose.yml");
+      expect(call).toContain("-f /root/moor/docker-compose.override.yml");
+      expect(call).toContain(`-f ${dir}/.update-override-7.yml`);
+    }
+
     // No rollback override file written on success.
     expect(existsSync(join(dir, ".update-rollback-7.yml"))).toBe(false);
     expect(listJunk(dir)).toEqual([]);
+  });
+});
+
+describe("respawner entrypoint apply: -f stack on rollback path", () => {
+  test("rollback compose up receives the rollback override file (not the apply one) + --pull never", async () => {
+    const dir = newTestDir();
+    const stubs = newTestDir();
+    writeContext(dir, 9);
+    writeStubs(stubs, {
+      docker: `case "$1" in
+  version) exit 0 ;;
+  compose)
+    verb=""
+    pull_never=0
+    for a in "$@"; do
+      case "$a" in
+        pull|up|version) verb="$a" ;;
+        --pull) pull_never=mark ;;
+        never) [ "$pull_never" = "mark" ] && pull_never=1 ;;
+      esac
+    done
+    case "$verb" in
+      pull) exit 0 ;;
+      up)
+        if [ "$pull_never" = "1" ]; then exit 0; fi
+        echo "apply up failure" >&2; exit 1
+        ;;
+    esac
+    exit 0
+    ;;
+  tag) exit 0 ;;
+  *) exit 0 ;;
+esac`,
+      curl: `exit 0`,
+    });
+    const r = await runApply({ dataDir: dir, stubsDir: stubs, auditId: 9, shrinkTimeouts: true });
+    expect(r.exitCode).toBe(0);
+    expect(readMarker(dir, 9).state).toBe("rolled_back");
+
+    const dockerCalls = readDockerLog(stubs);
+    const upCalls = dockerCalls.filter((l) => l.includes(" up "));
+    expect(upCalls.length).toBe(2);
+    // Apply up: has apply override, NO --pull never.
+    expect(upCalls[0]).toContain(`-f ${dir}/.update-override-9.yml`);
+    expect(upCalls[0]).not.toContain("--pull never");
+    // Rollback up: has rollback override + --pull never.
+    expect(upCalls[1]).toContain(`-f ${dir}/.update-rollback-9.yml`);
+    expect(upCalls[1]).toContain("--pull never");
   });
 });
 
