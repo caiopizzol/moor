@@ -4,15 +4,18 @@
 # Modes:
 #   --self-test     verify docker + compose + jq are present, echo
 #                   diagnostic env vars.
-#   apply           perform the update flow: read context, pull + up
-#                   via compose with the digest override, poll
-#                   /api/health, write the result marker. On
-#                   up/wait/health failure, attempt rollback via
-#                   `docker tag <prev_image_id> :latest` +
-#                   --pull never override; markers carry
-#                   rolled_back | rollback_failed accordingly (#80 PR #5).
-#                   Pull failure does NOT trigger rollback (moor was
-#                   never replaced).
+#   apply           perform the update flow: read context, `docker pull`
+#                   the target digest, `docker tag` it as
+#                   ghcr.io/caiopizzol/moor:latest, then
+#                   `docker compose up --pull never` against the
+#                   operator's existing -f stack (no moor-generated
+#                   override). Poll /api/health, write the result
+#                   marker. On up/wait/health failure, attempt rollback
+#                   via `docker tag <prev_image_id> :latest` + the same
+#                   compose up --pull never. Neither apply nor rollback
+#                   appends `-f /app/data/...` to the new container's
+#                   config_files label (#105). Pull/tag failure on apply
+#                   does NOT trigger rollback (moor was never replaced).
 #   --help          usage.
 #
 # Security posture (also on the image LABEL):
@@ -120,46 +123,23 @@ write_marker() {
   mv "$tmp" "$target"
 }
 
-# Write a file atomically via temp + rename (same as write_marker).
-# Used for the rollback override so a respawner crash mid-write can't
-# leave a half-written override on disk for the next attempt.
-write_file_atomic() {
-  path="$1"
-  content="$2"
-  tmp="$path.tmp.$$"
-  printf '%s' "$content" > "$tmp"
-  mv "$tmp" "$path"
-}
-
 # Self-contained compose invocations. POSIX (and busybox) sh function
 # `set --` does NOT propagate the function-local positional params back
 # to the caller, so the previous "build argv into $@, then invoke from
-# outer scope" pattern silently dropped the -f stack. Each verb gets
-# its own helper that builds + consumes argv in one function.
-
-# Run `docker compose ... pull <service>` with the standard -f stack:
-#   -f <config_files[0]> ... -f <config_files[N]> -f <extra_override>
-# Stdout/stderr passed through to caller's command substitution; exit
-# code is docker compose's.
-compose_pull_with() {
-  cp_override="$1"
-  set --
-  cp_i=0
-  while [ "$cp_i" -lt "$config_count" ]; do
-    cp_cf=$(jq -re ".config_files[$cp_i]" "$context_file")
-    set -- "$@" -f "$cp_cf"
-    cp_i=$((cp_i + 1))
-  done
-  set -- "$@" -f "$cp_override"
-  docker compose --project-directory "$working_dir" "$@" pull "$service" 2>&1
-}
+# outer scope" pattern silently dropped the -f stack. The single helper
+# below builds + consumes argv in one function.
 
 # Run `docker compose ... up -d --no-deps --wait --wait-timeout N
-# [--pull never] <service>`. extra is appended verbatim BEFORE the
-# service name; rollback passes "--pull never", apply passes "".
-compose_up_with() {
-  cu_override="$1"
-  cu_extra="$2"
+# --pull never <service>` with ONLY the operator's -f stack (the
+# config_files captured at moor's launch). #105: we used to append
+# `-f .update-{override,rollback}-<id>.yml` here, which Compose then
+# baked into the new container's `config_files` label permanently,
+# poisoning the next moor_update_apply (the #99 validator rejects
+# entries outside working_dir). The fix is to never append our own
+# `-f` and let the retag handle the image swap: callers pull-and-tag
+# the target (apply) or tag prev_image_id (rollback) onto :latest, and
+# the operator's compose service definition pulls from local :latest.
+compose_up_pull_never() {
   set --
   cu_i=0
   while [ "$cu_i" -lt "$config_count" ]; do
@@ -167,10 +147,25 @@ compose_up_with() {
     set -- "$@" -f "$cu_cf"
     cu_i=$((cu_i + 1))
   done
-  set -- "$@" -f "$cu_override"
-  # $cu_extra is intentionally word-split so "--pull never" → 2 args.
-  # shellcheck disable=SC2086
-  docker compose --project-directory "$working_dir" "$@" up -d --no-deps --wait --wait-timeout "$WAIT_TIMEOUT_SECONDS" $cu_extra "$service" 2>&1
+  docker compose --project-directory "$working_dir" "$@" up -d --no-deps --wait --wait-timeout "$WAIT_TIMEOUT_SECONDS" --pull never "$service" 2>&1
+}
+
+# Pull target image by digest and retag local `:latest` to it (#105).
+# Both must succeed before we touch compose; either failure → marker
+# `failed`, no rollback (moor was never replaced). Echoes a single
+# diagnostic line on failure that the caller passes to write_marker.
+pull_and_tag_target() {
+  pt_ref="ghcr.io/caiopizzol/moor@${target_digest}"
+  pt_tag="ghcr.io/caiopizzol/moor:latest"
+  if ! pt_pull_out=$(docker pull "$pt_ref" 2>&1); then
+    echo "docker pull $pt_ref failed: $pt_pull_out"
+    return 1
+  fi
+  if ! pt_tag_out=$(docker tag "$pt_ref" "$pt_tag" 2>&1); then
+    echo "docker tag $pt_ref $pt_tag failed: $pt_tag_out"
+    return 1
+  fi
+  return 0
 }
 
 # Attempt rollback after a compose up / wait / health failure.
@@ -195,7 +190,7 @@ attempt_rollback() {
       ;;
   esac
 
-  echo "[respawner] rollback 1/4: docker tag $ar_prev_image_id ghcr.io/caiopizzol/moor:latest"
+  echo "[respawner] rollback 1/3: docker tag $ar_prev_image_id ghcr.io/caiopizzol/moor:latest"
   if ! ar_tag_out=$(docker tag "$ar_prev_image_id" ghcr.io/caiopizzol/moor:latest 2>&1); then
     ar_rb_msg="docker tag failed: $ar_tag_out"
     echo "[respawner] ROLLBACK FAIL: $ar_rb_msg" >&2
@@ -203,22 +198,18 @@ attempt_rollback() {
     return 1
   fi
 
-  ar_rollback_override="$DATA_DIR/.update-rollback-${ar_audit_id}.yml"
-  echo "[respawner] rollback 2/4: writing $ar_rollback_override"
-  write_file_atomic "$ar_rollback_override" "services:
-  $service:
-    image: ghcr.io/caiopizzol/moor:latest
-"
-
-  echo "[respawner] rollback 3/4: docker compose up -d --no-deps --wait --wait-timeout $WAIT_TIMEOUT_SECONDS --pull never $service"
-  if ! ar_up_out=$(compose_up_with "$ar_rollback_override" "--pull never"); then
+  # #105: no rollback override file. Retagging :latest to prev_image_id
+  # above is enough; compose up below uses only the operator's -f stack
+  # and `--pull never` so it picks up the now-prev-image-id :latest.
+  echo "[respawner] rollback 2/3: docker compose up -d --no-deps --wait --wait-timeout $WAIT_TIMEOUT_SECONDS --pull never $service"
+  if ! ar_up_out=$(compose_up_pull_never); then
     ar_rb_msg="rollback compose up failed: $ar_up_out"
     echo "[respawner] ROLLBACK FAIL: $ar_rb_msg" >&2
     write_marker "$ar_audit_id" "rollback_failed" "$ar_apply_error" "$ar_rb_msg"
     return 1
   fi
 
-  echo "[respawner] rollback 4/4: polling http://$service:3000/api/health for ${HEALTH_TIMEOUT_SECONDS}s"
+  echo "[respawner] rollback 3/3: polling http://$service:3000/api/health for ${HEALTH_TIMEOUT_SECONDS}s"
   ar_elapsed=0
   while [ "$ar_elapsed" -lt "$HEALTH_TIMEOUT_SECONDS" ]; do
     if ar_health_out=$(curl --silent --fail --max-time 5 "http://$service:3000/api/health" 2>&1); then
@@ -245,16 +236,9 @@ apply_mode() {
   fi
 
   context_file="$DATA_DIR/.update-context-${audit_id}.json"
-  override_file="$DATA_DIR/.update-override-${audit_id}.yml"
 
   if [ ! -f "$context_file" ]; then
     msg="missing context file: $context_file"
-    echo "[respawner] FAIL: $msg" >&2
-    write_marker "$audit_id" "failed" "$msg"
-    return 2
-  fi
-  if [ ! -f "$override_file" ]; then
-    msg="missing override file: $override_file"
     echo "[respawner] FAIL: $msg" >&2
     write_marker "$audit_id" "failed" "$msg"
     return 2
@@ -270,8 +254,8 @@ apply_mode() {
   # attempt_rollback. Don't fail apply here.
   prev_image_id=$(jq -r '.prev_image_id // ""' "$context_file")
 
-  # config_files array → compose -f stack. Used by compose_*_with
-  # helpers; cache the count once.
+  # config_files array → compose -f stack. Used by compose_up_pull_never;
+  # cache the count once.
   config_count=$(jq '.config_files | length' "$context_file")
 
   # Brief sleep so moor's HTTP response carrying audit_id flushes to
@@ -280,23 +264,25 @@ apply_mode() {
 
   echo "[respawner] apply audit_id=$audit_id service=$service target_digest=$target_digest"
   echo "[respawner] working_dir=$working_dir prev_image_id=${prev_image_id:-<none>}"
-  echo "[respawner] config_files count=$config_count override=$override_file"
+  echo "[respawner] config_files count=$config_count"
 
-  # Pull. PULL FAILURE DOES NOT TRIGGER ROLLBACK — moor was never
+  # Step 1: docker pull <repo>@<digest> + docker tag <pulled> :latest.
+  # PULL/TAG FAILURE DOES NOT TRIGGER ROLLBACK — moor was never
   # replaced; rollback would be a no-op risk for no benefit. Marker
   # is plain `failed`.
-  echo "[respawner] step 1/3: docker compose pull $service"
-  if ! pull_out=$(compose_pull_with "$override_file"); then
-    msg="compose pull failed: $pull_out"
-    echo "[respawner] FAIL: $msg" >&2
-    write_marker "$audit_id" "failed" "$msg"
+  echo "[respawner] step 1/3: docker pull ghcr.io/caiopizzol/moor@${target_digest} + tag :latest"
+  if ! pt_out=$(pull_and_tag_target); then
+    echo "[respawner] FAIL: $pt_out" >&2
+    write_marker "$audit_id" "failed" "$pt_out"
     return 1
   fi
 
-  # Up. Compose may have started swapping containers by the time this
-  # returns non-zero; treat as post-replacement → attempt rollback.
-  echo "[respawner] step 2/3: docker compose up -d --no-deps --wait --wait-timeout $WAIT_TIMEOUT_SECONDS $service"
-  if ! up_out=$(compose_up_with "$override_file" ""); then
+  # Step 2: compose up against operator's existing -f stack, with
+  # `--pull never` since we just retagged :latest locally. Compose may
+  # have started swapping containers by the time this returns non-zero;
+  # treat as post-replacement → attempt rollback.
+  echo "[respawner] step 2/3: docker compose up -d --no-deps --wait --wait-timeout $WAIT_TIMEOUT_SECONDS --pull never $service"
+  if ! up_out=$(compose_up_pull_never); then
     msg="compose up failed: $up_out"
     echo "[respawner] FAIL (will attempt rollback): $msg" >&2
     attempt_rollback "$audit_id" "$msg" "$prev_image_id"
@@ -345,13 +331,17 @@ Modes:
                   success, 1 on a missing dependency.
 
   apply           Read /app/data/.update-context-<MOOR_AUDIT_ID>.json,
-                  pull + up the moor service with the digest override,
-                  poll /api/health, write a result marker.
+                  docker pull the target digest, docker tag it as
+                  ghcr.io/caiopizzol/moor:latest, docker compose up
+                  --pull never the moor service, poll /api/health,
+                  write a result marker. No -f override is appended to
+                  the operator's compose stack (#105).
                   - success: new image is healthy.
-                  - failed:  pull failed before moor was replaced.
-                  - rolled_back: up/health failed; rollback to
-                    prev_image_id succeeded. error_log carries the
-                    original apply failure.
+                  - failed:  pull or tag failed before moor was replaced.
+                  - rolled_back: up/health failed; rollback (retag
+                    prev_image_id → :latest + compose up --pull never)
+                    succeeded. error_log carries the original apply
+                    failure.
                   - rollback_failed: up/health failed AND rollback also
                     failed. error_log = apply failure; rollback_error =
                     rollback step that failed. Manual recovery needed.

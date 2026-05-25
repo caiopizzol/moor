@@ -64,29 +64,6 @@ export function isValidServiceName(s: string): boolean {
   return SERVICE_NAME_RE.test(s);
 }
 
-/** Pure: build the Compose override YAML pinning `<service>` to the
- *  target digest. Both inputs are validated again — throwing here
- *  rather than emitting unsafe YAML.
- *
- *  Repo is hardcoded to ghcr.io/caiopizzol/moor; this module exists
- *  to update THIS moor, so the repo is invariant. */
-export function buildUpdateOverrideYaml(service: string, targetDigest: string): string {
-  if (!isValidServiceName(service)) {
-    throw new Error(`buildUpdateOverrideYaml: invalid service name ${JSON.stringify(service)}`);
-  }
-  if (!isValidDigest(targetDigest)) {
-    throw new Error(
-      `buildUpdateOverrideYaml: invalid target_digest ${JSON.stringify(targetDigest)}`,
-    );
-  }
-  return [
-    "services:",
-    `  ${service}:`,
-    `    image: ghcr.io/caiopizzol/moor@${targetDigest}`,
-    "",
-  ].join("\n");
-}
-
 export type UpdateContext = {
   audit_id: number;
   target_digest: string;
@@ -107,10 +84,6 @@ export function buildUpdateContextJson(ctx: UpdateContext): string {
 
 export function contextFilePath(dir: string, auditId: number): string {
   return join(dir, `.update-context-${auditId}.json`);
-}
-
-export function overrideFilePath(dir: string, auditId: number): string {
-  return join(dir, `.update-override-${auditId}.yml`);
 }
 
 // ---- Orchestration --------------------------------------------------
@@ -370,9 +343,13 @@ export async function applyUpdate(
   }
   setBackupPath(auditId, backupPath);
 
-  // 9 + 10. Write context + override into the shared data dir.
+  // 9. Write the context file into the shared data dir. The respawner
+  // reads target_digest from it and runs `docker pull <repo>@<digest>`
+  // + `docker tag ... :latest`, so we never write a `-f /app/data/...`
+  // override (which Compose would bake into the new container's
+  // config_files label, blocking future applies via the #99 validator
+  // — see #105 for the original bug).
   const ctxPath = contextFilePath(dataDir, auditId);
-  const overridePath = overrideFilePath(dataDir, auditId);
   try {
     const contextJson = buildUpdateContextJson({
       audit_id: auditId,
@@ -384,14 +361,12 @@ export async function applyUpdate(
       data_mount,
       network: default_network,
     });
-    const overrideYaml = buildUpdateOverrideYaml(labels.service, targetDigest);
     deps.writeFile(ctxPath, contextJson);
-    deps.writeFile(overridePath, overrideYaml);
   } catch (e) {
     const reason = e instanceof Error ? e.message : String(e);
     return failAndReturn(
       { code: "respawner_launch_failed", reason },
-      `failed to write context/override before launching respawner: ${reason}`,
+      `failed to write context before launching respawner: ${reason}`,
     );
   }
 

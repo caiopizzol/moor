@@ -1,18 +1,22 @@
 // Tests for the respawner entrypoint.sh apply mode. Stubs `docker` and
-// `curl` in a per-test PATH so the script exercises pull / up / health
-// / rollback paths without real Docker.
+// `curl` in a per-test PATH so the script exercises pull / tag / up /
+// health / rollback paths without real Docker.
 //
 // What we're checking:
 //   - Marker shapes for every terminal state (failed / rolled_back /
 //     rollback_failed / success).
-//   - State machine: pull failure → failed, NO rollback.
+//   - State machine: docker pull failure → failed, NO rollback.
+//   - State machine: docker tag failure on apply → failed, NO rollback
+//     (moor was never replaced).
 //   - up/wait failure → rollback attempted.
 //   - up failure → rollback up failure → rollback_failed (carries
 //     BOTH apply error AND rollback error).
 //   - health failure → rollback attempted (similar shape).
 //   - prev_image_id missing/invalid → falls back to `failed` with
 //     a "cannot rollback" suffix.
-//   - rollback override file is written atomically (no .tmp left).
+//   - #105 contract: neither apply nor rollback writes
+//     .update-{override,rollback}-<id>.yml; neither path appends
+//     `-f /app/data/...` to the compose -f stack.
 
 import { afterAll, describe, expect, test } from "bun:test";
 import {
@@ -113,10 +117,8 @@ function writeContext(
     network: "moor_default",
   };
   writeFileSync(join(dataDir, `.update-context-${auditId}.json`), JSON.stringify(ctx, null, 2));
-  writeFileSync(
-    join(dataDir, `.update-override-${auditId}.yml`),
-    `services:\n  ${ctx.service}:\n    image: ghcr.io/caiopizzol/moor@${ctx.target_digest}\n`,
-  );
+  // #105: no .update-override-<id>.yml is written. The respawner pulls
+  // the target image by digest itself and retags :latest locally.
 }
 
 async function runApply(opts: {
@@ -165,33 +167,26 @@ function listJunk(dataDir: string): string[] {
   return readdirSync(dataDir).filter((n) => n.includes(".tmp."));
 }
 
-describe("respawner entrypoint apply: pull failure", () => {
-  test("pull failure → marker 'failed', NO rollback attempted", async () => {
+describe("respawner entrypoint apply: docker pull failure (#105)", () => {
+  test("docker pull failure → marker 'failed', NO docker tag, NO compose up, NO rollback", async () => {
     const dir = newTestDir();
     const stubs = newTestDir();
     writeContext(dir, 1);
-    // docker compose pull returns 1 with a message; docker tag MUST
-    // NOT be invoked (we'd notice because we'd see the rollback
-    // override file).
+    // docker pull returns 1 with a message; docker tag and docker
+    // compose MUST NOT be invoked (we assert via the docker.log).
     writeStubs(stubs, {
       docker: `case "$1" in
   version) exit 0 ;;
-  compose)
-    # second positional after 'compose' may be -f flags; scan for "pull"
-    for a in "$@"; do
-      if [ "$a" = "pull" ]; then
-        echo "Error response from daemon: manifest unknown" >&2
-        exit 1
-      fi
-      if [ "$a" = "up" ]; then
-        echo "[stub] unexpected: up reached after pull failure" >&2
-        exit 99
-      fi
-    done
-    exit 0
+  pull)
+    echo "Error response from daemon: manifest unknown" >&2
+    exit 1
     ;;
   tag)
     echo "[stub] unexpected: docker tag reached after pull failure" >&2
+    exit 99
+    ;;
+  compose)
+    echo "[stub] unexpected: docker compose reached after pull failure" >&2
     exit 99
     ;;
   *) exit 0 ;;
@@ -202,13 +197,63 @@ esac`,
 
     const marker = readMarker(dir, 1);
     expect(marker.state).toBe("failed");
-    expect(marker.error_log).toContain("compose pull failed");
+    expect(marker.error_log).toContain("docker pull");
     expect(marker.error_log).toContain("manifest unknown");
     expect(marker.rollback_error).toBeUndefined();
 
-    // No rollback override file written.
+    const calls = readDockerLog(stubs);
+    expect(calls.some((l) => l.startsWith("tag "))).toBe(false);
+    expect(calls.some((l) => l.startsWith("compose "))).toBe(false);
+
+    // No rollback or override files written.
     expect(existsSync(join(dir, ".update-rollback-1.yml"))).toBe(false);
+    expect(existsSync(join(dir, ".update-override-1.yml"))).toBe(false);
     expect(listJunk(dir)).toEqual([]);
+  });
+});
+
+describe("respawner entrypoint apply: docker tag failure on apply (#105)", () => {
+  test("docker pull ok but docker tag fails → marker 'failed', NO compose up, NO rollback", async () => {
+    const dir = newTestDir();
+    const stubs = newTestDir();
+    writeContext(dir, 11);
+    // docker tag on apply uses 'ghcr.io/caiopizzol/moor@sha256:...' as
+    // source. Make ONLY that case fail (rollback would use 'sha256:...'
+    // directly, but rollback should never be reached here anyway).
+    writeStubs(stubs, {
+      docker: `case "$1" in
+  version) exit 0 ;;
+  pull) exit 0 ;;
+  tag)
+    case "$2" in
+      ghcr.io/caiopizzol/moor@*)
+        echo "Error: no such image" >&2
+        exit 1
+        ;;
+      *)
+        echo "[stub] unexpected docker tag arg: $2" >&2
+        exit 99
+        ;;
+    esac
+    ;;
+  compose)
+    echo "[stub] unexpected: compose reached after tag failure" >&2
+    exit 99
+    ;;
+  *) exit 0 ;;
+esac`,
+    });
+    const r = await runApply({ dataDir: dir, stubsDir: stubs, auditId: 11, shrinkTimeouts: true });
+    expect(r.exitCode).toBe(1);
+
+    const marker = readMarker(dir, 11);
+    expect(marker.state).toBe("failed");
+    expect(marker.error_log).toContain("docker tag");
+    expect(marker.error_log).toContain("no such image");
+    expect(marker.rollback_error).toBeUndefined();
+
+    const calls = readDockerLog(stubs);
+    expect(calls.some((l) => l.startsWith("compose "))).toBe(false);
   });
 });
 
@@ -217,38 +262,34 @@ describe("respawner entrypoint apply: up failure → rollback", () => {
     const dir = newTestDir();
     const stubs = newTestDir();
     writeContext(dir, 2);
-    // pull ok, up fails, rollback up (--pull never) succeeds.
+    // pull + tag ok. Both apply and rollback `compose up` now use the
+    // same shape (--pull never, operator-only -f stack), so we can't
+    // distinguish them by argv. Counter file: 1st up = apply (fail),
+    // 2nd up = rollback (succeed).
+    const upCounter = join(dir, ".up-count");
+    writeFileSync(upCounter, "0");
     writeStubs(stubs, {
       docker: `case "$1" in
   version) exit 0 ;;
+  pull) exit 0 ;;
+  tag) exit 0 ;;
   compose)
-    # Look for the verb.
     verb=""
-    pull_never=0
     for a in "$@"; do
-      case "$a" in
-        pull|up|version) verb="$a" ;;
-        --pull) pull_never=mark ;;
-        never)
-          if [ "$pull_never" = "mark" ]; then pull_never=1; fi
-          ;;
-      esac
+      case "$a" in pull|up|version) verb="$a" ;; esac
     done
     case "$verb" in
-      pull) exit 0 ;;
       up)
-        if [ "$pull_never" = "1" ]; then
-          # rollback compose up — succeed
-          exit 0
+        n=$(cat ${upCounter} 2>/dev/null || echo 0); n=$((n+1)); echo $n > ${upCounter}
+        if [ $n = 1 ]; then
+          echo "Error response from daemon: image manifest mismatch" >&2
+          exit 1
         fi
-        # apply compose up — fail with a clear message
-        echo "Error response from daemon: image manifest mismatch" >&2
-        exit 1
+        exit 0
         ;;
     esac
     exit 0
     ;;
-  tag) exit 0 ;;
   *) exit 0 ;;
 esac`,
       // health passes on first try (for the rollback poll).
@@ -263,10 +304,9 @@ esac`,
     expect(marker.error_log).toContain("manifest mismatch");
     expect(marker.rollback_error).toBeUndefined();
 
-    // Rollback override file was written.
-    const rb = readFileSync(join(dir, ".update-rollback-2.yml"), "utf-8");
-    expect(rb).toContain("image: ghcr.io/caiopizzol/moor:latest");
-    expect(rb).toContain("moor:");
+    // #105: no rollback override file is written anymore.
+    expect(existsSync(join(dir, ".update-rollback-2.yml"))).toBe(false);
+    expect(existsSync(join(dir, ".update-override-2.yml"))).toBe(false);
     expect(listJunk(dir)).toEqual([]);
   });
 });
@@ -276,35 +316,31 @@ describe("respawner entrypoint apply: up failure → rollback also fails", () =>
     const dir = newTestDir();
     const stubs = newTestDir();
     writeContext(dir, 3);
+    // Counter distinguishes 1st up (apply) from 2nd up (rollback);
+    // both have identical argv post-#105.
+    const upCounter = join(dir, ".up-count");
+    writeFileSync(upCounter, "0");
     writeStubs(stubs, {
       docker: `case "$1" in
   version) exit 0 ;;
+  pull) exit 0 ;;
+  tag) exit 0 ;;
   compose)
     verb=""
-    pull_never=0
-    for a in "$@"; do
-      case "$a" in
-        pull|up|version) verb="$a" ;;
-        --pull) pull_never=mark ;;
-        never)
-          if [ "$pull_never" = "mark" ]; then pull_never=1; fi
-          ;;
-      esac
-    done
+    for a in "$@"; do case "$a" in pull|up|version) verb="$a" ;; esac; done
     case "$verb" in
-      pull) exit 0 ;;
       up)
-        if [ "$pull_never" = "1" ]; then
-          echo "Error response from daemon: latest tag not found locally" >&2
+        n=$(cat ${upCounter} 2>/dev/null || echo 0); n=$((n+1)); echo $n > ${upCounter}
+        if [ $n = 1 ]; then
+          echo "Error response from daemon: original up failure" >&2
           exit 1
         fi
-        echo "Error response from daemon: original up failure" >&2
+        echo "Error response from daemon: latest tag not found locally" >&2
         exit 1
         ;;
     esac
     exit 0
     ;;
-  tag) exit 0 ;;
   *) exit 0 ;;
 esac`,
     });
@@ -361,26 +397,29 @@ describe("respawner entrypoint apply: prev_image_id missing or invalid", () => {
     const dir = newTestDir();
     const stubs = newTestDir();
     writeContext(dir, 5, { prev_image_id: null });
+    // Apply path: docker pull ok, docker tag (source ghcr.io/...) ok,
+    // compose up fails. attempt_rollback is invoked with prev_image_id=""
+    // → MUST short-circuit before docker tag with a sha256:... source.
     writeStubs(stubs, {
       docker: `case "$1" in
   version) exit 0 ;;
-  compose)
-    verb=""
-    for a in "$@"; do
-      case "$a" in pull|up|version) verb="$a" ;; esac
-    done
-    case "$verb" in
-      pull) exit 0 ;;
-      up)
-        echo "up failure" >&2
-        exit 1
+  pull) exit 0 ;;
+  tag)
+    case "$2" in
+      ghcr.io/caiopizzol/moor@*) exit 0 ;;
+      *)
+        echo "[stub] unexpected rollback docker tag with no prev_image_id: $2" >&2
+        exit 99
         ;;
     esac
-    exit 0
     ;;
-  tag)
-    echo "[stub] unexpected: docker tag with no prev_image_id" >&2
-    exit 99
+  compose)
+    verb=""
+    for a in "$@"; do case "$a" in pull|up|version) verb="$a" ;; esac; done
+    case "$verb" in
+      up) echo "up failure" >&2; exit 1 ;;
+    esac
+    exit 0
     ;;
   *) exit 0 ;;
 esac`,
@@ -402,11 +441,12 @@ esac`,
     writeStubs(stubs, {
       docker: `case "$1" in
   version) exit 0 ;;
+  pull) exit 0 ;;
+  tag) exit 0 ;;
   compose)
     verb=""
     for a in "$@"; do case "$a" in pull|up) verb="$a" ;; esac; done
     case "$verb" in
-      pull) exit 0 ;;
       up) echo up-fail >&2; exit 1 ;;
     esac
     exit 0
@@ -423,12 +463,14 @@ esac`,
   });
 });
 
-describe("respawner entrypoint apply: happy path success", () => {
-  test("pull + up + health all pass → marker 'success', -f stack reaches docker, no rollback artifacts", async () => {
+describe("respawner entrypoint apply: happy path success (#105)", () => {
+  test("docker pull + tag + compose up + health pass → marker 'success', operator -f stack only, --pull never present", async () => {
     const dir = newTestDir();
     const stubs = newTestDir();
+    const digest = `sha256:${"d".repeat(64)}`;
     writeContext(dir, 7, {
-      // Use multiple config_files to assert the full stack is replayed.
+      target_digest: digest,
+      // Use multiple config_files to assert the full operator stack is replayed.
       config_files: ["/root/moor/docker-compose.yml", "/root/moor/docker-compose.override.yml"],
     });
     writeStubs(stubs, { curl: `exit 0` });
@@ -440,55 +482,66 @@ describe("respawner entrypoint apply: happy path success", () => {
     expect(marker.error_log).toBeUndefined();
     expect(marker.rollback_error).toBeUndefined();
 
-    // Both pull AND up must have received the full -f stack: every
-    // config_file from the context + the apply override. This catches
-    // the POSIX set-- propagation bug class (the old build_compose_argv
-    // silently dropped these).
     const dockerCalls = readDockerLog(stubs);
-    const pullCall = dockerCalls.find((l) => l.includes(" pull "));
-    const upCall = dockerCalls.find((l) => l.includes(" up "));
-    expect(pullCall).toBeDefined();
-    expect(upCall).toBeDefined();
-    for (const call of [pullCall, upCall]) {
-      expect(call).toContain("-f /root/moor/docker-compose.yml");
-      expect(call).toContain("-f /root/moor/docker-compose.override.yml");
-      expect(call).toContain(`-f ${dir}/.update-override-7.yml`);
-    }
 
-    // No rollback override file written on success.
+    // #105: docker pull <repo>@<digest> happens first, then docker tag
+    // retags :latest to that pulled image.
+    const pullCall = dockerCalls.find((l) => l.startsWith("pull "));
+    expect(pullCall).toBe(`pull ghcr.io/caiopizzol/moor@${digest}`);
+    const tagCall = dockerCalls.find((l) => l.startsWith("tag "));
+    expect(tagCall).toBe(`tag ghcr.io/caiopizzol/moor@${digest} ghcr.io/caiopizzol/moor:latest`);
+
+    // compose up must have received the operator's full -f stack AND
+    // --pull never AND NO moor-generated -f /app/data/.update-* entry
+    // (the #105 contract: nothing we add gets baked into the next
+    // container's config_files label). Also catches the POSIX set--
+    // propagation bug class (the old build_compose_argv silently
+    // dropped the operator stack).
+    const upCall = dockerCalls.find((l) => l.includes(" up "));
+    expect(upCall).toBeDefined();
+    expect(upCall).toContain("-f /root/moor/docker-compose.yml");
+    expect(upCall).toContain("-f /root/moor/docker-compose.override.yml");
+    expect(upCall).toContain("--pull never");
+    expect(upCall).not.toContain(".update-override-");
+    expect(upCall).not.toContain(".update-rollback-");
+    expect(upCall).not.toContain("/app/data/");
+    expect(upCall).not.toContain(`${dir}/.update-`);
+
+    // #105: no override or rollback files written on success.
     expect(existsSync(join(dir, ".update-rollback-7.yml"))).toBe(false);
+    expect(existsSync(join(dir, ".update-override-7.yml"))).toBe(false);
     expect(listJunk(dir)).toEqual([]);
   });
 });
 
-describe("respawner entrypoint apply: -f stack on rollback path", () => {
-  test("rollback compose up receives the rollback override file (not the apply one) + --pull never", async () => {
+describe("respawner entrypoint apply: -f stack on rollback path (#105)", () => {
+  test("BOTH apply and rollback compose up use operator-only -f stack with --pull never; no moor-generated -f appended", async () => {
     const dir = newTestDir();
     const stubs = newTestDir();
-    writeContext(dir, 9);
+    writeContext(dir, 9, {
+      config_files: ["/root/moor/docker-compose.yml", "/root/moor/docker-compose.override.yml"],
+    });
+    // Counter distinguishes 1st up (apply, fail) from 2nd up
+    // (rollback, succeed) since both have identical argv post-#105.
+    const upCounter = join(dir, ".up-count");
+    writeFileSync(upCounter, "0");
     writeStubs(stubs, {
       docker: `case "$1" in
   version) exit 0 ;;
+  pull) exit 0 ;;
+  tag) exit 0 ;;
   compose)
     verb=""
-    pull_never=0
-    for a in "$@"; do
-      case "$a" in
-        pull|up|version) verb="$a" ;;
-        --pull) pull_never=mark ;;
-        never) [ "$pull_never" = "mark" ] && pull_never=1 ;;
-      esac
-    done
+    for a in "$@"; do case "$a" in pull|up|version) verb="$a" ;; esac; done
     case "$verb" in
-      pull) exit 0 ;;
       up)
-        if [ "$pull_never" = "1" ]; then exit 0; fi
-        echo "apply up failure" >&2; exit 1
+        n=$(cat ${upCounter} 2>/dev/null || echo 0); n=$((n+1)); echo $n > ${upCounter}
+        if [ $n = 1 ]; then echo "apply up failure" >&2; exit 1; fi
+        exit 0
         ;;
     esac
     exit 0
     ;;
-  tag) exit 0 ;;
   *) exit 0 ;;
 esac`,
       curl: `exit 0`,
@@ -500,35 +553,65 @@ esac`,
     const dockerCalls = readDockerLog(stubs);
     const upCalls = dockerCalls.filter((l) => l.includes(" up "));
     expect(upCalls.length).toBe(2);
-    // Apply up: has apply override, NO --pull never.
-    expect(upCalls[0]).toContain(`-f ${dir}/.update-override-9.yml`);
-    expect(upCalls[0]).not.toContain("--pull never");
-    // Rollback up: has rollback override + --pull never.
-    expect(upCalls[1]).toContain(`-f ${dir}/.update-rollback-9.yml`);
-    expect(upCalls[1]).toContain("--pull never");
+    // Both calls: full operator stack, --pull never, no moor-generated
+    // -f (.update-override-* or .update-rollback-*) appended.
+    for (const upCall of upCalls) {
+      expect(upCall).toContain("-f /root/moor/docker-compose.yml");
+      expect(upCall).toContain("-f /root/moor/docker-compose.override.yml");
+      expect(upCall).toContain("--pull never");
+      expect(upCall).not.toContain(".update-override-");
+      expect(upCall).not.toContain(".update-rollback-");
+      expect(upCall).not.toContain(`${dir}/.update-`);
+    }
+
+    // BOTH docker tag calls happen: apply (source=ghcr.io/...@digest)
+    // and rollback (source=sha256:bbb...). Asserts the retag pattern is
+    // actually used on both paths.
+    const tagCalls = dockerCalls.filter((l) => l.startsWith("tag "));
+    expect(tagCalls.length).toBe(2);
+    expect(tagCalls[0]).toMatch(/^tag ghcr\.io\/caiopizzol\/moor@sha256:/);
+    expect(tagCalls[1]).toMatch(/^tag sha256:/);
+    expect(tagCalls[1]).toContain("ghcr.io/caiopizzol/moor:latest");
+
+    // No artifact files left on disk on rollback success.
+    expect(existsSync(join(dir, ".update-rollback-9.yml"))).toBe(false);
+    expect(existsSync(join(dir, ".update-override-9.yml"))).toBe(false);
   });
 });
 
-describe("respawner entrypoint apply: tag failure during rollback", () => {
-  test("docker tag fails → marker 'rollback_failed' with tag error in rollback_error", async () => {
+describe("respawner entrypoint apply: tag failure during rollback (#105)", () => {
+  test("rollback's docker tag fails → marker 'rollback_failed' with tag error in rollback_error", async () => {
     const dir = newTestDir();
     const stubs = newTestDir();
     writeContext(dir, 8);
+    // Apply's docker tag (source ghcr.io/...) succeeds; rollback's
+    // docker tag (source sha256:...) fails. Distinguishing by argv
+    // keeps the apply path realistic instead of short-circuiting on
+    // the apply tag, which would never trigger the rollback branch.
     writeStubs(stubs, {
       docker: `case "$1" in
   version) exit 0 ;;
+  pull) exit 0 ;;
+  tag)
+    case "$2" in
+      ghcr.io/caiopizzol/moor@*) exit 0 ;;
+      sha256:*)
+        echo "Error: no such image" >&2
+        exit 1
+        ;;
+      *)
+        echo "[stub] unexpected tag arg: $2" >&2
+        exit 99
+        ;;
+    esac
+    ;;
   compose)
     verb=""
     for a in "$@"; do case "$a" in pull|up) verb="$a" ;; esac; done
     case "$verb" in
-      pull) exit 0 ;;
       up) echo up-fail >&2; exit 1 ;;
     esac
     exit 0
-    ;;
-  tag)
-    echo "Error: no such image" >&2
-    exit 1
     ;;
   *) exit 0 ;;
 esac`,

@@ -13,12 +13,10 @@ const {
   TARGET_DIGEST_RE,
   applyUpdate,
   buildUpdateContextJson,
-  buildUpdateOverrideYaml,
   classifyUnsafeReason,
   contextFilePath,
   isValidDigest,
   isValidServiceName,
-  overrideFilePath,
 } = await import("./update-apply");
 
 import type { DiscoveryResult, MountRecord } from "./compose-context";
@@ -67,21 +65,6 @@ describe("#80 PR #4 isValidServiceName", () => {
   });
 });
 
-describe("#80 PR #4 buildUpdateOverrideYaml", () => {
-  test("emits the documented shape", () => {
-    const out = buildUpdateOverrideYaml("moor", VALID_DIGEST);
-    expect(out).toContain("services:");
-    expect(out).toContain("moor:");
-    expect(out).toContain(`image: ghcr.io/caiopizzol/moor@${VALID_DIGEST}`);
-  });
-  test("throws on bad service name", () => {
-    expect(() => buildUpdateOverrideYaml("bad name", VALID_DIGEST)).toThrow(/service name/);
-  });
-  test("throws on bad digest (defense in depth)", () => {
-    expect(() => buildUpdateOverrideYaml("moor", "not-a-digest")).toThrow(/target_digest/);
-  });
-});
-
 describe("#80 PR #4 buildUpdateContextJson", () => {
   test("round-trips through JSON.parse with the same shape", () => {
     const ctx = {
@@ -105,9 +88,8 @@ describe("#80 PR #4 buildUpdateContextJson", () => {
 });
 
 describe("#80 PR #4 file-path helpers", () => {
-  test("contextFilePath + overrideFilePath use the documented basenames", () => {
+  test("contextFilePath uses the documented basename", () => {
     expect(contextFilePath("/app/data", 42)).toBe("/app/data/.update-context-42.json");
-    expect(overrideFilePath("/app/data", 42)).toBe("/app/data/.update-override-42.yml");
   });
 });
 
@@ -535,9 +517,9 @@ describe("#80 PR #4 applyUpdate — backup + launch failure paths", () => {
     expect(rows[0].backup_path).toBe("/tmp/fake-backup");
     expect(getDrainState().enabled).toBe(false);
 
-    // Context + override WERE written before launch was attempted.
+    // #105: context is written; NO override file is ever written.
     expect(writes.some((w) => w.path.includes(".update-context-"))).toBe(true);
-    expect(writes.some((w) => w.path.includes(".update-override-"))).toBe(true);
+    expect(writes.some((w) => w.path.includes(".update-override-"))).toBe(false);
   });
 });
 
@@ -568,7 +550,7 @@ describe("#80 PR #4 applyUpdate — happy path", () => {
     expect(drain.reason).toContain(String(auditId));
     expect(drain.clear_after_version).toBeNull();
 
-    // Context + override written with expected paths + parseable content.
+    // Context written with expected path + parseable content.
     const ctxFile = writes.find((w) => w.path.endsWith(`.update-context-${auditId}.json`));
     expect(ctxFile).toBeDefined();
     const ctxParsed = JSON.parse(ctxFile?.content ?? "{}");
@@ -577,9 +559,13 @@ describe("#80 PR #4 applyUpdate — happy path", () => {
     expect(ctxParsed.service).toBe("moor");
     expect(ctxParsed.network).toBe("moor_default");
 
-    const ovFile = writes.find((w) => w.path.endsWith(`.update-override-${auditId}.yml`));
-    expect(ovFile).toBeDefined();
-    expect(ovFile?.content).toContain(`image: ghcr.io/caiopizzol/moor@${OTHER_DIGEST}`);
+    // #105: no override file is written; the respawner pulls the
+    // target by digest and retags :latest itself.
+    expect(writes.some((w) => w.path.includes(".update-override-"))).toBe(false);
+    expect(writes.some((w) => w.path.includes(".update-rollback-"))).toBe(false);
+    // Exactly one write — the context file. Catches any regression that
+    // sneaks another file in.
+    expect(writes.length).toBe(1);
 
     // Launcher called with running version (0.39.0), not target version.
     expect(launches.length).toBe(1);
@@ -591,12 +577,17 @@ describe("#80 PR #4 applyUpdate — happy path", () => {
     expect(hasInProgressAudit()).toBe(true);
   });
 
-  test("explicit target_digest overrides registry latest", async () => {
+  test("explicit target_digest overrides registry latest (carried into context, not an override file)", async () => {
     const explicit = `sha256:${"c".repeat(64)}`;
     const { deps, writes } = makeDeps();
     const r = await applyUpdate({ target_digest: explicit }, deps);
     expect(r.ok).toBe(true);
-    const ovFile = writes.find((w) => w.path.includes(".update-override-"));
-    expect(ovFile?.content).toContain(`@${explicit}`);
+    // #105: target_digest reaches the respawner via the context file
+    // (the respawner does docker pull <repo>@<target_digest>), not via
+    // a YAML override.
+    const ctxFile = writes.find((w) => w.path.includes(".update-context-"));
+    expect(ctxFile).toBeDefined();
+    expect(JSON.parse(ctxFile?.content ?? "{}").target_digest).toBe(explicit);
+    expect(writes.some((w) => w.path.includes(".update-override-"))).toBe(false);
   });
 });
