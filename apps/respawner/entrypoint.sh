@@ -3,11 +3,16 @@
 #
 # Modes:
 #   --self-test     verify docker + compose + jq are present, echo
-#                   diagnostic env vars. PR #3.
-#   apply           perform the happy-path update flow: read context,
-#                   pull + up via compose with the digest override,
-#                   poll /api/health, write success/failed marker.
-#                   PR #4 — NO ROLLBACK; that lands in PR #5.
+#                   diagnostic env vars.
+#   apply           perform the update flow: read context, pull + up
+#                   via compose with the digest override, poll
+#                   /api/health, write the result marker. On
+#                   up/wait/health failure, attempt rollback via
+#                   `docker tag <prev_image_id> :latest` +
+#                   --pull never override; markers carry
+#                   rolled_back | rollback_failed accordingly (#80 PR #5).
+#                   Pull failure does NOT trigger rollback (moor was
+#                   never replaced).
 #   --help          usage.
 #
 # Security posture (also on the image LABEL):
@@ -22,13 +27,18 @@
 
 set -eu
 
-# Tunables that PR #5 will reuse on rollback.
-HEALTH_TIMEOUT_SECONDS=60
-HEALTH_INTERVAL_SECONDS=1
-WAIT_TIMEOUT_SECONDS=60
-START_DELAY_SECONDS=2  # let moor's HTTP response with audit_id flush before we replace it
+# Tunables. Defaults are the production values; env overrides exist
+# so the shell tests can shrink them without forking the script.
+# Production never sets these env vars.
+HEALTH_TIMEOUT_SECONDS="${HEALTH_TIMEOUT_SECONDS:-60}"
+HEALTH_INTERVAL_SECONDS="${HEALTH_INTERVAL_SECONDS:-1}"
+WAIT_TIMEOUT_SECONDS="${WAIT_TIMEOUT_SECONDS:-60}"
+START_DELAY_SECONDS="${START_DELAY_SECONDS:-2}"  # let moor's HTTP response with audit_id flush before we replace it
 
-DATA_DIR=/app/data
+# Data dir is overridable via MOOR_DATA_DIR for tests only. Production
+# always uses /app/data (mounted by moor's apply path). The override
+# lets the shell tests run against a tmpdir without touching the host.
+DATA_DIR="${MOOR_DATA_DIR:-/app/data}"
 
 # --- self-test -------------------------------------------------------
 
@@ -75,33 +85,134 @@ self_test() {
   return 0
 }
 
-# --- apply mode (PR #4: NO ROLLBACK) ---------------------------------
+# --- apply mode ------------------------------------------------------
 
 # Write a result marker atomically: write a temp file, then rename it
 # into place. Same-filesystem rename is atomic on Linux; the moor-side
 # marker poller never sees a partial file.
+#
+# Args:
+#   $1 audit_id
+#   $2 state          success | failed | rolled_back | rollback_failed
+#   $3 error_log      may be empty. For rolled_back / rollback_failed
+#                     this carries the ORIGINAL apply failure (not
+#                     the rollback step details).
+#   $4 rollback_error optional. Only set for rollback_failed; captures
+#                     the rollback step that failed.
 write_marker() {
   audit_id="$1"
-  state="$2"          # success | failed
-  error_log="$3"      # may be empty
+  state="$2"
+  error_log="$3"
+  rollback_error="${4:-}"
   target="$DATA_DIR/.update-result-${audit_id}.json"
   tmp="$target.tmp.$$"
-  # Build JSON via jq -n so error_log gets proper escaping.
+  # jq -n builds JSON with proper escaping. We omit empty string fields
+  # so the marker stays compact when there's nothing to say.
   jq -n \
     --argjson audit_id "$audit_id" \
     --arg state "$state" \
     --arg error_log "$error_log" \
-    '{audit_id: $audit_id, state: $state} + (if $error_log == "" then {} else {error_log: $error_log} end)' \
+    --arg rollback_error "$rollback_error" \
+    '{audit_id: $audit_id, state: $state}
+      + (if $error_log == "" then {} else {error_log: $error_log} end)
+      + (if $rollback_error == "" then {} else {rollback_error: $rollback_error} end)' \
     > "$tmp"
   mv "$tmp" "$target"
 }
 
-# Run a command but capture stdout + stderr into a variable so a
-# failure can be surfaced in the marker's error_log. Returns the
-# command's exit code.
-run_capture() {
-  capture_out=$("$@" 2>&1) || return $?
-  return 0
+# Write a file atomically via temp + rename (same as write_marker).
+# Used for the rollback override so a respawner crash mid-write can't
+# leave a half-written override on disk for the next attempt.
+write_file_atomic() {
+  path="$1"
+  content="$2"
+  tmp="$path.tmp.$$"
+  printf '%s' "$content" > "$tmp"
+  mv "$tmp" "$path"
+}
+
+# Build the compose -f argv by reading the context's config_files
+# array + appending one extra override path. Sets $@ as a side effect.
+# Use ONLY when you're about to invoke compose immediately after.
+build_compose_argv() {
+  extra_override="$1"
+  set --
+  i=0
+  while [ "$i" -lt "$config_count" ]; do
+    cf=$(jq -re ".config_files[$i]" "$context_file")
+    set -- "$@" -f "$cf"
+    i=$((i + 1))
+  done
+  set -- "$@" -f "$extra_override"
+  # Caller picks up $@ from outer scope (POSIX sh has no `local`).
+}
+
+# Attempt rollback after a compose up / wait / health failure.
+# Args:
+#   $1 audit_id
+#   $2 apply_error    the original failure that triggered rollback
+#                     (preserved in marker error_log on either outcome)
+#   $3 prev_image_id  must be sha256:... non-empty; falls back to
+#                     marker `failed` if invalid (can't roll back to nothing)
+attempt_rollback() {
+  ar_audit_id="$1"
+  ar_apply_error="$2"
+  ar_prev_image_id="$3"
+
+  case "$ar_prev_image_id" in
+    sha256:*) ;;
+    *)
+      ar_msg="$ar_apply_error || cannot rollback: prev_image_id missing/invalid: '$ar_prev_image_id'"
+      echo "[respawner] FAIL: $ar_msg" >&2
+      write_marker "$ar_audit_id" "failed" "$ar_msg"
+      return 1
+      ;;
+  esac
+
+  echo "[respawner] rollback 1/4: docker tag $ar_prev_image_id ghcr.io/caiopizzol/moor:latest"
+  if ! ar_tag_out=$(docker tag "$ar_prev_image_id" ghcr.io/caiopizzol/moor:latest 2>&1); then
+    ar_rb_msg="docker tag failed: $ar_tag_out"
+    echo "[respawner] ROLLBACK FAIL: $ar_rb_msg" >&2
+    write_marker "$ar_audit_id" "rollback_failed" "$ar_apply_error" "$ar_rb_msg"
+    return 1
+  fi
+
+  ar_rollback_override="$DATA_DIR/.update-rollback-${ar_audit_id}.yml"
+  echo "[respawner] rollback 2/4: writing $ar_rollback_override"
+  write_file_atomic "$ar_rollback_override" "services:
+  $service:
+    image: ghcr.io/caiopizzol/moor:latest
+"
+
+  # Rebuild compose argv with the rollback override INSTEAD of the
+  # apply override. Same base config_files.
+  build_compose_argv "$ar_rollback_override"
+
+  echo "[respawner] rollback 3/4: docker compose up -d --no-deps --wait --wait-timeout $WAIT_TIMEOUT_SECONDS --pull never $service"
+  if ! ar_up_out=$(docker compose --project-directory "$working_dir" "$@" up -d --no-deps --wait --wait-timeout "$WAIT_TIMEOUT_SECONDS" --pull never "$service" 2>&1); then
+    ar_rb_msg="rollback compose up failed: $ar_up_out"
+    echo "[respawner] ROLLBACK FAIL: $ar_rb_msg" >&2
+    write_marker "$ar_audit_id" "rollback_failed" "$ar_apply_error" "$ar_rb_msg"
+    return 1
+  fi
+
+  echo "[respawner] rollback 4/4: polling http://$service:3000/api/health for ${HEALTH_TIMEOUT_SECONDS}s"
+  ar_elapsed=0
+  while [ "$ar_elapsed" -lt "$HEALTH_TIMEOUT_SECONDS" ]; do
+    if ar_health_out=$(curl --silent --fail --max-time 5 "http://$service:3000/api/health" 2>&1); then
+      echo "[respawner] rollback health passed: $ar_health_out"
+      write_marker "$ar_audit_id" "rolled_back" "$ar_apply_error"
+      echo "[respawner] ROLLBACK SUCCEEDED audit_id=$ar_audit_id"
+      return 0
+    fi
+    sleep "$HEALTH_INTERVAL_SECONDS"
+    ar_elapsed=$((ar_elapsed + HEALTH_INTERVAL_SECONDS))
+  done
+
+  ar_rb_msg="rollback health check did not pass within ${HEALTH_TIMEOUT_SECONDS}s; last response: $ar_health_out"
+  echo "[respawner] ROLLBACK FAIL: $ar_rb_msg" >&2
+  write_marker "$ar_audit_id" "rollback_failed" "$ar_apply_error" "$ar_rb_msg"
+  return 1
 }
 
 apply_mode() {
@@ -117,8 +228,6 @@ apply_mode() {
   if [ ! -f "$context_file" ]; then
     msg="missing context file: $context_file"
     echo "[respawner] FAIL: $msg" >&2
-    # Can't write a marker for an audit we don't trust, but the marker
-    # uses just audit_id which we have. The new moor will ingest.
     write_marker "$audit_id" "failed" "$msg"
     return 2
   fi
@@ -129,35 +238,33 @@ apply_mode() {
     return 2
   fi
 
-  # Pull the context fields one at a time. -r strips JSON quoting on
+  # Pull context fields one at a time. -r strips JSON quoting on
   # strings; -e returns non-zero if the field is null/missing.
   service=$(jq -re '.service' "$context_file") || { write_marker "$audit_id" "failed" "context missing .service"; return 2; }
   working_dir=$(jq -re '.working_dir' "$context_file") || { write_marker "$audit_id" "failed" "context missing .working_dir"; return 2; }
   target_digest=$(jq -re '.target_digest' "$context_file") || { write_marker "$audit_id" "failed" "context missing .target_digest"; return 2; }
+  # prev_image_id may be null in the JSON if moor couldn't inspect
+  # itself; -r returns "null", which we'll treat as invalid in
+  # attempt_rollback. Don't fail apply here.
+  prev_image_id=$(jq -r '.prev_image_id // ""' "$context_file")
 
-  # config_files is an array; build argv safely via set -- so entries
-  # with spaces / unusual chars never get word-split.
-  set --
-  # shellcheck disable=SC2046  # we WANT word splitting only on our null-delimited reader
+  # config_files array → compose -f stack. Used for both apply AND
+  # rollback; cache the count once.
   config_count=$(jq '.config_files | length' "$context_file")
-  i=0
-  while [ "$i" -lt "$config_count" ]; do
-    cf=$(jq -re ".config_files[$i]" "$context_file")
-    set -- "$@" -f "$cf"
-    i=$((i + 1))
-  done
-  # Append the override file last so it wins on conflicts.
-  set -- "$@" -f "$override_file"
+
+  build_compose_argv "$override_file"
 
   # Brief sleep so moor's HTTP response carrying audit_id flushes to
   # the client BEFORE we recreate the moor container.
   sleep "$START_DELAY_SECONDS"
 
   echo "[respawner] apply audit_id=$audit_id service=$service target_digest=$target_digest"
-  echo "[respawner] working_dir=$working_dir"
+  echo "[respawner] working_dir=$working_dir prev_image_id=${prev_image_id:-<none>}"
   echo "[respawner] compose -f args: $*"
 
-  # Pull (same -f stack so the override pins the digest).
+  # Pull. PULL FAILURE DOES NOT TRIGGER ROLLBACK — moor was never
+  # replaced; rollback would be a no-op risk for no benefit. Marker
+  # is plain `failed`.
   echo "[respawner] step 1/3: docker compose pull $service"
   if ! pull_out=$(docker compose --project-directory "$working_dir" "$@" pull "$service" 2>&1); then
     msg="compose pull failed: $pull_out"
@@ -166,19 +273,18 @@ apply_mode() {
     return 1
   fi
 
-  # Up — recreates moor with the override-pinned digest, blocks on
-  # healthcheck, then we still poll /api/health explicitly for
-  # belt-and-suspenders.
+  # Up. Compose may have started swapping containers by the time this
+  # returns non-zero; treat as post-replacement → attempt rollback.
   echo "[respawner] step 2/3: docker compose up -d --no-deps --wait --wait-timeout $WAIT_TIMEOUT_SECONDS $service"
   if ! up_out=$(docker compose --project-directory "$working_dir" "$@" up -d --no-deps --wait --wait-timeout "$WAIT_TIMEOUT_SECONDS" "$service" 2>&1); then
     msg="compose up failed: $up_out"
-    echo "[respawner] FAIL: $msg" >&2
-    write_marker "$audit_id" "failed" "$msg"
-    return 1
+    echo "[respawner] FAIL (will attempt rollback): $msg" >&2
+    attempt_rollback "$audit_id" "$msg" "$prev_image_id"
+    return $?
   fi
 
-  # Health poll on the compose service DNS name — we attached to the
-  # default network at launch.
+  # Health poll. New moor is up; any failure here = definitive bad
+  # boot → attempt rollback.
   echo "[respawner] step 3/3: polling http://$service:3000/api/health for ${HEALTH_TIMEOUT_SECONDS}s"
   elapsed=0
   while [ "$elapsed" -lt "$HEALTH_TIMEOUT_SECONDS" ]; do
@@ -192,12 +298,10 @@ apply_mode() {
     elapsed=$((elapsed + HEALTH_INTERVAL_SECONDS))
   done
 
-  msg="health check did not pass within ${HEALTH_TIMEOUT_SECONDS}s; last response: $health_out"
-  echo "[respawner] FAIL: $msg" >&2
-  # PR #4 has NO rollback — we just record failure and exit. PR #5 adds
-  # automatic rollback via image retag + --pull never override.
-  write_marker "$audit_id" "failed" "$msg"
-  return 1
+  msg="health check did not pass within ${HEALTH_TIMEOUT_SECONDS}s; last response: ${health_out:-<none>}"
+  echo "[respawner] FAIL (will attempt rollback): $msg" >&2
+  attempt_rollback "$audit_id" "$msg" "$prev_image_id"
+  return $?
 }
 
 # --- dispatch --------------------------------------------------------
@@ -222,9 +326,15 @@ Modes:
 
   apply           Read /app/data/.update-context-<MOOR_AUDIT_ID>.json,
                   pull + up the moor service with the digest override,
-                  poll /api/health, write a result marker. NO ROLLBACK
-                  in this PR (#80 PR #4); recovery is manual or via
-                  the 30-min stale-in_progress sweep.
+                  poll /api/health, write a result marker.
+                  - success: new image is healthy.
+                  - failed:  pull failed before moor was replaced.
+                  - rolled_back: up/health failed; rollback to
+                    prev_image_id succeeded. error_log carries the
+                    original apply failure.
+                  - rollback_failed: up/health failed AND rollback also
+                    failed. error_log = apply failure; rollback_error =
+                    rollback step that failed. Manual recovery needed.
 
   (other)         Unknown mode — exit 2.
 
