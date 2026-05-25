@@ -194,6 +194,8 @@ Restore (if ever needed): stop moor, replace `/app/data/moor.db` with a snapshot
 
 `moor_update_apply` replays Compose commands inside a transient respawner container with the operator's compose `working_dir` bind-mounted **read-only at the same absolute path**. Any `-f` override file used at `docker compose up` time is recorded in Compose's `com.docker.compose.project.config_files` label, and the respawner reads that label to reproduce the same `-f` stack.
 
+The respawner itself never adds an `-f` to that stack. It pulls the target image by digest, retags `ghcr.io/caiopizzol/moor:latest` to point at the pulled image, and runs `docker compose up --pull never` against the operator's existing `-f` stack only. Rollback uses the same shape (retag `prev_image_id` to `:latest`, then `compose up --pull never`). So nothing moor does pollutes the next container's `config_files` label, and your local `:latest` tag always reflects the running version (a plain `docker compose up -d --no-deps --force-recreate moor` will not silently downgrade you).
+
 **Safe**: pinning via `image:` in `docker-compose.yml` itself, or via an override file kept **inside the moor install directory** (e.g. `docker-compose.override.yml` alongside the main file). The respawner can read these because they're under `working_dir`.
 
 **Unsafe**: ad-hoc host-only overrides like `docker compose -f docker-compose.yml -f /tmp/pin.yml up`. The `/tmp/pin.yml` path is invisible to the respawner. moor catches this before launching the respawner and refuses with a `context_failed` error pointing at the offending entry, so you'll see the message in `moor_update_apply`'s response — but the fix is to recreate moor without the override:
@@ -203,6 +205,18 @@ docker compose up -d --force-recreate moor
 ```
 
 (Without any extra `-f`, just whatever lives under the install dir.) After that, the label resets to just the in-repo compose files and `moor_update_apply` works.
+
+### Recovering from pre-0.44 label pollution
+
+Earlier moor versions (≤0.43) wrote a `/app/data/.update-override-<id>.yml` file and passed it as `-f` to `docker compose up` during self-update. Compose then baked that path into the new container's `config_files` label. After enough updates the label looked like `…docker-compose.yml,/app/data/.update-override-2.yml,/app/data/.update-override-4.yml,…`, all pointing at paths outside `working_dir`. The first `moor_update_apply` you run on a moor that was previously updated by an older version will refuse with `context_failed` for exactly that reason — moor catching its own past pollution, not yours.
+
+Recovery is the same one-liner as for any unsafe override:
+
+```bash
+docker compose up -d --no-deps --force-recreate moor
+```
+
+(Run from the moor install directory, with no extra `-f`.) Compose recreates the moor container using only your in-repo compose files; the label resets; subsequent `moor_update_apply` calls work normally and never re-introduce the bad entries.
 
 ## Docker socket trust boundary
 
