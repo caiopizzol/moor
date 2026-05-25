@@ -810,22 +810,27 @@ server.registerTool(
   },
 );
 
-// #80 PR #4: moor_update_apply — kick off a transient-respawner update of
+// #80: moor_update_apply — kick off a transient-respawner update of
 // moor itself. The respawner runs async; this tool returns the audit_id
-// immediately. Poll moor_update_status (or, eventually, moor_update_audit)
-// for the outcome.
+// immediately. Poll moor_update_audit (history of attempts) or
+// moor_update_status (version change) for the outcome.
 //
-// IMPORTANT: PR #4 has no rollback. A failed compose-up / --wait timeout /
-// health check writes a `failed` marker and exits; compose state is left
-// as Compose left it. Recovery: manual `docker compose up`, OR wait for the
-// 30-min stale-in_progress sweep to reclaim the audit row. Automatic
-// rollback (retag + `--pull never`) lands in PR #5.
+// Outcomes (encoded in the audit row's `state` field, surfaced by
+// moor_update_audit):
+//   - success         : new image is healthy.
+//   - failed          : pull failed before moor was replaced (no rollback).
+//   - rolled_back     : up/health failed; rollback to prev image succeeded.
+//   - rollback_failed : up/health failed AND rollback also failed —
+//                       operator must investigate (manual recovery).
+//   - in_progress     : respawner still running.
+//   - crashed         : 30-min grace elapsed without a marker
+//                       (respawner died or moor never read the marker).
 server.registerTool(
   "moor_update_apply",
   {
     title: "Apply moor update (transient respawner)",
     description:
-      "Update moor in-place via a transient respawner container. Runs preflight, enables drain, takes a fresh DB backup, then launches a one-shot Compose-aware respawner that pulls + re-creates the moor service. The respawner writes a marker file when done; this tool returns the audit_id immediately so the caller can poll. PR #4 happy path ONLY — no automatic rollback. A failed up/health writes `failed` and leaves the compose state; recovery may require manual `docker compose up`. Bypass is per-blocker: pass {bypass:['active_work']} to interrupt in-flight builds/execs/crons via the existing shutdown coordinator; {bypass:['unknown_digest']} when the registry comparison was inconclusive. Backup is mandatory and not bypassable.",
+      "Update moor in-place via a transient respawner container. Runs preflight, enables drain, takes a fresh DB backup, then launches a one-shot Compose-aware respawner that pulls + re-creates the moor service. The respawner writes a marker file when done; this tool returns the audit_id immediately so the caller can poll via moor_update_audit. Outcomes: success | failed (pull failed pre-replacement) | rolled_back (up/health failed, automatic rollback succeeded) | rollback_failed (rollback also failed — manual recovery needed) | crashed (no marker after 30-min grace). Bypass is per-blocker: pass {bypass:['active_work']} to interrupt in-flight builds/execs/crons via the existing shutdown coordinator; {bypass:['unknown_digest']} when the registry comparison was inconclusive. Backup is mandatory and not bypassable.",
     inputSchema: z.object({
       target_digest: z
         .string()
@@ -850,7 +855,13 @@ server.registerTool(
         content: [
           {
             type: "text",
-            text: `Update started: audit_id=${audit_id}. Respawner is running async. Poll moor_update_status to watch the version change. Expected transitions: in_progress → success (clean apply) or → failed (compose/health failure; PR #4 has no rollback so the compose state is left where Compose left it). If the new moor never becomes healthy enough to ingest the marker, the audit row may stay in_progress until the 30-min stale sweep marks it crashed — at which point manual recovery (docker compose up) may be required.`,
+            text: `Update started: audit_id=${audit_id}. Respawner is running async. Poll moor_update_audit to watch the outcome, or moor_update_status to watch the version. Possible terminal states:
+  - success         (new image healthy)
+  - failed          (pull failed before moor was replaced)
+  - rolled_back     (up/health failed; automatic rollback succeeded; drain stays on)
+  - rollback_failed (up/health failed AND rollback failed; manual recovery)
+  - crashed         (no marker after 30-min grace; respawner died)
+Recovery: rolled_back means moor is on the previous image again; the failed update is captured in error_log. rollback_failed or crashed mean an operator should investigate (likely manual docker compose up).`,
           },
         ],
       };
@@ -865,6 +876,57 @@ server.registerTool(
       ? `\nunsafe_reasons:\n  - ${body.error.unsafe_reasons.join("\n  - ")}`
       : "";
     throw new Error(`moor_update_apply refused [${code}]: ${reason}${extra}`);
+  },
+);
+
+// #80 PR #6: moor_update_audit — recent history of moor_update_apply
+// attempts. Read-only diagnostic; the orchestration lives entirely on
+// the moor side. Tail-truncates error_log / rollback_error per-field
+// so a crashed update with a long error doesn't blow up the token
+// budget; opt in to a larger tail when actively debugging.
+//
+// Rendering helpers (shortDigest / fmtDuration / tailLog / renderAuditRow
+// / renderAuditList) live in ./update-audit-render and are unit-tested
+// directly — this tool is a thin shell around them.
+import { MAX_LOG_TAIL_BYTES, renderAuditList, type UpdateAuditApiRow } from "./update-audit-render";
+
+server.registerTool(
+  "moor_update_audit",
+  {
+    title: "Update history (audit log)",
+    description:
+      "Read-only: recent moor_update_apply attempts and their outcomes. Each row shows audit_id, state (success | failed | rolled_back | rollback_failed | in_progress | crashed), duration, digest deltas, backup path, and any error logs. error_log preserves the ORIGINAL apply failure (never overwritten by rollback step details); rollback_error is set only on rollback_failed. Default tail is 4 KiB per log field; pass tail_bytes=0 to omit log bodies entirely (keeps the metadata line and replaces the body with a sized marker), or up to 16384 to read more.",
+    inputSchema: z.object({
+      limit: z
+        .number()
+        .int()
+        .min(1)
+        .max(200)
+        .optional()
+        .describe("How many most-recent attempts to return. Default 20, max 200."),
+      tail_bytes: z
+        .number()
+        .int()
+        .min(0)
+        .max(MAX_LOG_TAIL_BYTES)
+        .optional()
+        .describe(
+          "Max bytes of error_log and rollback_error returned inline per row. Default 4096 (4 KiB). 0 to omit log bodies entirely; 16384 max.",
+        ),
+    }),
+  },
+  async ({ limit, tail_bytes }) => {
+    const qs = new URLSearchParams();
+    if (limit !== undefined) qs.set("limit", String(limit));
+    const path = qs.toString()
+      ? `/api/server/update/audit?${qs.toString()}`
+      : "/api/server/update/audit";
+    const res = await apiGet(path);
+    if (!res.ok) throw new Error(`update audit failed: ${res.status} ${await res.text()}`);
+    const { rows } = (await res.json()) as { rows: UpdateAuditApiRow[] };
+    return {
+      content: [{ type: "text", text: renderAuditList(rows, { tail_bytes }) }],
+    };
   },
 );
 

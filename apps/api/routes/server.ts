@@ -46,7 +46,25 @@ export async function handleServer(_req: Request, url: URL): Promise<Response | 
   if (url.pathname === "/api/server/update/apply" && _req.method === "POST") {
     return handleUpdateApply(_req);
   }
+  // #80 PR #6
+  if (url.pathname === "/api/server/update/audit" && _req.method === "GET") {
+    return handleUpdateAudit(url);
+  }
   return null;
+}
+
+async function handleUpdateAudit(url: URL): Promise<Response> {
+  const { listAudit } = await import("../update-audit");
+  const limitRaw = url.searchParams.get("limit");
+  let limit = 20;
+  if (limitRaw !== null) {
+    const n = Number(limitRaw);
+    if (!Number.isInteger(n) || n < 1 || n > 200) {
+      return Response.json({ error: "limit must be an integer in [1, 200]" }, { status: 400 });
+    }
+    limit = n;
+  }
+  return Response.json({ rows: listAudit(limit) });
 }
 
 async function handleUpdateApply(req: Request): Promise<Response> {

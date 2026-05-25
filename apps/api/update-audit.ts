@@ -129,6 +129,12 @@ export function listAudit(limit = 20): UpdateAuditRow[] {
     .all(limit) as UpdateAuditRow[];
 }
 
+// Renderers for moor_update_audit live in packages/mcp/src/update-audit-render.ts
+// where they're actually consumed. Keeping them server-side would have
+// meant testing an API-side renderer that production never used —
+// the MCP tool already reimplements its own (and that's the one
+// operators see), so the renderer lives next to its consumer.
+
 /** Startup-and-periodic sweep. Marks any in_progress row whose
  *  started_at_ms is older than the grace window as 'crashed'. The
  *  grace exists because a respawner is mid-flight at the moment moor
