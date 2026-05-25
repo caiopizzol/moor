@@ -115,6 +115,55 @@ describe("#80 PR #1 parseLabels", () => {
       "/root/moor/docker-compose.override.yml",
     ]);
   });
+
+  test("#99: rejects config_files entry outside working_dir (host-only -f /tmp/...)", () => {
+    const r = parseLabels({
+      ...valid,
+      [REQUIRED_COMPOSE_LABELS.configFiles]: "docker-compose.yml,/tmp/pin-040.yml",
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.error.reason).toBe("config_file_outside_working_dir");
+    expect(r.error.message).toContain("/tmp/pin-040.yml");
+    expect(r.error.message).toContain("working_dir");
+    // The message must point operators at the fix.
+    expect(r.error.message).toContain("--force-recreate");
+  });
+
+  test("#99: accepts absolute config_files entries that ARE under working_dir", () => {
+    const r = parseLabels({
+      ...valid,
+      [REQUIRED_COMPOSE_LABELS.configFiles]:
+        "/root/moor/docker-compose.yml,/root/moor/docker-compose.override.yml",
+    });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.labels.config_files).toEqual([
+      "/root/moor/docker-compose.yml",
+      "/root/moor/docker-compose.override.yml",
+    ]);
+  });
+
+  test("#99: rejects a parent-escape attempt via relative ../", () => {
+    // Compose itself normally normalizes paths, but defense-in-depth.
+    const r = parseLabels({
+      ...valid,
+      [REQUIRED_COMPOSE_LABELS.configFiles]: "../etc/compose.yml",
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.error.reason).toBe("config_file_outside_working_dir");
+  });
+
+  test("#99: rejects sibling-prefix false-positive (e.g. /root/moor2 vs /root/moor)", () => {
+    const r = parseLabels({
+      ...valid,
+      [REQUIRED_COMPOSE_LABELS.configFiles]: "/root/moor2/docker-compose.yml",
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.error.reason).toBe("config_file_outside_working_dir");
+  });
 });
 
 describe("#80 PR #1 findDataMount", () => {

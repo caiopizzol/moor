@@ -15,7 +15,7 @@
 // are bind-mountable — that requires a real container launch and
 // belongs in moor_update_apply.
 
-import { isAbsolute, resolve as resolvePath } from "node:path";
+import { isAbsolute, relative as relativePath, resolve as resolvePath } from "node:path";
 
 // Labels Compose sets on every service container. The first two are
 // officially guaranteed by Docker docs; the second two are
@@ -52,10 +52,27 @@ export type DiscoveryError = {
     | "missing_labels"
     | "invalid_working_dir"
     | "no_config_files"
+    | "config_file_outside_working_dir"
     | "no_data_mount"
     | "no_network";
   message: string;
 };
+
+/** Pure: true when `file` sits strictly under `dir` (descendant; not
+ *  the dir itself, which would be a directory path where we expect a
+ *  file). Both args MUST be absolute already; callers (parseLabels)
+ *  enforce this. Used to reject Compose config_files entries the
+ *  respawner can't read (it only bind-mounts working_dir, so anything
+ *  outside — typically a host-only `-f /tmp/pin.yml` used at install
+ *  time — silently breaks self-update). See issue #99 for the failure
+ *  mode that motivated this check. */
+export function isUnderDir(file: string, dir: string): boolean {
+  if (!isAbsolute(file) || !isAbsolute(dir)) return false;
+  const rel = relativePath(dir, file);
+  // node:path.relative returns ".." prefix when escaping; an absolute
+  // result means a different root (Windows). Reject both.
+  return rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
+}
 
 export type DiscoveryResult =
   | { ok: true; context: ComposeContext }
@@ -113,6 +130,24 @@ export function parseLabels(
       ok: false,
       error: { reason: "no_config_files", message: "config_files label is empty after parsing" },
     };
+  }
+  // #99: every config_files entry must live under working_dir. The
+  // respawner bind-mounts working_dir (read-only, same absolute path)
+  // and nothing else; a `-f /tmp/anything.yml` used at install time
+  // gets recorded in Compose's config_files label but is invisible
+  // to the respawner, silently breaking self-update. Refuse here so
+  // moor_update_apply fails fast with an actionable message instead
+  // of compose failing at pull time.
+  for (const cf of configFiles) {
+    if (!isUnderDir(cf, workingDir)) {
+      return {
+        ok: false,
+        error: {
+          reason: "config_file_outside_working_dir",
+          message: `Compose config_files entry ${cf} is not under working_dir ${workingDir}; the respawner only bind-mounts working_dir, so this file is invisible to it. Recreate moor without the host-only -f override (e.g. \`docker compose up -d --force-recreate moor\` with just the in-repo compose files) before invoking moor_update_apply. See #99.`,
+        },
+      };
+    }
   }
   return {
     ok: true,

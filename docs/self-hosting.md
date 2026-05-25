@@ -190,6 +190,20 @@ Accepted range and out-of-range handling are the same as the cleanup scheduler. 
 
 Restore (if ever needed): stop moor, replace `/app/data/moor.db` with a snapshot file, start moor again. Restore tooling beyond that is out of scope for now.
 
+## Self-update and Compose override files
+
+`moor_update_apply` replays Compose commands inside a transient respawner container with the operator's compose `working_dir` bind-mounted **read-only at the same absolute path**. Any `-f` override file used at `docker compose up` time is recorded in Compose's `com.docker.compose.project.config_files` label, and the respawner reads that label to reproduce the same `-f` stack.
+
+**Safe**: pinning via `image:` in `docker-compose.yml` itself, or via an override file kept **inside the moor install directory** (e.g. `docker-compose.override.yml` alongside the main file). The respawner can read these because they're under `working_dir`.
+
+**Unsafe**: ad-hoc host-only overrides like `docker compose -f docker-compose.yml -f /tmp/pin.yml up`. The `/tmp/pin.yml` path is invisible to the respawner. moor catches this before launching the respawner and refuses with a `context_failed` error pointing at the offending entry, so you'll see the message in `moor_update_apply`'s response — but the fix is to recreate moor without the override:
+
+```bash
+docker compose up -d --force-recreate moor
+```
+
+(Without any extra `-f`, just whatever lives under the install dir.) After that, the label resets to just the in-repo compose files and `moor_update_apply` works.
+
 ## Docker socket trust boundary
 
 Moor mounts `/var/run/docker.sock` on the host. That means:
