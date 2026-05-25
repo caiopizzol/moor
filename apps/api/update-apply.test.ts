@@ -14,6 +14,7 @@ const {
   applyUpdate,
   buildUpdateContextJson,
   buildUpdateOverrideYaml,
+  classifyUnsafeReason,
   contextFilePath,
   isValidDigest,
   isValidServiceName,
@@ -178,6 +179,28 @@ function makeDeps(overrides: Record<string, unknown> = {}) {
   return { deps: { ...base, ...overrides }, writes, launches };
 }
 
+describe("update-apply: classifyUnsafeReason (default-deny contract)", () => {
+  test("active-work reasons → 'active_work'", () => {
+    expect(classifyUnsafeReason("2 build/pull in flight")).toBe("active_work");
+    expect(classifyUnsafeReason("1 async exec in flight")).toBe("active_work");
+    expect(classifyUnsafeReason("3 cron run in flight")).toBe("active_work");
+    expect(classifyUnsafeReason("5 project terminal(s) open")).toBe("active_work");
+  });
+  test("backup reasons → 'backup'", () => {
+    expect(
+      classifyUnsafeReason(
+        "no recent DB backup (run moor_db_backup or set MOOR_DB_BACKUP_INTERVAL_HOURS; see #90)",
+      ),
+    ).toBe("backup");
+    expect(classifyUnsafeReason("last backup 73h ago (older than 24h)")).toBe("backup");
+  });
+  test("anything else → 'unknown' (default-deny)", () => {
+    expect(classifyUnsafeReason("disk pressure too high")).toBe("unknown");
+    expect(classifyUnsafeReason("something brand new from a future moor")).toBe("unknown");
+    expect(classifyUnsafeReason("")).toBe("unknown");
+  });
+});
+
 describe("#80 PR #4 applyUpdate — preflight refusals", () => {
   beforeEach(reset);
   afterEach(reset);
@@ -201,6 +224,68 @@ describe("#80 PR #4 applyUpdate — preflight refusals", () => {
     expect(r.error.code).toBe("preflight_failed");
     expect(listAudit().length).toBe(0);
     expect(getDrainState().enabled).toBe(false);
+  });
+
+  test("unknown unsafe_reason → preflight_failed even with no bypass set", async () => {
+    const { deps } = makeDeps({
+      getStatus: async () => {
+        const base = (await makeDeps().deps.getStatus()) as UpdateStatusResponse;
+        return { ...base, unsafe_reasons: ["disk pressure too high"] };
+      },
+    });
+    const r = await applyUpdate({}, deps);
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.error.code).toBe("preflight_failed");
+    expect((r.error as { reason: string }).reason).toContain("unsafe_reasons not in");
+    expect((r.error as { reason: string }).reason).toContain("disk pressure too high");
+    expect(listAudit().length).toBe(0);
+  });
+
+  test("unknown unsafe_reason → still refused even with bypass:['active_work']", async () => {
+    const { deps } = makeDeps({
+      getStatus: async () => {
+        const base = (await makeDeps().deps.getStatus()) as UpdateStatusResponse;
+        return { ...base, unsafe_reasons: ["disk pressure too high"] };
+      },
+    });
+    const r = await applyUpdate({ bypass: ["active_work"] }, deps);
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.error.code).toBe("preflight_failed");
+    // unknown is not bypassable by any flag
+  });
+
+  test("backup-only unsafe_reason → silently accepted (fresh backup will satisfy)", async () => {
+    const { deps, launches } = makeDeps({
+      getStatus: async () => {
+        const base = (await makeDeps().deps.getStatus()) as UpdateStatusResponse;
+        return {
+          ...base,
+          unsafe_reasons: ["last backup 50h ago (older than 24h)"],
+        };
+      },
+    });
+    const r = await applyUpdate({}, deps);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(launches.length).toBe(1);
+  });
+
+  test("mixed: active_work + unknown → refused on unknown (more conservative wins)", async () => {
+    const { deps } = makeDeps({
+      getStatus: async () => {
+        const base = (await makeDeps().deps.getStatus()) as UpdateStatusResponse;
+        return {
+          ...base,
+          unsafe_reasons: ["1 build/pull in flight", "disk pressure too high"],
+        };
+      },
+    });
+    const r = await applyUpdate({ bypass: ["active_work"] }, deps);
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect((r.error as { reason: string }).reason).toContain("disk pressure too high");
   });
 
   test("active work + bypass:['active_work'] → proceeds to insert audit", async () => {
