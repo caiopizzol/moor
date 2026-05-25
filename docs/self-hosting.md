@@ -206,9 +206,9 @@ docker compose up -d --force-recreate moor
 
 (Without any extra `-f`, just whatever lives under the install dir.) After that, the label resets to just the in-repo compose files and `moor_update_apply` works.
 
-### Recovering from pre-0.44 label pollution
+### Recovering from label pollution left by earlier versions
 
-Earlier moor versions (≤0.43) wrote a `/app/data/.update-override-<id>.yml` file and passed it as `-f` to `docker compose up` during self-update. Compose then baked that path into the new container's `config_files` label. After enough updates the label looked like `…docker-compose.yml,/app/data/.update-override-2.yml,/app/data/.update-override-4.yml,…`, all pointing at paths outside `working_dir`. The first `moor_update_apply` you run on a moor that was previously updated by an older version will refuse with `context_failed` for exactly that reason — moor catching its own past pollution, not yours.
+moor versions before this fix (see #105) wrote a `/app/data/.update-override-<id>.yml` file and passed it as `-f` to `docker compose up` during self-update. Compose then baked that path into the new container's `config_files` label. After enough updates the label looked like `…docker-compose.yml,/app/data/.update-override-2.yml,/app/data/.update-override-4.yml,…`, all pointing at paths outside `working_dir`. The first `moor_update_apply` you run on a moor that was previously updated by an older version will refuse with `context_failed` for exactly that reason — moor catching its own past pollution, not yours.
 
 Recovery is the same one-liner as for any unsafe override:
 
