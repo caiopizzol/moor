@@ -21,6 +21,7 @@
   "files": {
     "includes": [
       "apps/api/**/*.ts",
+      "apps/respawner/**/*.ts",
       "apps/web/src/**/*.{ts,tsx,css}",
       "apps/web/vite.config.ts",
       "packages/**/*.{ts,tsx}"
