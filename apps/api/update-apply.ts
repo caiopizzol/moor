@@ -36,6 +36,22 @@ import {
  *  Catches typos and prevents shell/YAML injection via a crafted
  *  digest string. */
 export const TARGET_DIGEST_RE = /^sha256:[0-9a-f]{64}$/;
+
+/** Unsafe-reason classifiers. Each pattern matches the substrings
+ *  emitted by buildUnsafeReasons in update-status.ts. The contract:
+ *  every reason produced there must match exactly one of these, or
+ *  the apply path will default-deny it as `unknown`. New unsafe
+ *  categories require an explicit decision here (bypass-able / silent
+ *  / default-deny), not silent acceptance. */
+export const ACTIVE_WORK_REASON_PATTERN =
+  /build\/pull in flight|async exec in flight|cron run in flight|project terminal\(s\) open/;
+export const BACKUP_REASON_PATTERN = /no recent DB backup|last backup \d+h ago/;
+
+export function classifyUnsafeReason(reason: string): "active_work" | "backup" | "unknown" {
+  if (ACTIVE_WORK_REASON_PATTERN.test(reason)) return "active_work";
+  if (BACKUP_REASON_PATTERN.test(reason)) return "backup";
+  return "unknown";
+}
 export function isValidDigest(s: string | null | undefined): s is string {
   return typeof s === "string" && TARGET_DIGEST_RE.test(s);
 }
@@ -193,27 +209,45 @@ export async function applyUpdate(
     };
   }
 
-  // Refuse on any non-bypassed unsafe_reason. Currently this checks
-  // active-work reasons against the `active_work` bypass; backup
-  // reasons are NOT checked here because step 8 below takes a fresh
-  // VACUUM INTO snapshot and updates the audit row — so any
-  // preflight backup warning is about to be satisfied. If
-  // moor_update_status grows a new unsafe_reason category in the
-  // future, this loop will silently accept it; add a matcher here
-  // when that happens.
+  // Classify every unsafe_reason into one of three buckets:
+  //   active_work — bypassable via bypass: ["active_work"]
+  //   backup     — silently accepted because step 8 below takes a fresh
+  //                VACUUM INTO that satisfies any preflight backup warning
+  //   unknown    — DEFAULT-DENY. moor_update_status is the safety contract;
+  //                if it grew a new category we don't know how to evaluate,
+  //                an updater that silently accepts it would betray the
+  //                contract. Refuse and surface the unknown reasons so the
+  //                operator can decide whether to add explicit handling.
+  const activeWorkReasons: string[] = [];
+  const unknownReasons: string[] = [];
   for (const reason of status.unsafe_reasons) {
-    if (/build\/pull|async exec|cron run|terminal/.test(reason)) {
-      if (!bypass.has("active_work")) {
-        return {
-          ok: false,
-          error: {
-            code: "preflight_failed",
-            reason: `active work in flight; pass bypass: ["active_work"] to interrupt and proceed`,
-            unsafe_reasons: status.unsafe_reasons,
-          },
-        };
-      }
+    if (ACTIVE_WORK_REASON_PATTERN.test(reason)) {
+      activeWorkReasons.push(reason);
+    } else if (BACKUP_REASON_PATTERN.test(reason)) {
+      // intentional no-op: fresh backup below satisfies this
+    } else {
+      unknownReasons.push(reason);
     }
+  }
+  if (unknownReasons.length > 0) {
+    return {
+      ok: false,
+      error: {
+        code: "preflight_failed",
+        reason: `unsafe_reasons not in active_work or backup category; refusing to silently accept: ${unknownReasons.join("; ")}. Review and add explicit handling.`,
+        unsafe_reasons: status.unsafe_reasons,
+      },
+    };
+  }
+  if (activeWorkReasons.length > 0 && !bypass.has("active_work")) {
+    return {
+      ok: false,
+      error: {
+        code: "preflight_failed",
+        reason: `active work in flight; pass bypass: ["active_work"] to interrupt and proceed`,
+        unsafe_reasons: status.unsafe_reasons,
+      },
+    };
   }
 
   // Refuse a no-op apply when nothing's actually new AND the operator
