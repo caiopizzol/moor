@@ -193,9 +193,14 @@ export async function applyUpdate(
     };
   }
 
-  // Refuse on any non-bypassed unsafe_reason. Active-work reasons are
-  // bypassable; backup-related reasons are NEVER bypassable (PR #4 takes
-  // a fresh backup itself, so this is mostly a sanity check).
+  // Refuse on any non-bypassed unsafe_reason. Currently this checks
+  // active-work reasons against the `active_work` bypass; backup
+  // reasons are NOT checked here because step 8 below takes a fresh
+  // VACUUM INTO snapshot and updates the audit row — so any
+  // preflight backup warning is about to be satisfied. If
+  // moor_update_status grows a new unsafe_reason category in the
+  // future, this loop will silently accept it; add a matcher here
+  // when that happens.
   for (const reason of status.unsafe_reasons) {
     if (/build\/pull|async exec|cron run|terminal/.test(reason)) {
       if (!bypass.has("active_work")) {
@@ -209,6 +214,23 @@ export async function applyUpdate(
         };
       }
     }
+  }
+
+  // Refuse a no-op apply when nothing's actually new AND the operator
+  // didn't explicitly request a specific digest. Without this guard,
+  // `moor_update_apply` would restart moor for no functional gain.
+  // An explicit `target_digest` (even matching current) is treated as
+  // intentional — operators sometimes pin to re-verify the current
+  // release; that's their call.
+  if (status.available.update_available === false && input.target_digest === undefined) {
+    return {
+      ok: false,
+      error: {
+        code: "preflight_failed",
+        reason:
+          "already on the latest digest; no update to apply. Pass an explicit target_digest if you want to re-apply intentionally.",
+      },
+    };
   }
 
   // Target digest: explicit input wins; otherwise use the registry's

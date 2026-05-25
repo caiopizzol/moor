@@ -1,10 +1,13 @@
 # syntax=docker/dockerfile:1
 #
-# #80 PR #3: moor-respawner image. Packaging only — the entrypoint
-# script implements --self-test in this PR; the real update/rollback
-# flow lands in PR #4/#5. Tagged together with moor itself by the
-# existing release-moor.yml so respawner version always matches the
-# moor version that launched it.
+# #80: moor-respawner image. Tagged together with moor itself by the
+# existing release-moor.yml so the respawner version always matches
+# the moor version that launched it (the contract is between them).
+#
+# Entrypoint modes (see entrypoint.sh for details):
+# - --self-test : verify docker + compose + jq (CI / smoke check).
+# - apply       : PR #4 happy path — pull + up + health-poll + marker.
+#                 NO rollback in PR #4; PR #5 adds it.
 #
 # Security posture (also documented in the entrypoint script):
 # - Transient: launched by moor for a single update window, removed

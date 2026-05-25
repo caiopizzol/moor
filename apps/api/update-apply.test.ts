@@ -263,6 +263,51 @@ describe("#80 PR #4 applyUpdate — preflight refusals", () => {
     expect(listAudit().length).toBe(0);
   });
 
+  test("update_available=false (already latest) without explicit target_digest → refused (no-op apply)", async () => {
+    const { deps } = makeDeps({
+      getStatus: async () => {
+        const base = (await makeDeps().deps.getStatus()) as UpdateStatusResponse;
+        return {
+          ...base,
+          // Same digest both sides → already latest.
+          available: {
+            ...base.available,
+            latest_digest: VALID_DIGEST,
+            update_available: false,
+          },
+          current: { ...base.current, repo_digest: VALID_DIGEST },
+        };
+      },
+    });
+    const r = await applyUpdate({}, deps);
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.error.code).toBe("preflight_failed");
+    expect((r.error as { reason: string }).reason).toContain("already on the latest digest");
+    expect(listAudit().length).toBe(0);
+  });
+
+  test("update_available=false WITH explicit target_digest → proceeds (intentional re-apply)", async () => {
+    const { deps, launches } = makeDeps({
+      getStatus: async () => {
+        const base = (await makeDeps().deps.getStatus()) as UpdateStatusResponse;
+        return {
+          ...base,
+          available: {
+            ...base.available,
+            latest_digest: VALID_DIGEST,
+            update_available: false,
+          },
+          current: { ...base.current, repo_digest: VALID_DIGEST },
+        };
+      },
+    });
+    const r = await applyUpdate({ target_digest: VALID_DIGEST }, deps);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(launches.length).toBe(1);
+  });
+
   test("update_available=null + bypass without explicit target_digest → still refused (no digest to pin)", async () => {
     const { deps } = makeDeps({
       getStatus: async () => {

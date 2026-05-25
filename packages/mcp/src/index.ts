@@ -850,7 +850,7 @@ server.registerTool(
         content: [
           {
             type: "text",
-            text: `Update started: audit_id=${audit_id}. Respawner is running async. Poll moor_update_status to watch the version change; the audit row will transition from in_progress → success | failed once the respawner writes its marker.`,
+            text: `Update started: audit_id=${audit_id}. Respawner is running async. Poll moor_update_status to watch the version change. Expected transitions: in_progress → success (clean apply) or → failed (compose/health failure; PR #4 has no rollback so the compose state is left where Compose left it). If the new moor never becomes healthy enough to ingest the marker, the audit row may stay in_progress until the 30-min stale sweep marks it crashed — at which point manual recovery (docker compose up) may be required.`,
           },
         ],
       };
