@@ -42,7 +42,37 @@ export async function handleServer(_req: Request, url: URL): Promise<Response | 
   if (url.pathname === "/api/server/backup" && _req.method === "POST") {
     return handleDbBackup();
   }
+  // #80 PR #4
+  if (url.pathname === "/api/server/update/apply" && _req.method === "POST") {
+    return handleUpdateApply(_req);
+  }
   return null;
+}
+
+async function handleUpdateApply(req: Request): Promise<Response> {
+  const { applyUpdate } = await import("../update-apply");
+  const body = (await req.json().catch(() => ({}))) as {
+    target_digest?: string;
+    bypass?: ("active_work" | "unknown_digest")[];
+  };
+  const result = await applyUpdate(body);
+  if (result.ok) {
+    return Response.json({ audit_id: result.audit_id }, { status: 202 });
+  }
+  // Map error codes → HTTP status. Preflight refusals and races are 409
+  // (request was understood but state conflicts); context_failed is 412
+  // (precondition labels missing); current_image_unknown is 503 (Docker
+  // unreachable); backup/launch failures are 500 (moor-side I/O).
+  const statusByCode: Record<typeof result.error.code, number> = {
+    preflight_failed: 409,
+    context_failed: 412,
+    current_image_unknown: 503,
+    already_in_progress: 409,
+    race_active_work: 409,
+    backup_failed: 500,
+    respawner_launch_failed: 500,
+  };
+  return Response.json({ error: result.error }, { status: statusByCode[result.error.code] });
 }
 
 async function handleDbBackup(): Promise<Response> {

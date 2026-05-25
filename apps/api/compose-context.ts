@@ -181,12 +181,18 @@ export function findDataMount(
   };
 }
 
-/** Pure: pick a default network from the Networks map. Compose
- *  creates a default network per project; we just take the first key
- *  since a service typically only sits on one network. Returns
- *  ok:false when the map is empty or missing. */
+/** Pure: pick the network the respawner should attach to. Compose
+ *  creates `<project>_default` per project, but a service can be on
+ *  additional named networks too. Preference order:
+ *    1. `<project>_default` when present (canonical compose default).
+ *    2. First key as fallback (single-network installs).
+ *  Returns ok:false when the map is empty or missing.
+ *
+ *  `project` is optional so older callers (and existing tests) keep
+ *  working; the update-apply path passes it. */
 export function findDefaultNetwork(
   networks: Record<string, unknown> | undefined | null,
+  project?: string,
 ): { ok: true; name: string } | { ok: false; error: DiscoveryError } {
   const keys = networks ? Object.keys(networks) : [];
   if (keys.length === 0) {
@@ -197,6 +203,10 @@ export function findDefaultNetwork(
         message: "container has no NetworkSettings.Networks entries; cannot attach respawner",
       },
     };
+  }
+  if (project) {
+    const preferred = `${project}_default`;
+    if (keys.includes(preferred)) return { ok: true, name: preferred };
   }
   return { ok: true, name: keys[0] };
 }
@@ -213,7 +223,9 @@ export function buildContextFromInspect(payload: {
   if (!labels.ok) return { ok: false, error: labels.error };
   const mount = findDataMount(payload.Mounts);
   if (!mount.ok) return { ok: false, error: mount.error };
-  const network = findDefaultNetwork(payload.NetworkSettings?.Networks);
+  // Pass project so findDefaultNetwork can prefer `<project>_default`
+  // over an arbitrary first key when moor is on multiple networks.
+  const network = findDefaultNetwork(payload.NetworkSettings?.Networks, labels.labels.project);
   if (!network.ok) return { ok: false, error: network.error };
   return {
     ok: true,

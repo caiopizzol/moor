@@ -182,8 +182,8 @@ describe("#80 PR #1 findDataMount", () => {
   });
 });
 
-describe("#80 PR #1 findDefaultNetwork", () => {
-  test("picks the first network key", () => {
+describe("#80 PR #1/#4 findDefaultNetwork", () => {
+  test("picks the first network key when no project hint", () => {
     const r = findDefaultNetwork({ moor_default: { IPAddress: "172.18.0.2" } });
     expect(r.ok).toBe(true);
     if (!r.ok) return;
@@ -193,6 +193,27 @@ describe("#80 PR #1 findDefaultNetwork", () => {
   test("empty/null networks → no_network", () => {
     expect(findDefaultNetwork(null).ok).toBe(false);
     expect(findDefaultNetwork({}).ok).toBe(false);
+  });
+
+  test("#80 PR #4: prefers `<project>_default` when present and project is passed", () => {
+    const r = findDefaultNetwork({ some_other_net: {}, moor_default: {}, another: {} }, "moor");
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.name).toBe("moor_default");
+  });
+
+  test("#80 PR #4: falls back to first key when `<project>_default` isn't present", () => {
+    const r = findDefaultNetwork({ custom_network: {}, another: {} }, "moor");
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.name).toBe("custom_network");
+  });
+
+  test("#80 PR #4: project hint is opt-in — older calls without it behave like before", () => {
+    const r = findDefaultNetwork({ alpha: {}, beta_default: {} });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.name).toBe("alpha"); // no project → first key, NOT beta_default
   });
 });
 

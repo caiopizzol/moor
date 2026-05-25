@@ -810,6 +810,64 @@ server.registerTool(
   },
 );
 
+// #80 PR #4: moor_update_apply — kick off a transient-respawner update of
+// moor itself. The respawner runs async; this tool returns the audit_id
+// immediately. Poll moor_update_status (or, eventually, moor_update_audit)
+// for the outcome.
+//
+// IMPORTANT: PR #4 has no rollback. A failed compose-up / --wait timeout /
+// health check writes a `failed` marker and exits; compose state is left
+// as Compose left it. Recovery: manual `docker compose up`, OR wait for the
+// 30-min stale-in_progress sweep to reclaim the audit row. Automatic
+// rollback (retag + `--pull never`) lands in PR #5.
+server.registerTool(
+  "moor_update_apply",
+  {
+    title: "Apply moor update (transient respawner)",
+    description:
+      "Update moor in-place via a transient respawner container. Runs preflight, enables drain, takes a fresh DB backup, then launches a one-shot Compose-aware respawner that pulls + re-creates the moor service. The respawner writes a marker file when done; this tool returns the audit_id immediately so the caller can poll. PR #4 happy path ONLY — no automatic rollback. A failed up/health writes `failed` and leaves the compose state; recovery may require manual `docker compose up`. Bypass is per-blocker: pass {bypass:['active_work']} to interrupt in-flight builds/execs/crons via the existing shutdown coordinator; {bypass:['unknown_digest']} when the registry comparison was inconclusive. Backup is mandatory and not bypassable.",
+    inputSchema: z.object({
+      target_digest: z
+        .string()
+        .regex(/^sha256:[0-9a-f]{64}$/, "target_digest must be sha256:<64 hex>")
+        .optional()
+        .describe(
+          "Pin the update to this exact image digest. Default: the registry's current `:latest` digest from moor_update_status.",
+        ),
+      bypass: z
+        .array(z.enum(["active_work", "unknown_digest"]))
+        .optional()
+        .describe(
+          "Per-blocker bypass. `active_work` accepts that in-flight builds/execs/crons will be interrupted via the shutdown coordinator. `unknown_digest` accepts proceeding when the registry comparison is inconclusive (locally-built image, GHCR unreachable). Backup is mandatory and not in this list.",
+        ),
+    }),
+  },
+  async (input) => {
+    const res = await apiPost("/api/server/update/apply", input ?? {});
+    if (res.status === 202) {
+      const { audit_id } = (await res.json()) as { audit_id: number };
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Update started: audit_id=${audit_id}. Respawner is running async. Poll moor_update_status to watch the version change. Expected transitions: in_progress → success (clean apply) or → failed (compose/health failure; PR #4 has no rollback so the compose state is left where Compose left it). If the new moor never becomes healthy enough to ingest the marker, the audit row may stay in_progress until the 30-min stale sweep marks it crashed — at which point manual recovery (docker compose up) may be required.`,
+          },
+        ],
+      };
+    }
+    // Error: surface the structured reason so callers can act on it.
+    const body = (await res.json().catch(() => ({}))) as {
+      error?: { code: string; reason?: string; unsafe_reasons?: string[] };
+    };
+    const code = body.error?.code ?? `HTTP ${res.status}`;
+    const reason = body.error?.reason ?? "no detail";
+    const extra = body.error?.unsafe_reasons
+      ? `\nunsafe_reasons:\n  - ${body.error.unsafe_reasons.join("\n  - ")}`
+      : "";
+    throw new Error(`moor_update_apply refused [${code}]: ${reason}${extra}`);
+  },
+);
+
 server.registerTool(
   "moor_cleanup_plan",
   {
