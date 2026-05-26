@@ -28,6 +28,7 @@ import { handleEnvs } from "./routes/envs";
 import { handleExec } from "./routes/exec";
 import { handlePorts } from "./routes/ports";
 import { handleProjects } from "./routes/projects";
+import { handleRegistryCredentials } from "./routes/registry-credentials";
 import { handleRuns } from "./routes/runs";
 import { handleServer } from "./routes/server";
 import { handleTerminalSessions } from "./routes/terminal-sessions";
@@ -187,6 +188,7 @@ const server = Bun.serve({
           (await handleCaddy(req, url)) ??
           (await handleCleanup(req, url)) ??
           (await handleContainerStats(req, url)) ??
+          (await handleRegistryCredentials(req, url)) ??
           (await handleServer(req, url));
 
         if (res) return res;

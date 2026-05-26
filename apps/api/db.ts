@@ -192,6 +192,22 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_update_audit_state
     ON update_audit(state);
+
+  -- Per-registry credentials for private image pulls. One row per registry
+  -- hostname. The pull path looks up by hostname extracted from the image
+  -- ref; a match produces an X-Registry-Auth header on /images/create. No
+  -- match means anonymous pull, preserving today's public-image behavior.
+  -- Stored plaintext, consistent with env_vars: the DB file is the trust
+  -- boundary. API reads NEVER return the secret -- they return metadata
+  -- plus a kind derived at read time from the secret's known prefixes.
+  CREATE TABLE IF NOT EXISTS registry_credentials (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    hostname TEXT NOT NULL UNIQUE,
+    username TEXT NOT NULL,
+    secret TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
 `);
 
 // #34 Phase B: orphan sweep. On moor restart, the in-memory map of active runs

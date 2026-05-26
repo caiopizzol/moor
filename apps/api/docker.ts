@@ -4,6 +4,8 @@ import { createFrameParser } from "./docker-frame-parser";
 import { buildKillScript, buildWrappedExecCmd, parseKillResult } from "./exec-kill";
 import { parseImageRef } from "./image-ref";
 import { redactCredentials, redactDockerBuildPath } from "./redact";
+import { buildPullAuthHeaders } from "./registry-auth";
+import { getCredentialByHostname } from "./registry-credentials-db";
 
 function findSocket(): string {
   if (process.env.DOCKER_HOST) return process.env.DOCKER_HOST.replace("unix://", "");
@@ -216,7 +218,8 @@ export async function pullImageStreaming(
   params.set("fromImage", parsed.fromImage);
   if (parsed.tag !== null) params.set("tag", parsed.tag);
 
-  // Explicitly set platform to avoid manifest parsing failures on multi-arch images
+  // Explicitly set platform to avoid manifest parsing failures on multi-arch images.
+  // /version is called anonymously: no registry credential involved.
   try {
     const versionRes = await dockerFetch("/v1.44/version");
     if (versionRes.ok) {
@@ -227,12 +230,18 @@ export async function pullImageStreaming(
     // Fall back to no platform — let Docker decide
   }
 
+  // Look up a credential by the registry host extracted from the ref.
+  // No match → no header → anonymous pull (preserves today's public-image behavior).
+  const credential = getCredentialByHostname(parsed.registryHost);
+  const authHeaders = buildPullAuthHeaders(parsed, credential);
+
   console.log(
-    `[pullImageStreaming] fromImage=${parsed.fromImage} tag=${parsed.tag ?? "(digest)"} platform=${params.get("platform") ?? "auto"}`,
+    `[pullImageStreaming] fromImage=${parsed.fromImage} tag=${parsed.tag ?? "(digest)"} platform=${params.get("platform") ?? "auto"} auth=${credential ? `host=${parsed.registryHost}` : "anonymous"}`,
   );
 
   const res = await dockerFetch(`/v1.44/images/create?${params}`, {
     method: "POST",
+    headers: authHeaders,
     timeout: BUILD_TIMEOUT,
     signal,
   });

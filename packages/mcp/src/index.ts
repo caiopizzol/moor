@@ -2257,6 +2257,191 @@ server.registerTool(
   },
 );
 
+// --- Registry credentials ---
+//
+// Server-wide credentials used by the pull path to attach
+// X-Registry-Auth on /images/create for private images. Read shape
+// is write-only: the raw secret never leaves the API. Tool descriptions
+// flag that *inputs* (add/update) carry the secret over the tool-call
+// path and are visible to the MCP client - same security model as
+// moor_env_set. structuredContent mirrors the API metadata shape so
+// agents can reason over it without scraping the human text.
+
+type RegistryCredentialMetadata = {
+  id: number;
+  hostname: string;
+  username: string;
+  secret: { configured: true; kind: "github_classic_pat" | "github_fine_grained_pat" | "unknown" };
+  created_at: string;
+  updated_at: string;
+};
+
+function renderCredentialLine(c: RegistryCredentialMetadata): string {
+  return `id=${c.id} ${c.hostname} user=${c.username} kind=${c.secret.kind} updated=${c.updated_at}`;
+}
+
+server.registerTool(
+  "moor_registry_credentials_list",
+  {
+    title: "List Registry Credentials",
+    description:
+      "List all stored Docker registry credentials. Returns metadata only - the raw secret value is never returned by any read path. Each row carries `secret: { configured: true, kind }` where kind is derived from known token prefixes (github_classic_pat, github_fine_grained_pat) or 'unknown'.",
+  },
+  async () => {
+    const res = await apiGet("/api/server/registry-credentials");
+    if (!res.ok) throw new Error(`Failed: ${res.status} ${await res.text()}`);
+    const data = (await res.json()) as { rows: RegistryCredentialMetadata[] };
+    const text =
+      data.rows.length === 0
+        ? "No registry credentials configured. The pull path falls back to anonymous for every registry."
+        : data.rows.map(renderCredentialLine).join("\n");
+    return {
+      content: [{ type: "text", text }],
+      structuredContent: { rows: data.rows },
+    };
+  },
+);
+
+server.registerTool(
+  "moor_registry_credential_get",
+  {
+    title: "Get Registry Credential",
+    description:
+      "Get a single stored registry credential by id. Returns metadata only - the raw secret is never returned. Use this before moor_registry_credential_delete to confirm the hostname you intend to delete.",
+    inputSchema: z.object({
+      id: z
+        .number()
+        .int()
+        .positive()
+        .describe("Credential id (from moor_registry_credentials_list)"),
+    }),
+  },
+  async ({ id }) => {
+    const res = await apiGet(`/api/server/registry-credentials/${id}`);
+    if (res.status === 404) throw new Error(`credential id=${id} not found`);
+    if (!res.ok) throw new Error(`Failed: ${res.status} ${await res.text()}`);
+    const row = (await res.json()) as RegistryCredentialMetadata;
+    return {
+      content: [{ type: "text", text: renderCredentialLine(row) }],
+      structuredContent: row as unknown as Record<string, unknown>,
+    };
+  },
+);
+
+server.registerTool(
+  "moor_registry_credential_add",
+  {
+    title: "Add Registry Credential",
+    description:
+      "Store a credential for a Docker registry. The pull path will attach X-Registry-Auth to /images/create whenever an image ref matches this hostname. Hostname must be the bare host as it appears in the image ref (e.g. ghcr.io, docker.io, localhost:5000) - no scheme, no path. Note: the secret value passes through the MCP client and tool-call transport, same security model as moor_env_set; rotate via moor_registry_credential_update if it has been exposed.",
+    inputSchema: z.object({
+      hostname: z
+        .string()
+        .describe(
+          "Bare registry host as parsed from an image ref. Examples: ghcr.io, docker.io, localhost:5000, registry.example.com:5000. No scheme, no path.",
+        ),
+      username: z
+        .string()
+        .describe("Registry username. For GHCR with a classic PAT, use your GitHub username."),
+      secret: z
+        .string()
+        .describe(
+          "Registry password or token. For GHCR, a classic PAT with read:packages is the documented path. Visible to the MCP client on input.",
+        ),
+    }),
+  },
+  async ({ hostname, username, secret }) => {
+    const res = await apiPost("/api/server/registry-credentials", { hostname, username, secret });
+    if (!res.ok) throw new Error(`Failed: ${res.status} ${await res.text()}`);
+    const row = (await res.json()) as RegistryCredentialMetadata;
+    return {
+      content: [
+        {
+          type: "text",
+          text: `Added credential for ${row.hostname} (id=${row.id}, kind=${row.secret.kind}).`,
+        },
+      ],
+      structuredContent: row as unknown as Record<string, unknown>,
+    };
+  },
+);
+
+server.registerTool(
+  "moor_registry_credential_update",
+  {
+    title: "Update Registry Credential",
+    description:
+      "Rotate username and/or secret on an existing credential. Hostname is intentionally not patchable - changing the lookup key on an existing row would silently break the pull path. To change hostnames, delete and re-create. Requires at least one of username or secret. Note: the secret value passes through the MCP client on input - same security model as moor_env_set.",
+    inputSchema: z.object({
+      id: z.number().int().positive().describe("Credential id to update"),
+      username: z.string().optional().describe("New username (optional)"),
+      secret: z
+        .string()
+        .optional()
+        .describe("New secret (optional). Visible to the MCP client on input."),
+    }),
+  },
+  async ({ id, username, secret }) => {
+    if (username === undefined && secret === undefined) {
+      throw new Error("must provide at least one of username or secret to update");
+    }
+    const patch: Record<string, string> = {};
+    if (username !== undefined) patch.username = username;
+    if (secret !== undefined) patch.secret = secret;
+    const res = await apiPut(`/api/server/registry-credentials/${id}`, patch);
+    if (res.status === 404) throw new Error(`credential id=${id} not found`);
+    if (!res.ok) throw new Error(`Failed: ${res.status} ${await res.text()}`);
+    const row = (await res.json()) as RegistryCredentialMetadata;
+    const rotated: string[] = [];
+    if (username !== undefined) rotated.push("username");
+    if (secret !== undefined) rotated.push("secret");
+    return {
+      content: [
+        {
+          type: "text",
+          text: `Updated credential id=${id} (${row.hostname}): rotated ${rotated.join(" + ")}. kind=${row.secret.kind}.`,
+        },
+      ],
+      structuredContent: row as unknown as Record<string, unknown>,
+    };
+  },
+);
+
+server.registerTool(
+  "moor_registry_credential_delete",
+  {
+    title: "Delete Registry Credential",
+    description:
+      "Delete a stored registry credential. Requires confirm_hostname to match the resolved row's hostname exactly - guards against deleting the wrong row from a stale id. After deletion, pulls for that registry fall back to anonymous. Irreversible.",
+    inputSchema: z.object({
+      id: z.number().int().positive().describe("Credential id to delete"),
+      confirm_hostname: z
+        .string()
+        .describe(
+          "Must equal the credential row's hostname exactly. Resolved via moor_registry_credential_get and compared before deletion.",
+        ),
+    }),
+  },
+  async ({ id, confirm_hostname }) => {
+    const getRes = await apiGet(`/api/server/registry-credentials/${id}`);
+    if (getRes.status === 404) throw new Error(`credential id=${id} not found`);
+    if (!getRes.ok)
+      throw new Error(`Failed to fetch credential: ${getRes.status} ${await getRes.text()}`);
+    const row = (await getRes.json()) as RegistryCredentialMetadata;
+    if (confirm_hostname !== row.hostname) {
+      throw new Error(
+        `confirm_hostname "${confirm_hostname}" does not match resolved hostname "${row.hostname}". Refusing to delete.`,
+      );
+    }
+    const delRes = await apiDelete(`/api/server/registry-credentials/${id}`);
+    if (!delRes.ok) throw new Error(`Failed to delete: ${delRes.status} ${await delRes.text()}`);
+    return {
+      content: [{ type: "text", text: `Deleted credential for ${row.hostname} (id=${id}).` }],
+      structuredContent: { deleted: { id, hostname: row.hostname } },
+    };
+  },
+);
+
 function formatMs(ms: number): string {
   if (ms < 1000) return `${ms}ms`;
   const s = Math.floor(ms / 1000);
