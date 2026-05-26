@@ -127,6 +127,54 @@ curl http://localhost:8080   # the host port shown for the project in the moor a
 
 Your network firewall should keep direct project port ranges closed regardless. Caddy is the only intended public entry point.
 
+## Private registry images
+
+When a project's `docker_image` references a private registry (GHCR, Docker Hub, ECR, a self-hosted Harbor), moor needs credentials to pull. Add one row per registry hostname. The pull path looks up by the hostname extracted from the image ref and attaches `X-Registry-Auth` on `/images/create`. Anonymous pulls keep working for public images: a missing credential means no header, same as today.
+
+The HTTP API requires `MOOR_API_KEY` (see [API keys](#api-keys) above).
+
+### Add a credential
+
+GHCR with a classic PAT (the documented path; scope `read:packages`):
+
+```bash
+KEY=$(grep '^MOOR_API_KEY=' .env | cut -d= -f2-)
+curl -fsS -X POST http://127.0.0.1:3000/api/server/registry-credentials \
+  -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
+  -d '{"hostname":"ghcr.io","username":"<your-github-username>","secret":"ghp_..."}'
+```
+
+`hostname` must be the bare host as it appears in the image ref: `ghcr.io`, `docker.io`, `localhost:5000`, `registry.example.com:5000`. No scheme, no path. Case is normalized at storage, so `GHCR.IO` and `ghcr.io` resolve to the same row.
+
+### List, rotate, delete
+
+```bash
+# List (metadata only - the raw secret is never returned)
+curl -fsS -H "Authorization: Bearer $KEY" \
+  http://127.0.0.1:3000/api/server/registry-credentials
+
+# Rotate the secret on id=1
+curl -fsS -X PUT http://127.0.0.1:3000/api/server/registry-credentials/1 \
+  -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
+  -d '{"secret":"ghp_NEW"}'
+
+# Delete
+curl -fsS -X DELETE http://127.0.0.1:3000/api/server/registry-credentials/1 \
+  -H "Authorization: Bearer $KEY"
+```
+
+To change a hostname, delete and recreate. The hostname is the lookup key and is not patchable through `PUT`.
+
+MCP equivalents: `moor_registry_credentials_list`, `moor_registry_credential_get`, `moor_registry_credential_add`, `moor_registry_credential_update`, `moor_registry_credential_delete`.
+
+### Storage and reads
+
+Secrets are stored plaintext in moor's SQLite file, matching how `env_vars` are stored. The DB file is the trust boundary. All read paths (HTTP and MCP) return metadata only: `secret` comes back as `{ "configured": true, "kind": "github_classic_pat" | "github_fine_grained_pat" | "unknown" }`. The raw value never leaves the API.
+
+### Scope
+
+This covers private images referenced as `docker_image` (the pull path through `/images/create`). Private base images inside a Dockerfile build go through a different daemon header (`X-Registry-Config` on `/build`) and are not wired yet.
+
 ## Scheduled dangling-image cleanup
 
 Builds create new image layers and leave the previous tagged image as a dangling artifact. On an active host these add up fast (8 GB+ regenerates within minutes when several projects rebuild). The MCP tools `moor_cleanup_plan` + `moor_cleanup_execute` let you reclaim that space manually.
