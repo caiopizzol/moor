@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { createFrameParser } from "./docker-frame-parser";
 import { buildKillScript, buildWrappedExecCmd, parseKillResult } from "./exec-kill";
+import { parseImageRef } from "./image-ref";
 import { redactCredentials, redactDockerBuildPath } from "./redact";
 
 function findSocket(): string {
@@ -210,12 +211,10 @@ export async function pullImageStreaming(
   onLine: (text: string) => void,
   signal?: AbortSignal,
 ): Promise<void> {
-  // Split image:tag
-  const [fromImage, tag] = imageRef.includes(":")
-    ? [imageRef.slice(0, imageRef.lastIndexOf(":")), imageRef.slice(imageRef.lastIndexOf(":") + 1)]
-    : [imageRef, "latest"];
-
-  const params = new URLSearchParams({ fromImage, tag });
+  const parsed = parseImageRef(imageRef);
+  const params = new URLSearchParams();
+  params.set("fromImage", parsed.fromImage);
+  if (parsed.tag !== null) params.set("tag", parsed.tag);
 
   // Explicitly set platform to avoid manifest parsing failures on multi-arch images
   try {
@@ -229,7 +228,7 @@ export async function pullImageStreaming(
   }
 
   console.log(
-    `[pullImageStreaming] fromImage=${fromImage} tag=${tag} platform=${params.get("platform") ?? "auto"}`,
+    `[pullImageStreaming] fromImage=${parsed.fromImage} tag=${parsed.tag ?? "(digest)"} platform=${params.get("platform") ?? "auto"}`,
   );
 
   const res = await dockerFetch(`/v1.44/images/create?${params}`, {
