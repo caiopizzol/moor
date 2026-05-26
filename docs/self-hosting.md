@@ -169,7 +169,7 @@ MCP equivalents: `moor_registry_credentials_list`, `moor_registry_credential_get
 
 ### Storage and reads
 
-Secrets are stored plaintext in moor's SQLite file, matching how `env_vars` are stored. The DB file is the trust boundary. All read paths (HTTP and MCP) return metadata only: `secret` comes back as `{ "configured": true, "kind": "github_classic_pat" | "github_fine_grained_pat" | "unknown" }`. The raw value never leaves the API.
+Secrets are stored plaintext in moor's SQLite file, matching how `env_vars` are stored. The DB file is the trust boundary. All read paths (HTTP and MCP) return metadata only: `secret` comes back as `{ "configured": true, "kind": "github_classic_pat" | "github_fine_grained_pat" | "unknown" }`. The raw value is never returned by API or MCP read responses. It is still sent outbound to the Docker daemon as `X-Registry-Auth` during pulls, since that is the whole point of storing it.
 
 ### Scope
 
