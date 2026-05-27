@@ -325,39 +325,6 @@ describe("#112 build path credential resolution", () => {
     expect(statusOf(pId)).toBe("stopped");
   });
 
-  test("ambiguous (2+ active candidates, no id pinned) returns 409 BEFORE side effects", async () => {
-    makeCred("github.com", "a");
-    makeCred("github.com", "b");
-    const pId = makeGithubProject("p3", null);
-    const res = await call("POST", `/api/projects/${pId}/build`);
-    expect(res.status).toBe(409);
-    const body = (await res.json()) as { code: string; candidates: Array<{ label: string }> };
-    expect(body.code).toBe("source_credential_ambiguous");
-    expect(body.candidates.map((c) => c.label).sort()).toEqual(["a", "b"]);
-    expect(statusOf(pId)).toBe("stopped");
-  });
-
-  test("/run also resolves before status flip and before BuildRun (ambiguous case)", async () => {
-    // /run is the SSE path used by moor_deploy. The same resolver
-    // contract must hold there. If it didn't, we'd open an SSE stream
-    // and write a partial deploy run before refusing.
-    makeCred("github.com", "a");
-    makeCred("github.com", "b");
-    const pId = makeGithubProject("p-run", null);
-    const res = await call("POST", `/api/projects/${pId}/run`);
-    expect(res.status).toBe(409);
-    // Response is plain JSON (not SSE) — proves the resolver short-circuited
-    // before the streaming branch.
-    expect(res.headers.get("content-type") || "").toContain("application/json");
-    const body = (await res.json()) as { code: string };
-    expect(body.code).toBe("source_credential_ambiguous");
-    expect(statusOf(pId)).toBe("stopped");
-    const runCount = db.query("SELECT COUNT(*) as n FROM runs WHERE project_id = ?").get(pId) as {
-      n: number;
-    };
-    expect(runCount.n).toBe(0);
-  });
-
   test("/run resolves host_mismatch before opening the SSE stream", async () => {
     const wrongHost = makeCred("gitlab.com", "wrong");
     const pId = makeGithubProject("p-run-host", wrongHost);

@@ -42,11 +42,12 @@ type Project = {
 };
 
 /** Map a build-time credential-resolver failure to an HTTP Response.
- *  Status mapping: 409 for ambiguity (caller has to pick), 400 for
- *  everything else (missing/mismatch/not-active/invalid url/conflict). */
+ *  All build-time failures are 400 since #120: ambiguity no longer
+ *  surfaces at build time (null source_credential_id means anonymous
+ *  clone, never a host lookup). /check stays the place to surface
+ *  ambiguity to the operator. */
 function resolverFailureResponse(failure: ResolveFailure): Response {
-  const status = failure.code === "source_credential_ambiguous" ? 409 : 400;
-  return Response.json(failure, { status });
+  return Response.json(failure, { status: 400 });
 }
 
 function validateGithubUrl(url: string): string | null {
