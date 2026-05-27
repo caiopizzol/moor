@@ -208,6 +208,35 @@ db.exec(`
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
+
+  -- Per-host source credentials for private Git repos via HTTPS PAT.
+  -- UNLIKE registry credentials, hostname is NOT unique on its own:
+  -- an operator can have multiple github.com rows (one per org-scoped
+  -- fine-grained PAT). The (hostname, label) pair is unique so the
+  -- same identity can't be stored twice. Reads return secret as
+  -- { configured, kind } only; the raw value never leaves the API.
+  -- Same plaintext-at-rest posture as env_vars and registry_credentials:
+  -- the DB file is the trust boundary. State machine:
+  --   active   ready for use
+  --   failed   last check rejected; rotation needed
+  --
+  -- v1 is HTTPS PAT only. SSH deploy keys and other auth types may be
+  -- added later via an auth_type column; intentionally not shipped now
+  -- to keep the surface narrow.
+  CREATE TABLE IF NOT EXISTS source_credentials (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    hostname TEXT NOT NULL,
+    label TEXT NOT NULL,
+    username TEXT NOT NULL,
+    secret TEXT NOT NULL,
+    state TEXT NOT NULL DEFAULT 'active' CHECK (state IN ('active', 'failed')),
+    expires_at TEXT,
+    last_checked_at TEXT,
+    last_check_status TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(hostname, label)
+  );
 `);
 
 // #34 Phase B: orphan sweep. On moor restart, the in-memory map of active runs
@@ -396,5 +425,20 @@ db.exec(`
         AS BLOB))
   WHERE finished_at IS NULL AND cron_id IS NULL
 `);
+
+// #111: projects opt into a stored source credential. NULL = today's path
+// (anonymous public clone, or legacy URL-embedded credentials in
+// github_url). When set, the build path resolves the credential and
+// uses it for Docker's daemon-side `remote=` build (#112 wires the
+// in-memory URL synthesis). FK uses ON DELETE RESTRICT semantics via
+// the route layer (deleteCredential refuses when projects reference
+// it); SQLite's RESTRICT is the default for REFERENCES.
+try {
+  db.exec(
+    "ALTER TABLE projects ADD COLUMN source_credential_id INTEGER REFERENCES source_credentials(id)",
+  );
+} catch {
+  // Column already exists
+}
 
 export default db;

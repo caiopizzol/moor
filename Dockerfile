@@ -19,6 +19,14 @@ RUN cd apps/web && bun run build
 FROM oven/bun:1-slim
 WORKDIR /app
 
+# git is required by the source-credentials check endpoint (#111),
+# which shells out to `git ls-remote` to verify HTTPS PAT access
+# against a private repo before any deploy attempts. The slim base
+# image does not include git.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends git \
+ && rm -rf /var/lib/apt/lists/*
+
 COPY package.json bun.lock* ./
 COPY apps/api/package.json apps/api/
 COPY apps/web/package.json apps/web/
