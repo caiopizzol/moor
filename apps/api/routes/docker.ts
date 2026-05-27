@@ -14,7 +14,8 @@ import {
 } from "../docker";
 import { requireNotDraining } from "../drain";
 import { autoDetectPorts, getProjectPorts } from "../ports";
-import { redactCredentials } from "../redact";
+import { redactCredentials, redactCredentialsInText } from "../redact";
+import { type ResolveFailure, resolveCredentialForBuild } from "../source-credential-resolver";
 import {
   liveRequireErrorResponse,
   reconcileProjectStatusAfterInterrupt,
@@ -37,7 +38,16 @@ type Project = {
   restart_policy: string;
   memory_limit_mb: number | null;
   cpus: number | null;
+  source_credential_id: number | null;
 };
+
+/** Map a build-time credential-resolver failure to an HTTP Response.
+ *  Status mapping: 409 for ambiguity (caller has to pick), 400 for
+ *  everything else (missing/mismatch/not-active/invalid url/conflict). */
+function resolverFailureResponse(failure: ResolveFailure): Response {
+  const status = failure.code === "source_credential_ambiguous" ? 409 : 400;
+  return Response.json(failure, { status });
+}
 
 function validateGithubUrl(url: string): string | null {
   try {
@@ -108,9 +118,34 @@ async function handleRun(req: Request, project: Project): Promise<Response> {
     if (urlError) return new Response(urlError, { status: 400 });
   }
 
+  // Resolve source credential BEFORE any side effects (status flip,
+  // BuildRun row, SSE stream open). A resolver failure should look like
+  // a validation error to the caller, not a half-built build run.
+  // Image projects skip resolution; only github_url builds consume creds.
+  let resolvedCloneUrl: string | null = null;
+  let resolvedCredentialId: number | null = null;
+  if (!isImageProject && project.github_url) {
+    const resolved = resolveCredentialForBuild(
+      project.github_url,
+      project.source_credential_id ?? undefined,
+    );
+    if (!resolved.ok) {
+      return resolverFailureResponse(resolved);
+    }
+    resolvedCloneUrl = resolved.value.cloneUrl;
+    resolvedCredentialId = resolved.value.used_credential_id;
+  }
+
   const tag = isImageProject ? project.docker_image! : `moor/${project.name}:latest`;
   const status = isImageProject ? "pulling" : "building";
-  console.log(`[run] image tag will be: ${tag}`);
+  console.log(
+    `[run] image tag will be: ${tag}` +
+      (resolvedCredentialId !== null
+        ? ` source_credential_id=${resolvedCredentialId}`
+        : !isImageProject
+          ? " anonymous-clone"
+          : ""),
+  );
   db.query(`UPDATE projects SET status = ? WHERE id = ?`).run(status, project.id);
 
   // #65: one deploy run row covers build/pull + port detection + container
@@ -168,8 +203,10 @@ async function handleRun(req: Request, project: Project): Promise<Response> {
           log(`Pulling ${project.docker_image}...\n`);
           await pullImageStreaming(project.docker_image!, log, run.abort.signal);
         } else {
+          // resolvedCloneUrl is guaranteed non-null in this branch
+          // (resolved above, before side effects).
           await buildImageStreaming(
-            project.github_url as string,
+            resolvedCloneUrl as string,
             project.branch,
             project.dockerfile,
             tag,
@@ -212,7 +249,10 @@ async function handleRun(req: Request, project: Project): Promise<Response> {
           safeClose();
           return;
         }
-        const message = e instanceof Error ? e.message : "Unknown error";
+        const rawMessage = e instanceof Error ? e.message : "Unknown error";
+        // Redact any credentialed URLs Docker may have echoed into the
+        // error message before it lands in logs, stored stderr, or SSE.
+        const message = redactCredentialsInText(rawMessage);
         console.error(`[run] FAILED: ${message}`);
         run.appendStderr(`${message}\n`);
         run.finalize(1);
@@ -440,8 +480,24 @@ async function handleBuild(project: Project): Promise<Response> {
   const urlError = validateGithubUrl(project.github_url);
   if (urlError) return new Response(urlError, { status: 400 });
 
+  // Resolve source credential BEFORE any side effects (status flip,
+  // BuildRun row). Same contract as /run.
+  const resolved = resolveCredentialForBuild(
+    project.github_url,
+    project.source_credential_id ?? undefined,
+  );
+  if (!resolved.ok) {
+    return resolverFailureResponse(resolved);
+  }
+  const { cloneUrl, used_credential_id } = resolved.value;
+
   const tag = `moor/${project.name}:latest`;
-  console.log(`[build] tag=${tag} branch=${project.branch} dockerfile=${project.dockerfile}`);
+  console.log(
+    `[build] tag=${tag} branch=${project.branch} dockerfile=${project.dockerfile} ` +
+      (used_credential_id !== null
+        ? `source_credential_id=${used_credential_id}`
+        : "anonymous-clone"),
+  );
   db.query("UPDATE projects SET status = 'building' WHERE id = ?").run(project.id);
 
   // /build is the legacy non-SSE path used by api.projects.build in the web
@@ -454,7 +510,7 @@ async function handleBuild(project: Project): Promise<Response> {
   try {
     console.log("[build] starting docker build...");
     await buildImageStreaming(
-      project.github_url,
+      cloneUrl,
       project.branch,
       project.dockerfile,
       tag,
@@ -483,7 +539,8 @@ async function handleBuild(project: Project): Promise<Response> {
       return new Response("cancelled by user", { status: 499 });
     }
     db.query("UPDATE projects SET status = 'error' WHERE id = ?").run(project.id);
-    const message = e instanceof Error ? e.message : "Unknown error";
+    const rawMessage = e instanceof Error ? e.message : "Unknown error";
+    const message = redactCredentialsInText(rawMessage);
     console.error(`[build] FAILED: ${message}`);
     run.appendStderr(`${message}\n`);
     run.finalize(1);

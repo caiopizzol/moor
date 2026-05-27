@@ -263,3 +263,124 @@ describe("#74 GET /api/projects/:id/logs — end-to-end no_container path", () =
     expect(body).toEqual({ logs: "", lastTimestamp: 0, state: "no_container" });
   });
 });
+
+describe("#112 build path credential resolution", () => {
+  beforeEach(() => {
+    db.query("DELETE FROM projects").run();
+    db.query("DELETE FROM source_credentials").run();
+  });
+
+  function makeCred(
+    hostname: string,
+    label: string,
+    state: "active" | "failed" = "active",
+  ): number {
+    const row = db
+      .query(
+        "INSERT INTO source_credentials (hostname, label, username, secret, state) VALUES (?, ?, 'x-access-token', 'ghp_a', ?) RETURNING id",
+      )
+      .get(hostname, label, state) as { id: number };
+    return row.id;
+  }
+
+  function makeGithubProject(name: string, source_credential_id: number | null = null): number {
+    const row = db
+      .query(
+        "INSERT INTO projects (name, github_url, branch, dockerfile, restart_policy, status, source_credential_id) VALUES (?, 'https://github.com/owner/repo', 'main', 'Dockerfile', 'unless-stopped', 'stopped', ?) RETURNING id",
+      )
+      .get(name, source_credential_id) as { id: number };
+    return row.id;
+  }
+
+  function statusOf(id: number): string {
+    const row = db.query("SELECT status FROM projects WHERE id = ?").get(id) as {
+      status: string;
+    };
+    return row.status;
+  }
+
+  test("host mismatch returns 400 BEFORE flipping status to building", async () => {
+    const wrongHost = makeCred("gitlab.com", "wrong-host");
+    const pId = makeGithubProject("p1", wrongHost);
+    const res = await call("POST", `/api/projects/${pId}/build`);
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { code: string };
+    expect(body.code).toBe("credential_host_mismatch");
+    // Side effect guard: status must still be 'stopped', no build_run row
+    expect(statusOf(pId)).toBe("stopped");
+    const runCount = db.query("SELECT COUNT(*) as n FROM runs WHERE project_id = ?").get(pId) as {
+      n: number;
+    };
+    expect(runCount.n).toBe(0);
+  });
+
+  test("failed credential returns 400 with credential_not_active (build strict)", async () => {
+    const dead = makeCred("github.com", "dead", "failed");
+    const pId = makeGithubProject("p2", dead);
+    const res = await call("POST", `/api/projects/${pId}/build`);
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { code: string; state: string };
+    expect(body.code).toBe("credential_not_active");
+    expect(body.state).toBe("failed");
+    expect(statusOf(pId)).toBe("stopped");
+  });
+
+  test("ambiguous (2+ active candidates, no id pinned) returns 409 BEFORE side effects", async () => {
+    makeCred("github.com", "a");
+    makeCred("github.com", "b");
+    const pId = makeGithubProject("p3", null);
+    const res = await call("POST", `/api/projects/${pId}/build`);
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { code: string; candidates: Array<{ label: string }> };
+    expect(body.code).toBe("source_credential_ambiguous");
+    expect(body.candidates.map((c) => c.label).sort()).toEqual(["a", "b"]);
+    expect(statusOf(pId)).toBe("stopped");
+  });
+
+  test("/run also resolves before status flip and before BuildRun (ambiguous case)", async () => {
+    // /run is the SSE path used by moor_deploy. The same resolver
+    // contract must hold there. If it didn't, we'd open an SSE stream
+    // and write a partial deploy run before refusing.
+    makeCred("github.com", "a");
+    makeCred("github.com", "b");
+    const pId = makeGithubProject("p-run", null);
+    const res = await call("POST", `/api/projects/${pId}/run`);
+    expect(res.status).toBe(409);
+    // Response is plain JSON (not SSE) — proves the resolver short-circuited
+    // before the streaming branch.
+    expect(res.headers.get("content-type") || "").toContain("application/json");
+    const body = (await res.json()) as { code: string };
+    expect(body.code).toBe("source_credential_ambiguous");
+    expect(statusOf(pId)).toBe("stopped");
+    const runCount = db.query("SELECT COUNT(*) as n FROM runs WHERE project_id = ?").get(pId) as {
+      n: number;
+    };
+    expect(runCount.n).toBe(0);
+  });
+
+  test("/run resolves host_mismatch before opening the SSE stream", async () => {
+    const wrongHost = makeCred("gitlab.com", "wrong");
+    const pId = makeGithubProject("p-run-host", wrongHost);
+    const res = await call("POST", `/api/projects/${pId}/run`);
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { code: string };
+    expect(body.code).toBe("credential_host_mismatch");
+    expect(statusOf(pId)).toBe("stopped");
+  });
+
+  test("invalid github_url (legacy migration edge) returns 400 BEFORE side effects", async () => {
+    // Project with a non-conformant URL slipping past earlier validation.
+    db.query(
+      "INSERT INTO projects (name, github_url, branch, dockerfile, restart_policy, status) VALUES ('p5', 'https://github.com/owner/repo?branch=main', 'main', 'Dockerfile', 'unless-stopped', 'stopped')",
+    ).run();
+    const pId = (db.query("SELECT id FROM projects WHERE name = 'p5'").get() as { id: number }).id;
+    const res = await call("POST", `/api/projects/${pId}/build`);
+    // ?branch=main makes parseRepoUrl reject (query string disallowed).
+    // The legacy validateGithubUrl accepts it, so we DO flip status. But
+    // the resolver catches it. With v1 we accept the flip; document the
+    // edge. The point is: build doesn't proceed.
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { code: string };
+    expect(body.code).toBe("invalid_url");
+  });
+});

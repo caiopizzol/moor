@@ -1174,6 +1174,15 @@ server.registerTool(
         .describe(
           "Named Docker volumes to attach. Each entry creates a per-project volume (stored as moor-<project>-<name>) and mounts it at the given target on next container recreate. Data survives container/project rebuilds unless explicitly purged via project delete with purge_volumes=true.",
         ),
+      source_credential_id: z
+        .number()
+        .int()
+        .positive()
+        .nullable()
+        .optional()
+        .describe(
+          "For github_url projects: pin the source credential row (from moor_source_credential_add) the build path should use. Build synthesizes the credentialed clone URL in memory; the secret is never stored on the project. Ignored when docker_image is set; save-time validation is structural only (id exists).",
+        ),
     }),
   },
   async (input) => {
@@ -1253,6 +1262,15 @@ server.registerTool(
         .optional()
         .describe(
           "Max CPU cores (fractional OK; min 0.001). Pass null to clear. Max host core count. Takes effect on container recreate.",
+        ),
+      source_credential_id: z
+        .number()
+        .int()
+        .positive()
+        .nullable()
+        .optional()
+        .describe(
+          "Pin (or unlink, by passing null) the source credential the build path should use for this github_url project. Switching to docker_image force-clears the id regardless of input. Save-time validation is structural only; host-mismatch / not-active is enforced at build time.",
         ),
     }),
   },
@@ -1879,6 +1897,15 @@ server.registerTool(
         .describe(
           "Env vars to MERGE into existing project envs. Omit to leave envs untouched. Pass {} for an explicit no-op. Use moor_env_delete to remove keys.",
         ),
+      source_credential_id: z
+        .number()
+        .int()
+        .positive()
+        .nullable()
+        .optional()
+        .describe(
+          "For github_url projects: pin the source credential row (created via moor_source_credential_add). Build path synthesizes the credentialed clone URL in memory; secret never gets stored on the project row. Pass null to detach without switching source type. Ignored when docker_image is set. Save-time validation is structural only (id exists); host-mismatch / not-active is enforced at build time so configuration can survive transient credential outages.",
+        ),
       run: z
         .boolean()
         .optional()
@@ -1978,6 +2005,7 @@ server.registerTool(
         restart_policy: input.restart_policy,
         memory_limit_mb: input.memory_limit_mb,
         cpus: input.cpus,
+        source_credential_id: input.source_credential_id,
       };
       const res = await apiPost("/api/projects", createBody);
       if (!res.ok) throw new Error(`[create] ${await res.text()}`);
@@ -1997,6 +2025,8 @@ server.registerTool(
       if (input.restart_policy !== undefined) updateBody.restart_policy = input.restart_policy;
       if (input.memory_limit_mb !== undefined) updateBody.memory_limit_mb = input.memory_limit_mb;
       if (input.cpus !== undefined) updateBody.cpus = input.cpus;
+      if (input.source_credential_id !== undefined)
+        updateBody.source_credential_id = input.source_credential_id;
 
       if (Object.keys(updateBody).length > 0) {
         const res = await apiPut(`/api/projects/${existing.id}`, updateBody);

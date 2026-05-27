@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   reconcileGithubUrl,
   redactCredentials,
+  redactCredentialsInText,
   redactDockerBuildPath,
   serializeProject,
 } from "./redact";
@@ -141,5 +142,94 @@ describe("reconcileGithubUrl", () => {
 
   test("stored has no credentials and incoming matches => skip", () => {
     expect(reconcileGithubUrl("https://github.com/o/r", "https://github.com/o/r").skip).toBe(true);
+  });
+});
+
+describe("redactCredentialsInText", () => {
+  test("plain text without URLs is unchanged", () => {
+    expect(redactCredentialsInText("nothing to redact here")).toBe("nothing to redact here");
+  });
+
+  test("credential-free URL is unchanged", () => {
+    expect(redactCredentialsInText("clone https://github.com/owner/repo done")).toBe(
+      "clone https://github.com/owner/repo done",
+    );
+  });
+
+  test("credentialed URL embedded in message", () => {
+    const before =
+      "fatal: unable to access 'https://x-access-token:ghp_real@github.com/owner/repo.git/'";
+    const after = redactCredentialsInText(before);
+    expect(after).toBe("fatal: unable to access 'https://github.com/owner/repo.git/'");
+    expect(after.includes("ghp_real")).toBe(false);
+    expect(after.includes("x-access-token")).toBe(false);
+  });
+
+  test("multiple URLs in one message all redacted", () => {
+    const before = "tried https://u1:p1@host1.com/a and https://u2:p2@host2.com/b; both failed";
+    const after = redactCredentialsInText(before);
+    expect(after).toBe("tried https://host1.com/a and https://host2.com/b; both failed");
+    for (const leak of ["p1", "p2", "u1", "u2"]) {
+      expect(after.includes(leak)).toBe(false);
+    }
+  });
+
+  test("username-only URL is also redacted (bare usernames carry meaning)", () => {
+    const before = "remote at https://operator@github.com/owner/repo";
+    const after = redactCredentialsInText(before);
+    expect(after).toBe("remote at https://github.com/owner/repo");
+  });
+
+  test("percent-encoded password (typical fine-grained PAT path)", () => {
+    const before =
+      'Authentication failed for "https://x-access-token:github_pat_11ABCDEFG%40@github.com/o/r"';
+    const after = redactCredentialsInText(before);
+    expect(after).toBe('Authentication failed for "https://github.com/o/r"');
+  });
+
+  test("URL inside JSON-escaped string", () => {
+    const before =
+      '{"errorDetail":{"message":"fatal: https://x:secret@github.com/o/r.git not reachable"}}';
+    const after = redactCredentialsInText(before);
+    expect(after).toBe(
+      '{"errorDetail":{"message":"fatal: https://github.com/o/r.git not reachable"}}',
+    );
+    expect(after.includes("secret")).toBe(false);
+  });
+
+  test("http (not just https) is also redacted", () => {
+    expect(redactCredentialsInText("plain http://u:p@host/path")).toBe("plain http://host/path");
+  });
+
+  test("URL at end of line with no trailing whitespace", () => {
+    expect(redactCredentialsInText("Final: https://u:p@host/p")).toBe("Final: https://host/p");
+  });
+
+  test("URL immediately followed by colon (not part of credentials)", () => {
+    // "https://host:port" without user/pass is a port; must not be touched.
+    expect(redactCredentialsInText("connecting to https://github.com:443/owner")).toBe(
+      "connecting to https://github.com:443/owner",
+    );
+  });
+
+  test("URL with only colon (empty username) - empty userinfo, still redact", () => {
+    // ":token@host" is rare but valid syntactically; redact to be safe.
+    const after = redactCredentialsInText("see https://:token@host/path");
+    expect(after.includes("token")).toBe(false);
+  });
+
+  test("URL with @ in the path (no userinfo) is left alone", () => {
+    // "https://host/path@v1" has no userinfo - no @ before the first slash.
+    expect(redactCredentialsInText("see https://github.com/owner/repo@v1")).toBe(
+      "see https://github.com/owner/repo@v1",
+    );
+  });
+
+  test("empty input", () => {
+    expect(redactCredentialsInText("")).toBe("");
+  });
+
+  test("scheme alone is unchanged", () => {
+    expect(redactCredentialsInText("see https://")).toBe("see https://");
   });
 });
