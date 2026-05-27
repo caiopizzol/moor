@@ -1,3 +1,4 @@
+import { classifyBuildError } from "../build-error-classifier";
 import { BuildRun } from "../build-runs";
 import { syncCaddyRoutes } from "../caddy";
 import db from "../db";
@@ -48,6 +49,39 @@ type Project = {
  *  ambiguity to the operator. */
 function resolverFailureResponse(failure: ResolveFailure): Response {
   return Response.json(failure, { status: 400 });
+}
+
+/** Build the /build catch-path response from an already-redacted error
+ *  message. Classified auth failures (#119) become 401 JSON with a
+ *  structured code so agents can branch; unclassified errors keep the
+ *  legacy 500/text contract so existing UI clients are unaffected.
+ *  Exported for unit tests; the route invokes it inline. */
+export function buildErrorResponse(message: string): Response {
+  const code = classifyBuildError(message);
+  if (code !== "unknown") {
+    return Response.json({ code, message }, { status: 401 });
+  }
+  return new Response(message, { status: 500 });
+}
+
+/** SSE events to emit on a /run catch-path failure from an already-
+ *  redacted error message. structured-error fires first when the failure
+ *  classifies (#119) so a parsing agent can branch on the code; the
+ *  trailing legacy event: error keeps existing UI/CLI/MCP consumers
+ *  working unchanged. Exported for unit tests; the route emits via send(). */
+export function buildErrorEvents(
+  message: string,
+): Array<
+  | { event: "structured-error"; data: { code: string; message: string } }
+  | { event: "error"; data: string }
+> {
+  const code = classifyBuildError(message);
+  const events: ReturnType<typeof buildErrorEvents> = [];
+  if (code !== "unknown") {
+    events.push({ event: "structured-error", data: { code, message } });
+  }
+  events.push({ event: "error", data: message });
+  return events;
 }
 
 function validateGithubUrl(url: string): string | null {
@@ -161,7 +195,10 @@ async function handleRun(req: Request, project: Project): Promise<Response> {
     async start(controller) {
       const encoder = new TextEncoder();
 
-      const send = (event: string, data: string) => {
+      // data is JSON-stringified, so strings come through as JSON strings
+      // and objects (used by event: structured-error in #119) come through
+      // as JSON objects. Consumers JSON.parse once to get the original.
+      const send = (event: string, data: unknown) => {
         if (streamClosed) return;
         try {
           controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
@@ -258,7 +295,7 @@ async function handleRun(req: Request, project: Project): Promise<Response> {
         run.appendStderr(`${message}\n`);
         run.finalize(1);
         db.query("UPDATE projects SET status = 'error' WHERE id = ?").run(project.id);
-        send("error", message);
+        for (const ev of buildErrorEvents(message)) send(ev.event, ev.data);
         safeClose();
         return;
       }
@@ -545,7 +582,7 @@ async function handleBuild(project: Project): Promise<Response> {
     console.error(`[build] FAILED: ${message}`);
     run.appendStderr(`${message}\n`);
     run.finalize(1);
-    return new Response(message, { status: 500 });
+    return buildErrorResponse(message);
   }
 }
 

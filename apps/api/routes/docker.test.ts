@@ -130,7 +130,7 @@ describe("#34 POST /exec timeout_ms validation", () => {
 // daemon and exercises every state path explicitly.
 
 const { getContainerLogs, parseDockerLogsBody } = await import("../docker");
-const { buildLogsResponse } = await import("./docker");
+const { buildLogsResponse, buildErrorEvents, buildErrorResponse } = await import("./docker");
 
 function dockerFrame(text: string): Uint8Array {
   const bytes = new TextEncoder().encode(text);
@@ -349,5 +349,71 @@ describe("#112 build path credential resolution", () => {
     expect(res.status).toBe(400);
     const body = (await res.json()) as { code: string };
     expect(body.code).toBe("invalid_url");
+  });
+});
+
+describe("#119 build-failure classification (pure helpers)", () => {
+  describe("buildErrorResponse — /build catch path", () => {
+    test("auth-shaped error → 401 with JSON {code, message}", async () => {
+      const msg = "ERROR: fatal: Authentication failed for 'https://github.com/owner/repo'";
+      const res = buildErrorResponse(msg);
+      expect(res.status).toBe(401);
+      expect(res.headers.get("content-type") || "").toContain("application/json");
+      const body = (await res.json()) as { code: string; message: string };
+      expect(body.code).toBe("source_credential_required");
+      expect(body.message).toBe(msg);
+    });
+
+    test("unclassified error → 500 with the redacted message as text", async () => {
+      const msg = "Docker build failed: 500 some unrelated error";
+      const res = buildErrorResponse(msg);
+      expect(res.status).toBe(500);
+      expect(await res.text()).toBe(msg);
+      // Specifically should NOT be JSON — preserves the legacy contract
+      // for UI clients that may not handle JSON 500s.
+      expect(res.headers.get("content-type") || "").not.toContain("application/json");
+    });
+
+    test("repository-not-found stays unclassified (different remediation)", async () => {
+      const res = buildErrorResponse("remote: Repository not found");
+      expect(res.status).toBe(500);
+    });
+  });
+
+  describe("buildErrorEvents — /run SSE catch path", () => {
+    test("auth-shaped error → structured-error event THEN legacy error event", () => {
+      const msg = "fatal: could not read Username for 'https://github.com'";
+      const events = buildErrorEvents(msg);
+      expect(events).toHaveLength(2);
+      expect(events[0].event).toBe("structured-error");
+      if (events[0].event === "structured-error") {
+        expect(events[0].data.code).toBe("source_credential_required");
+        expect(events[0].data.message).toBe(msg);
+      }
+      expect(events[1].event).toBe("error");
+      if (events[1].event === "error") {
+        expect(events[1].data).toBe(msg);
+      }
+    });
+
+    test("unclassified error → only the legacy error event (no structured-error)", () => {
+      const msg = "npm ERR! some random failure";
+      const events = buildErrorEvents(msg);
+      expect(events).toHaveLength(1);
+      expect(events[0].event).toBe("error");
+      if (events[0].event === "error") {
+        expect(events[0].data).toBe(msg);
+      }
+    });
+
+    test("structured-error precedes error so legacy consumers still terminate", () => {
+      // Order matters: an MCP/CLI consumer that already broke out of its
+      // read loop on event: error would miss a trailing structured-error.
+      // The new event has to come first to be observable.
+      const events = buildErrorEvents("fatal: Authentication failed");
+      const idxStructured = events.findIndex((e) => e.event === "structured-error");
+      const idxError = events.findIndex((e) => e.event === "error");
+      expect(idxStructured).toBeLessThan(idxError);
+    });
   });
 });
