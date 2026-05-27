@@ -114,7 +114,11 @@ async function resolveProject(name: string): Promise<Project> {
 
 // --- SSE stream reader ---
 
-async function readSSE(res: Response): Promise<{ logs: string; error?: string }> {
+async function readSSE(res: Response): Promise<{
+  logs: string;
+  error?: string;
+  structuredError?: { code: string; message: string };
+}> {
   const reader = res.body?.getReader();
   if (!reader) return { logs: "" };
 
@@ -123,6 +127,7 @@ async function readSSE(res: Response): Promise<{ logs: string; error?: string }>
   let currentEvent = "";
   let logs = "";
   let error: string | undefined;
+  let structuredError: { code: string; message: string } | undefined;
 
   while (true) {
     const { done, value } = await reader.read();
@@ -139,11 +144,16 @@ async function readSSE(res: Response): Promise<{ logs: string; error?: string }>
         const data = JSON.parse(line.slice(6));
         if (currentEvent === "log") logs += data;
         else if (currentEvent === "error") error = data;
+        // #119: structured-error fires alongside event: error when the
+        // server classifies a build failure (today: source_credential_required).
+        // Captured here so deploy/rebuild tools can surface the code to
+        // the agent instead of throwing a generic message.
+        else if (currentEvent === "structured-error") structuredError = data;
         currentEvent = "";
       }
     }
   }
-  return { logs, error };
+  return { logs, error, structuredError };
 }
 
 // --- Validators ---
@@ -385,7 +395,22 @@ server.registerTool(
     const p = await resolveProject(project);
     const query = no_cache ? "?nocache=true" : "";
     const res = await apiPost(`/api/projects/${p.id}/run${query}`);
-    const { logs, error } = await readSSE(res);
+    const { logs, error, structuredError } = await readSSE(res);
+    // #119: a classified failure (today: source_credential_required) gets
+    // returned as isError with a structured payload the agent can branch
+    // on. Unclassified errors keep throwing so the existing UX is preserved.
+    if (structuredError) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `rebuild failed: code=${structuredError.code} message=${structuredError.message}`,
+          },
+        ],
+        structuredContent: structuredError,
+        isError: true,
+      };
+    }
     if (error) throw new Error(error);
     return { content: [{ type: "text", text: logs || "Rebuild complete." }] };
   },
@@ -2099,12 +2124,20 @@ server.registerTool(
 
     // Step 3: run, default true. Wait for the full SSE stream like moor_rebuild.
     let runLogs = "";
+    let runStructuredError: { code: string; message: string } | undefined;
     if (input.run) {
       const runRes = await apiPost(`/api/projects/${projectId}/run`);
       if (!runRes.ok) throw new Error(`[run] ${await runRes.text()}`);
-      const { logs, error } = await readSSE(runRes);
+      const { logs, error, structuredError } = await readSSE(runRes);
       runLogs = logs;
-      if (error) throw new Error(`[run] ${error}`);
+      // #119: classified failure (today: source_credential_required) is
+      // returned as isError below so the agent can branch on the code
+      // instead of parsing a thrown message.
+      if (structuredError) {
+        runStructuredError = structuredError;
+      } else if (error) {
+        throw new Error(`[run] ${error}`);
+      }
     }
 
     const lines: string[] = [];
@@ -2128,6 +2161,20 @@ server.registerTool(
       lines.push("");
       lines.push("Build/run output:");
       lines.push(runLogs || "(no output)");
+    }
+    // #119: if the build was classified as auth-failure, return isError
+    // with the structured payload so the agent can call _check + add a
+    // credential and retry. The project row exists (create/update already
+    // committed) so the agent just needs to fix the credential and run
+    // deploy again with the pinned id.
+    if (runStructuredError) {
+      lines.push("");
+      lines.push(`Failed: code=${runStructuredError.code} message=${runStructuredError.message}`);
+      return {
+        content: [{ type: "text", text: lines.join("\n") }],
+        structuredContent: { ...runStructuredError, project_id: projectId },
+        isError: true,
+      };
     }
     return { content: [{ type: "text", text: lines.join("\n") }] };
   },
