@@ -395,6 +395,13 @@ server.registerTool(
     const p = await resolveProject(project);
     const query = no_cache ? "?nocache=true" : "";
     const res = await apiPost(`/api/projects/${p.id}/run${query}`);
+    // /run can fail BEFORE opening the SSE stream — resolver validation,
+    // drain mode, invalid URL, credential_not_active. Those land as a
+    // plain JSON or text body that readSSE walks without matching any
+    // event:/data: lines, returning empty everything. Without this guard
+    // the tool would silently report "Rebuild complete." on a failed build.
+    // Mirrors the existing moor_deploy guard at the /run call site.
+    if (!res.ok) throw new Error(`[run] ${await res.text()}`);
     const { logs, error, structuredError } = await readSSE(res);
     // #119: a classified failure (today: source_credential_required) gets
     // returned as isError with a structured payload the agent can branch
