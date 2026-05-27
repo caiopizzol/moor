@@ -1,5 +1,5 @@
 // Build-time credential resolution for source repos. Stricter than the
-// check resolver (apps/api/source-check.ts) on two points:
+// check resolver (apps/api/source-check.ts) on three points:
 //
 //   1. Build only accepts state=active credentials. A failed credential
 //      is surfaced (credential_not_active) so the build does not silently
@@ -10,6 +10,12 @@
 //      decides "credentialed URL with this token" vs "clean URL, let
 //      Docker daemon try anonymously."
 //
+//   3. No auto-select, no ambiguity check (#120). `source_credential_id`
+//      is the only signal. Null means "anonymous clone, do not inspect
+//      the credentials table." Operators use /check to discover which
+//      credential to pin; pinning is then explicit on the project row or
+//      the deploy call. This keeps project state read-as-truth.
+//
 // Returns either a clone URL (clean or credentialed) for the daemon's
 // remote= param, plus the id of the credential it picked (null when
 // no credential was applied). The credentialed URL only exists in
@@ -17,7 +23,7 @@
 
 import { parseRepoUrl } from "./source-check";
 import type { StoredCredential } from "./source-credentials-db";
-import { getStoredCredentialById, listCredentialsByHostname } from "./source-credentials-db";
+import { getStoredCredentialById } from "./source-credentials-db";
 
 export type BuildCloneInfo = {
   /** URL to pass as Docker's remote= param. May or may not contain credentials. */
@@ -39,12 +45,6 @@ export type ResolveFailure =
   | { ok: false; code: "credential_not_active"; source_credential_id: number; state: string }
   | {
       ok: false;
-      code: "source_credential_ambiguous";
-      hostname: string;
-      candidates: Array<{ id: number; label: string }>;
-    }
-  | {
-      ok: false;
       code: "embedded_credentials_conflict";
       source_credential_id: number;
     };
@@ -54,6 +54,12 @@ export type ResolveResult = { ok: true; value: BuildCloneInfo } | ResolveFailure
 /** Resolve a github_url + optional source_credential_id into a clone URL
  *  for Docker's daemon-side remote= build. The credentialed URL is
  *  in-memory only; never persisted.
+ *
+ *  Null source_credential_id means anonymous clone (#120). The resolver
+ *  does not read the source_credentials table in that case; the daemon
+ *  attempts the clone with no auth and surfaces its own error if the
+ *  repo is private. Operators discover which credential to attach via
+ *  /check, then pin it explicitly on the project row or the deploy call.
  *
  *  Legacy compatibility: projects created before #115 may have
  *  username:password embedded in github_url (the pre-typed-credential
@@ -88,77 +94,42 @@ export function resolveCredentialForBuild(
   }
   const repo = parsed.value;
 
-  // Explicit credential id path.
-  if (source_credential_id !== undefined) {
-    const stored = getStoredCredentialById(source_credential_id);
-    if (!stored) {
-      return { ok: false, code: "credential_not_found", source_credential_id };
-    }
-    if (stored.hostname !== repo.hostname) {
-      return {
-        ok: false,
-        code: "credential_host_mismatch",
-        source_credential_id,
-        credential_hostname: stored.hostname,
-        request_hostname: repo.hostname,
-      };
-    }
-    if (stored.state !== "active") {
-      return {
-        ok: false,
-        code: "credential_not_active",
-        source_credential_id: stored.id,
-        state: stored.state,
-      };
-    }
-    return {
-      ok: true,
-      value: {
-        cloneUrl: synthesizeCredentialedUrl(repo.httpsCloneUrl, stored),
-        used_credential_id: stored.id,
-      },
-    };
-  }
-
-  // No explicit id: look at host candidates, **only counting active rows**.
-  // Failed rows are invisible to build-time auto-select (they would have
-  // had a chance to recover via _check first; if they did not, treating
-  // them as absent is honest).
-  const candidates = listCredentialsByHostname(repo.hostname).filter((c) => c.state === "active");
-
-  if (candidates.length === 0) {
-    // No usable credential. Hand back the clean URL; daemon will attempt
-    // anonymous clone. For a public repo this works; for a private repo
-    // the daemon will return an auth error which we surface to the caller.
+  // Null id: anonymous clone. No DB inspection, no host lookup. The
+  // project's source_credential_id is read-as-truth.
+  if (source_credential_id === undefined) {
     return {
       ok: true,
       value: { cloneUrl: repo.httpsCloneUrl, used_credential_id: null },
     };
   }
 
-  if (candidates.length > 1) {
+  // Explicit credential id path.
+  const stored = getStoredCredentialById(source_credential_id);
+  if (!stored) {
+    return { ok: false, code: "credential_not_found", source_credential_id };
+  }
+  if (stored.hostname !== repo.hostname) {
     return {
       ok: false,
-      code: "source_credential_ambiguous",
-      hostname: repo.hostname,
-      candidates: candidates.map((c) => ({ id: c.id, label: c.label })),
+      code: "credential_host_mismatch",
+      source_credential_id,
+      credential_hostname: stored.hostname,
+      request_hostname: repo.hostname,
     };
   }
-
-  const sole = getStoredCredentialById(candidates[0].id);
-  if (!sole) {
-    // Race between list and get; treat as no credential available.
+  if (stored.state !== "active") {
     return {
-      ok: true,
-      value: { cloneUrl: repo.httpsCloneUrl, used_credential_id: null },
+      ok: false,
+      code: "credential_not_active",
+      source_credential_id: stored.id,
+      state: stored.state,
     };
   }
-
   return {
     ok: true,
     value: {
-      cloneUrl: synthesizeCredentialedUrl(repo.httpsCloneUrl, sole),
-      used_credential_id: sole.id,
+      cloneUrl: synthesizeCredentialedUrl(repo.httpsCloneUrl, stored),
+      used_credential_id: stored.id,
     },
   };
 }

@@ -132,8 +132,14 @@ describe("resolveCredentialForBuild", () => {
     });
   });
 
-  describe("auto-resolution without source_credential_id", () => {
-    test("zero candidates → clean URL, no credential applied", () => {
+  describe("null source_credential_id (anonymous clone, no DB inspection)", () => {
+    // #120: when the project's source_credential_id is null, the resolver
+    // never reads the source_credentials table. It always returns the
+    // clean URL with used_credential_id: null, regardless of how many
+    // credentials exist for the host. Operators pin a credential
+    // explicitly (via project row or deploy call) after running /check.
+
+    test("no credentials in DB → clean URL", () => {
       const r = resolveCredentialForBuild("https://github.com/owner/repo", undefined);
       expect(r.ok).toBe(true);
       if (r.ok) {
@@ -142,8 +148,8 @@ describe("resolveCredentialForBuild", () => {
       }
     });
 
-    test("one active candidate → auto-select and synthesize credentialed URL", () => {
-      const cred = createCredential({
+    test("one active candidate matches host → clean URL (no auto-select)", () => {
+      createCredential({
         hostname: "github.com",
         label: "personal",
         username: "x-access-token",
@@ -152,56 +158,33 @@ describe("resolveCredentialForBuild", () => {
       const r = resolveCredentialForBuild("https://github.com/owner/repo", undefined);
       expect(r.ok).toBe(true);
       if (r.ok) {
-        expect(r.value.used_credential_id).toBe(cred.id);
-        expect(new URL(r.value.cloneUrl).password).toBe("ghp_a");
+        expect(r.value.used_credential_id).toBeNull();
+        expect(r.value.cloneUrl).toBe("https://github.com/owner/repo");
       }
     });
 
-    test("two active candidates → source_credential_ambiguous", () => {
-      const a = createCredential({
+    test("two active candidates match host → clean URL (no ambiguity check)", () => {
+      createCredential({
         hostname: "github.com",
         label: "personal",
         username: "x-access-token",
         secret: "ghp_a",
       });
-      const b = createCredential({
+      createCredential({
         hostname: "github.com",
         label: "work",
         username: "x-access-token",
         secret: "ghp_b",
       });
       const r = resolveCredentialForBuild("https://github.com/owner/repo", undefined);
-      expect(r.ok).toBe(false);
-      if (!r.ok && r.code === "source_credential_ambiguous") {
-        expect(r.candidates.map((c) => c.id).sort()).toEqual([a.id, b.id].sort());
-        expect(r.hostname).toBe("github.com");
-      }
-    });
-
-    test("failed credentials are invisible to auto-select", () => {
-      // One failed + one active → use the active without ambiguity.
-      createCredential({
-        hostname: "github.com",
-        label: "broken",
-        username: "x-access-token",
-        secret: "ghp_broken",
-        state: "failed",
-      });
-      const good = createCredential({
-        hostname: "github.com",
-        label: "good",
-        username: "x-access-token",
-        secret: "ghp_good",
-      });
-      const r = resolveCredentialForBuild("https://github.com/owner/repo", undefined);
       expect(r.ok).toBe(true);
       if (r.ok) {
-        expect(r.value.used_credential_id).toBe(good.id);
-        expect(new URL(r.value.cloneUrl).password).toBe("ghp_good");
+        expect(r.value.used_credential_id).toBeNull();
+        expect(r.value.cloneUrl).toBe("https://github.com/owner/repo");
       }
     });
 
-    test("all candidates failed → no usable credential, falls back to clean URL", () => {
+    test("failed credentials in DB → clean URL (unchanged)", () => {
       createCredential({
         hostname: "github.com",
         label: "x",
