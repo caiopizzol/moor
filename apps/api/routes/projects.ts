@@ -5,6 +5,23 @@ import { reconcileGithubUrl, redactCredentials, serializeProject } from "../reda
 import { validateCpus, validateMemoryLimitMb } from "../resource-limits";
 import { collectProjectVolumeDockerNames } from "./volumes";
 
+/** Structural validation for source_credential_id on project save:
+ *  null OK, positive integer OK iff the row exists. Host-mismatch and
+ *  state checks belong to build-time resolution, not save time — the
+ *  URL may change later and failed creds may recover. Save captures
+ *  operator intent; build enforces readiness. */
+function validateSourceCredentialId(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value !== "number" || !Number.isInteger(value) || value <= 0) {
+    return "source_credential_id must be a positive integer or null";
+  }
+  const exists = db.query("SELECT 1 FROM source_credentials WHERE id = ?").get(value);
+  if (!exists) {
+    return `source_credential_id ${value} does not reference an existing credential`;
+  }
+  return null;
+}
+
 /** Run Caddy sync. On failure, return a 500 with a clear message that the DB write
  *  succeeded but the route is not active, plus the manual recovery command. The
  *  DB state is intentionally preserved: it captures the operator's intent and a
@@ -150,9 +167,10 @@ async function handleCreate(req: Request): Promise<Response> {
     restart_policy,
     memory_limit_mb,
     cpus,
+    source_credential_id,
   } = body;
   console.log(
-    `[projects] create: name=${name} github_url=${redactCredentials(github_url) ?? ""} docker_image=${docker_image} branch=${branch || "main"} dockerfile=${dockerfile || "Dockerfile"} domain=${domain || ""} domain_port=${domain_port || ""} memory_limit_mb=${memory_limit_mb ?? ""} cpus=${cpus ?? ""}`,
+    `[projects] create: name=${name} github_url=${redactCredentials(github_url) ?? ""} docker_image=${docker_image} branch=${branch || "main"} dockerfile=${dockerfile || "Dockerfile"} domain=${domain || ""} domain_port=${domain_port || ""} memory_limit_mb=${memory_limit_mb ?? ""} cpus=${cpus ?? ""} source_credential_id=${source_credential_id ?? ""}`,
   );
   if (!name) return new Response("name is required", { status: 400 });
   if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/.test(name)) {
@@ -165,6 +183,14 @@ async function handleCreate(req: Request): Promise<Response> {
   if (memErr) return new Response(memErr, { status: 400 });
   const cpuErr = validateCpus(cpus);
   if (cpuErr) return new Response(cpuErr, { status: 400 });
+  // docker_image projects cannot pin a source credential; the id is
+  // about to be force-nulled regardless of input. Skip validation so
+  // a caller mixing docker_image + a stale id doesn't get a 400 for
+  // a field that's being ignored anyway.
+  if (!docker_image) {
+    const credErr = validateSourceCredentialId(source_credential_id);
+    if (credErr) return new Response(credErr, { status: 400 });
+  }
 
   const existing = db.query("SELECT id FROM projects WHERE name = ?").get(name);
   if (existing) {
@@ -174,9 +200,14 @@ async function handleCreate(req: Request): Promise<Response> {
   const validPolicies = ["no", "on-failure", "always", "unless-stopped"];
   const policy = validPolicies.includes(restart_policy) ? restart_policy : "unless-stopped";
 
+  // docker_image projects can't pin a source credential. Force null even
+  // if the caller sent one; build path only consumes it on the github_url
+  // route.
+  const effectiveSourceCredentialId = docker_image ? null : (source_credential_id ?? null);
+
   const result = db
     .query(
-      "INSERT INTO projects (name, github_url, docker_image, branch, dockerfile, domain, domain_port, restart_policy, memory_limit_mb, cpus) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *",
+      "INSERT INTO projects (name, github_url, docker_image, branch, dockerfile, domain, domain_port, restart_policy, memory_limit_mb, cpus, source_credential_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *",
     )
     .get(
       name,
@@ -189,6 +220,7 @@ async function handleCreate(req: Request): Promise<Response> {
       policy,
       memory_limit_mb ?? null,
       cpus ?? null,
+      effectiveSourceCredentialId,
     );
 
   if (domain?.trim()) {
@@ -216,6 +248,14 @@ async function handleUpdate(req: Request, id: number): Promise<Response> {
     const err = validateCpus(body.cpus);
     if (err) return new Response(err, { status: 400 });
   }
+  // Skip credential validation when the update switches to docker_image:
+  // source_credential_id is about to be force-cleared on this row, so a
+  // stale id in the body is irrelevant. Otherwise validate structurally.
+  const switchingToDockerImage = "docker_image" in body && !!body.docker_image;
+  if ("source_credential_id" in body && !switchingToDockerImage) {
+    const err = validateSourceCredentialId(body.source_credential_id);
+    if (err) return new Response(err, { status: 400 });
+  }
 
   // Reconciliation: if the incoming github_url matches the redacted form of the
   // stored URL, the caller is round-tripping a previous read (the web UI's edit
@@ -240,8 +280,14 @@ async function handleUpdate(req: Request, id: number): Promise<Response> {
     "restart_policy",
     "memory_limit_mb",
     "cpus",
+    "source_credential_id",
   ]) {
     if (key === "github_url" && skipGithubUrl) continue;
+    // Skip any caller-supplied source_credential_id when switching to
+    // docker_image. The force-clear block below will set it to null.
+    // This drops invalid/stale ids on the floor instead of letting them
+    // hit the FK constraint mid-UPDATE.
+    if (key === "source_credential_id" && switchingToDockerImage) continue;
     if (key in body) {
       fields.push(`${key} = ?`);
       if (key === "domain") {
@@ -257,9 +303,15 @@ async function handleUpdate(req: Request, id: number): Promise<Response> {
 
   // When switching source type, clear the other. Reconciliation case is excluded:
   // a round-tripped read should not clear docker_image.
+  // Switching to docker_image also force-clears source_credential_id so a stale
+  // credential id can't block the credential's deletion later via in_use.
   if ("docker_image" in body && body.docker_image) {
     if (!fields.some((f) => f.startsWith("github_url"))) {
       fields.push("github_url = ?");
+      values.push(null);
+    }
+    if (!fields.some((f) => f.startsWith("source_credential_id"))) {
+      fields.push("source_credential_id = ?");
       values.push(null);
     }
   } else if ("github_url" in body && body.github_url && !skipGithubUrl) {

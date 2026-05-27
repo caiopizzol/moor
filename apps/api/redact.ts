@@ -18,6 +18,7 @@ export type StoredProject = {
   domain: string | null;
   domain_port: number | null;
   restart_policy: string | null;
+  source_credential_id: number | null;
   created_at: string;
 };
 
@@ -45,6 +46,27 @@ export function serializeProject<T extends { github_url?: string | null }>(row: 
   const redacted = redactCredentials(row.github_url);
   if (redacted === row.github_url) return row;
   return { ...row, github_url: redacted };
+}
+
+/** Scan arbitrary text for credentialed `http(s)://user[:pass]@host` URL
+ *  substrings and redact the user:pass segment. Unlike redactCredentials
+ *  (which expects a whole URL as input), this handles embedded URLs in
+ *  free-form text:
+ *
+ *    "fatal: unable to access 'https://x-access-token:tok@github.com/o/r.git/'"
+ *    "{\"errorDetail\":{\"message\":\"... https://u:p@host ...\"}}"
+ *
+ *  Match rule: literal `http://` or `https://`, then a userinfo segment
+ *  (anything except slash, whitespace, `@`, single or double quote), an
+ *  optional `:password` segment with the same exclusion class, then `@`.
+ *  We replace the entire `scheme://userinfo@` prefix with just
+ *  `scheme://`, so the host/path remain intact.
+ *
+ *  Username-only URLs (`https://user@host/...`) are also redacted because
+ *  a bare username can carry meaning operators may not want logged.
+ *  Credential-free URLs are left untouched. */
+export function redactCredentialsInText(text: string): string {
+  return text.replace(/(https?:\/\/)[^/\s@'"]+(?::[^/\s@'"]*)?@/g, "$1");
 }
 
 /** Redact credentials from a Docker Engine API path. Only the `remote=` query

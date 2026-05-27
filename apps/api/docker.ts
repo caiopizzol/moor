@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { createFrameParser } from "./docker-frame-parser";
 import { buildKillScript, buildWrappedExecCmd, parseKillResult } from "./exec-kill";
 import { parseImageRef } from "./image-ref";
-import { redactCredentials, redactDockerBuildPath } from "./redact";
+import { redactCredentials, redactCredentialsInText, redactDockerBuildPath } from "./redact";
 import { buildPullAuthHeaders } from "./registry-auth";
 import { getCredentialByHostname } from "./registry-credentials-db";
 
@@ -123,9 +123,16 @@ function parseBuildLine(line: string): { text: string; error?: boolean } | null 
  *  Returns void: callers own persistence (see BuildRun in
  *  apps/api/build-runs.ts). An earlier full-string return value kept an
  *  unbounded copy of the build log alive in API memory, which defeated
- *  the 64 KiB tail cap on the durable side. */
+ *  the 64 KiB tail cap on the durable side.
+ *
+ *  Credential redaction: cloneUrl may carry user:pass@ (resolved in the
+ *  route layer from a source_credential_id, or a legacy embedded URL).
+ *  Every emitted text — stream lines, the thrown error, and the non-OK
+ *  response body — is run through redactCredentialsInText before
+ *  leaving this function. Docker still sees the credentialed URL on
+ *  the wire because that's what authenticates the clone. */
 export async function buildImageStreaming(
-  githubUrl: string,
+  cloneUrl: string,
   branch: string,
   dockerfile: string,
   tag: string,
@@ -133,7 +140,7 @@ export async function buildImageStreaming(
   noCache = false,
   signal?: AbortSignal,
 ): Promise<void> {
-  const gitUrl = githubUrl.endsWith(".git") ? githubUrl : `${githubUrl}.git`;
+  const gitUrl = cloneUrl.endsWith(".git") ? cloneUrl : `${cloneUrl}.git`;
   const remote = `${gitUrl}#${branch}`;
   const params = new URLSearchParams({ remote, t: tag, dockerfile });
   if (noCache) params.set("nocache", "true");
@@ -151,8 +158,14 @@ export async function buildImageStreaming(
 
   if (!res.ok) {
     const body = await res.text();
-    throw new Error(`Docker build failed: ${res.status} ${body}`);
+    // Docker may echo the remote URL in the body; redact before throwing.
+    throw new Error(redactCredentialsInText(`Docker build failed: ${res.status} ${body}`));
   }
+
+  // Every text crossing onLine and the final throw goes through this
+  // redactor: Docker daemon error frames frequently include the remote
+  // URL ("fatal: Authentication failed for 'https://x:tok@github.com/...'").
+  const safeEmit = (text: string): void => onLine(redactCredentialsInText(text));
 
   let buildError: string | null = null;
   let buffer = "";
@@ -165,28 +178,26 @@ export async function buildImageStreaming(
     if (done) break;
     buffer += decoder.decode(value, { stream: true });
 
-    // Process complete lines
     const lines = buffer.split("\n");
-    buffer = lines.pop() || ""; // keep incomplete line in buffer
+    buffer = lines.pop() || "";
     for (const line of lines) {
       if (!line) continue;
       const parsed = parseBuildLine(line);
       if (parsed) {
-        onLine(parsed.text);
+        safeEmit(parsed.text);
         if (parsed.error) buildError = parsed.text;
       }
     }
   }
-  // Process remaining buffer
   if (buffer) {
     const parsed = parseBuildLine(buffer);
     if (parsed) {
-      onLine(parsed.text);
+      safeEmit(parsed.text);
       if (parsed.error) buildError = parsed.text;
     }
   }
 
-  if (buildError) throw new Error(buildError);
+  if (buildError) throw new Error(redactCredentialsInText(buildError));
 }
 
 /** Parse a single Docker pull JSON line into display text. */

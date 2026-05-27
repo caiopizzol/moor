@@ -214,3 +214,263 @@ describe("#30 project URL credential redaction", () => {
     expect(stored.cpus).toBeNull();
   });
 });
+
+describe("#112 source_credential_id on projects", () => {
+  beforeEach(() => {
+    db.query("DELETE FROM projects").run();
+    db.query("DELETE FROM source_credentials").run();
+  });
+
+  function makeCred(label: string): number {
+    const row = db
+      .query(
+        "INSERT INTO source_credentials (hostname, label, username, secret) VALUES ('github.com', ?, 'x-access-token', 'ghp_a') RETURNING id",
+      )
+      .get(label) as { id: number };
+    return row.id;
+  }
+
+  function storedSourceCredId(id: number): number | null {
+    const row = db.query("SELECT source_credential_id FROM projects WHERE id = ?").get(id) as {
+      source_credential_id: number | null;
+    } | null;
+    return row?.source_credential_id ?? null;
+  }
+
+  describe("create", () => {
+    test("happy path persists source_credential_id and returns it", async () => {
+      const credId = makeCred("personal");
+      const res = await call("POST", "/api/projects", {
+        name: "p1",
+        github_url: "https://github.com/owner/repo",
+        source_credential_id: credId,
+      });
+      expect(res.status).toBe(201);
+      const body = (await res.json()) as { id: number; source_credential_id: number | null };
+      expect(body.source_credential_id).toBe(credId);
+      expect(storedSourceCredId(body.id)).toBe(credId);
+    });
+
+    test("rejects non-integer source_credential_id", async () => {
+      const res = await call("POST", "/api/projects", {
+        name: "p1",
+        github_url: "https://github.com/owner/repo",
+        source_credential_id: "not-a-number",
+      });
+      expect(res.status).toBe(400);
+    });
+
+    test("rejects source_credential_id pointing to a missing row", async () => {
+      const res = await call("POST", "/api/projects", {
+        name: "p1",
+        github_url: "https://github.com/owner/repo",
+        source_credential_id: 99999,
+      });
+      expect(res.status).toBe(400);
+    });
+
+    test("explicit null is accepted on create", async () => {
+      const res = await call("POST", "/api/projects", {
+        name: "p1",
+        github_url: "https://github.com/owner/repo",
+        source_credential_id: null,
+      });
+      expect(res.status).toBe(201);
+      const body = (await res.json()) as { id: number; source_credential_id: number | null };
+      expect(body.source_credential_id).toBeNull();
+    });
+
+    test("create with docker_image forces source_credential_id to null even if caller sent one", async () => {
+      const credId = makeCred("personal");
+      const res = await call("POST", "/api/projects", {
+        name: "p1",
+        docker_image: "nginx:alpine",
+        source_credential_id: credId,
+      });
+      expect(res.status).toBe(201);
+      const body = (await res.json()) as { id: number; source_credential_id: number | null };
+      expect(body.source_credential_id).toBeNull();
+    });
+
+    test("create with docker_image skips source_credential_id validation (stale/missing id is irrelevant)", async () => {
+      // The id is about to be force-nulled; validating it would be a
+      // 400 on a field that's being ignored.
+      const res = await call("POST", "/api/projects", {
+        name: "p1",
+        docker_image: "nginx:alpine",
+        source_credential_id: 99999, // does not exist
+      });
+      expect(res.status).toBe(201);
+      const body = (await res.json()) as { id: number; source_credential_id: number | null };
+      expect(body.source_credential_id).toBeNull();
+    });
+
+    test("save-time validation does NOT enforce host-mismatch or active state", async () => {
+      // gitlab.com credential against a github_url is fine at save time;
+      // build-time resolution catches it. Operator intent is captured.
+      const cred = db
+        .query(
+          "INSERT INTO source_credentials (hostname, label, username, secret) VALUES ('gitlab.com', 'mismatch', 'oauth2', 'glpat_x') RETURNING id",
+        )
+        .get() as { id: number };
+      const res = await call("POST", "/api/projects", {
+        name: "p1",
+        github_url: "https://github.com/owner/repo",
+        source_credential_id: cred.id,
+      });
+      expect(res.status).toBe(201);
+      expect(storedSourceCredId((await res.json()).id)).toBe(cred.id);
+    });
+  });
+
+  describe("update", () => {
+    test("source_credential_id: null is an explicit unlink", async () => {
+      const credId = makeCred("personal");
+      const created = await call("POST", "/api/projects", {
+        name: "p1",
+        github_url: "https://github.com/owner/repo",
+        source_credential_id: credId,
+      });
+      const { id } = (await created.json()) as { id: number };
+
+      const res = await call("PUT", `/api/projects/${id}`, { source_credential_id: null });
+      expect(res.status).toBe(200);
+      expect(storedSourceCredId(id)).toBeNull();
+    });
+
+    test("update with new source_credential_id swaps", async () => {
+      const a = makeCred("a");
+      const b = makeCred("b");
+      const created = await call("POST", "/api/projects", {
+        name: "p1",
+        github_url: "https://github.com/owner/repo",
+        source_credential_id: a,
+      });
+      const { id } = (await created.json()) as { id: number };
+      await call("PUT", `/api/projects/${id}`, { source_credential_id: b });
+      expect(storedSourceCredId(id)).toBe(b);
+    });
+
+    test("switching to docker_image force-clears github_url AND source_credential_id", async () => {
+      const credId = makeCred("personal");
+      const created = await call("POST", "/api/projects", {
+        name: "p1",
+        github_url: "https://github.com/owner/repo",
+        source_credential_id: credId,
+      });
+      const { id } = (await created.json()) as { id: number };
+
+      await call("PUT", `/api/projects/${id}`, { docker_image: "nginx:alpine" });
+      const row = db
+        .query("SELECT github_url, docker_image, source_credential_id FROM projects WHERE id = ?")
+        .get(id) as {
+        github_url: string | null;
+        docker_image: string | null;
+        source_credential_id: number | null;
+      };
+      expect(row.github_url).toBeNull();
+      expect(row.docker_image).toBe("nginx:alpine");
+      expect(row.source_credential_id).toBeNull();
+    });
+
+    test("switching from docker_image to github_url leaves source_credential_id null unless provided", async () => {
+      const created = await call("POST", "/api/projects", {
+        name: "p1",
+        docker_image: "nginx:alpine",
+      });
+      const { id } = (await created.json()) as { id: number };
+
+      await call("PUT", `/api/projects/${id}`, {
+        github_url: "https://github.com/owner/repo",
+      });
+      expect(storedSourceCredId(id)).toBeNull();
+    });
+
+    test("switching from docker_image to github_url with explicit source_credential_id pins it", async () => {
+      const credId = makeCred("personal");
+      const created = await call("POST", "/api/projects", {
+        name: "p1",
+        docker_image: "nginx:alpine",
+      });
+      const { id } = (await created.json()) as { id: number };
+
+      await call("PUT", `/api/projects/${id}`, {
+        github_url: "https://github.com/owner/repo",
+        source_credential_id: credId,
+      });
+      expect(storedSourceCredId(id)).toBe(credId);
+    });
+
+    test("update with invalid source_credential_id returns 400", async () => {
+      const created = await call("POST", "/api/projects", {
+        name: "p1",
+        github_url: "https://github.com/owner/repo",
+      });
+      const { id } = (await created.json()) as { id: number };
+
+      const res = await call("PUT", `/api/projects/${id}`, { source_credential_id: 99999 });
+      expect(res.status).toBe(400);
+    });
+
+    test("update switching to docker_image skips source_credential_id validation", async () => {
+      const credId = makeCred("personal");
+      const created = await call("POST", "/api/projects", {
+        name: "p1",
+        github_url: "https://github.com/owner/repo",
+        source_credential_id: credId,
+      });
+      const { id } = (await created.json()) as { id: number };
+
+      // Switching to docker_image with a stale/invalid source_credential_id
+      // in the body should succeed; the id is about to be force-cleared.
+      const res = await call("PUT", `/api/projects/${id}`, {
+        docker_image: "nginx:alpine",
+        source_credential_id: 99999,
+      });
+      expect(res.status).toBe(200);
+      expect(storedSourceCredId(id)).toBeNull();
+    });
+
+    test("Git-to-Git metadata update without source_credential_id keeps the existing id", async () => {
+      const credId = makeCred("personal");
+      const created = await call("POST", "/api/projects", {
+        name: "p1",
+        github_url: "https://github.com/owner/repo",
+        source_credential_id: credId,
+      });
+      const { id } = (await created.json()) as { id: number };
+
+      await call("PUT", `/api/projects/${id}`, { branch: "develop" });
+      expect(storedSourceCredId(id)).toBe(credId);
+    });
+  });
+
+  describe("response shape", () => {
+    test("GET single project includes source_credential_id", async () => {
+      const credId = makeCred("personal");
+      const created = await call("POST", "/api/projects", {
+        name: "p1",
+        github_url: "https://github.com/owner/repo",
+        source_credential_id: credId,
+      });
+      const { id } = (await created.json()) as { id: number };
+
+      const res = await call("GET", `/api/projects/${id}`);
+      const body = (await res.json()) as { source_credential_id: number | null };
+      expect(body.source_credential_id).toBe(credId);
+    });
+
+    test("GET list includes source_credential_id on each row", async () => {
+      const credId = makeCred("personal");
+      await call("POST", "/api/projects", {
+        name: "p1",
+        github_url: "https://github.com/owner/repo",
+        source_credential_id: credId,
+      });
+
+      const res = await call("GET", "/api/projects");
+      const body = (await res.json()) as Array<{ source_credential_id: number | null }>;
+      expect(body[0].source_credential_id).toBe(credId);
+    });
+  });
+});
