@@ -282,7 +282,9 @@ describe("performCheck - explicit credential id", () => {
     expect(calls).toHaveLength(0);
   });
 
-  test("credential in failed state → credential_not_active", async () => {
+  test("credential in failed state can be retested; success flips it back to active", async () => {
+    // Recovery flow: rotation alone doesn't restore a failed credential.
+    // The operator runs _check; if it passes, the row is active again.
     const cred = createCredential({
       hostname: "github.com",
       label: "x",
@@ -295,13 +297,40 @@ describe("performCheck - explicit credential id", () => {
       { github_url: "https://github.com/owner/repo", source_credential_id: cred.id },
       runner,
     );
-    expect(r).toMatchObject({
-      ok: false,
-      code: "credential_not_active",
-      source_credential_id: cred.id,
+    expect(r.ok).toBe(true);
+    expect(calls).toHaveLength(1);
+    expect(getCredentialById(cred.id)?.state).toBe("active");
+  });
+
+  test("failed credential that fails again stays failed", async () => {
+    const cred = createCredential({
+      hostname: "github.com",
+      label: "x",
+      username: "u",
+      secret: "ghp_a",
       state: "failed",
     });
-    expect(calls).toHaveLength(0);
+    const { runner } = makeRunner(() => AUTH_FAILED);
+    await performCheck(
+      { github_url: "https://github.com/owner/repo", source_credential_id: cred.id },
+      runner,
+    );
+    expect(getCredentialById(cred.id)?.state).toBe("failed");
+  });
+
+  test("active credential that succeeds stays active (no needless state churn)", async () => {
+    const cred = createCredential({
+      hostname: "github.com",
+      label: "x",
+      username: "u",
+      secret: "ghp_a",
+    });
+    const { runner } = makeRunner(() => HEAD_SUCCESS);
+    await performCheck(
+      { github_url: "https://github.com/owner/repo", source_credential_id: cred.id },
+      runner,
+    );
+    expect(getCredentialById(cred.id)?.state).toBe("active");
   });
 });
 

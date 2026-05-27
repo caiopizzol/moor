@@ -28,7 +28,7 @@ import {
   parseLsRemoteOutput,
   runGitLsRemote,
 } from "./git-ls-remote";
-import { normalizeHostname } from "./source-auth";
+import { type CredentialState, normalizeHostname } from "./source-auth";
 import {
   type CredentialMetadata,
   getStoredCredentialById,
@@ -126,14 +126,14 @@ async function testCredential(
   branch: string | undefined,
   stored: StoredCredential,
 ): Promise<CheckResult> {
-  if (stored.state !== "active") {
-    return {
-      ok: false,
-      code: "credential_not_active",
-      source_credential_id: stored.id,
-      state: stored.state,
-    };
-  }
+  // Both active and failed credentials are testable. Recovery flow:
+  //   1. credential's last check failed → state=failed
+  //   2. operator rotates via PUT secret (state stays failed)
+  //   3. operator calls _check → if it passes now, state flips active
+  // Without this, a failed credential would be unrecoverable through
+  // the API (the operator would have to delete/recreate or touch the
+  // DB directly). Future states like 'pending' or 'revoked' would
+  // keep the credential_not_active guard.
 
   const ref = branch ? `refs/heads/${branch}` : undefined;
   const run = await runner({
@@ -143,10 +143,11 @@ async function testCredential(
   });
   const parsedOut = parseLsRemoteOutput(run, { ref, hasCredential: true });
 
-  // Side effect: record check result. On failure, flip state to failed
-  // so subsequent operations see the credential is stale.
+  // Side effect: record check result and update state in both
+  // directions. Success → active (recovers a failed credential).
+  // Failure → failed (marks an active credential as stale).
   const status = parsedOut.ok ? "ok" : parsedOut.code;
-  const newState = parsedOut.ok ? undefined : ("failed" as const);
+  const newState: CredentialState = parsedOut.ok ? "active" : "failed";
   recordCheckResult(stored.id, { status, state: newState });
 
   if (parsedOut.ok) {
