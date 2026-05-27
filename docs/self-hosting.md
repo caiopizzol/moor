@@ -175,6 +175,104 @@ Secrets are stored plaintext in moor's SQLite file, matching how `env_vars` are 
 
 This covers private images referenced as `docker_image` (the pull path through `/images/create`). Private base images inside a Dockerfile build go through a different daemon header (`X-Registry-Config` on `/build`) and are not wired yet.
 
+## Private GitHub repos
+
+For projects whose `github_url` points at a private repo, moor stores an HTTPS PAT per host in a separate table from registry credentials. At build time, moor synthesizes the credentialed clone URL in memory and hands it to the Docker daemon's `remote=` build, then discards it. The raw secret never lives on the project row (only a `source_credential_id` FK does), never appears in `github_url`, and is never returned by any API or MCP read.
+
+v1 supports HTTPS PATs only. For GitHub: a fine-grained PAT with `Contents: read` (username `x-access-token`) is the recommended path; classic PATs with `repo` scope also work.
+
+The HTTP API requires `MOOR_API_KEY` (see [API keys](#api-keys) above).
+
+### Add a credential
+
+```bash
+KEY=$(grep '^MOOR_API_KEY=' .env | cut -d= -f2-)
+curl -fsS -X POST http://127.0.0.1:3000/api/server/source-credentials \
+  -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
+  -d '{"hostname":"github.com","label":"personal","username":"x-access-token","secret":"github_pat_..."}'
+```
+
+`hostname` must be the bare host as parsed from a Git URL: `github.com`, `gitlab.com`, etc. No scheme, no path. Case is normalized at storage. The `(hostname, label)` pair is unique, so multiple credentials per host are fine as long as labels differ (`personal` vs `work-org`, etc.).
+
+### List, rotate, delete
+
+```bash
+# List (metadata only, raw secret is never returned)
+curl -fsS -H "Authorization: Bearer $KEY" \
+  http://127.0.0.1:3000/api/server/source-credentials
+
+# Rotate the secret on id=1
+curl -fsS -X PUT http://127.0.0.1:3000/api/server/source-credentials/1 \
+  -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
+  -d '{"secret":"github_pat_NEW"}'
+
+# Delete (confirm_label must match the row's label)
+curl -fsS -X DELETE \
+  "http://127.0.0.1:3000/api/server/source-credentials/1?confirm_label=personal" \
+  -H "Authorization: Bearer $KEY"
+```
+
+To change a hostname, delete and recreate. Hostname is the lookup key and is not patchable through `PUT`. Delete is refused with `credential_in_use` if any project still references the credential.
+
+MCP equivalents: `moor_source_credentials_list`, `moor_source_credential_get`, `moor_source_credential_add`, `moor_source_credential_update`, `moor_source_credential_delete`, `moor_source_credential_check`.
+
+### Canonical agent recipe
+
+The build path is strict about explicit intent: a project row with `source_credential_id` unset means **anonymous clone, no credentials table lookup**. There is no auto-attach. To deploy a private repo, an agent must run `_check` first to discover (or verify) the credential, then pass that id into `moor_deploy` or pin it on the project row.
+
+```
+1. moor_source_credential_check({ github_url: "https://github.com/acme/api" })
+   → { ok: true, default_branch: "main", auto_selected_credential_id: 1 }   // single matching credential
+   → { ok: false, code: "source_credential_required", hostname: "github.com" }  // private, no credential exists for host
+   → { ok: false, code: "source_credential_ambiguous", candidates: [...] }    // multiple match, agent picks one
+2. moor_deploy({ name: "api", github_url: "...", source_credential_id: 1, ... })
+```
+
+`auto_selected_credential_id` only appears in the `_check` response. The build path does not auto-select. An agent that calls `moor_deploy` without `_check` first will get an anonymous clone, which works for public repos and fails with an auth error for private ones.
+
+To attach a credential to an existing project without redeploying, `moor_project_update` accepts `source_credential_id` (pass `null` to detach). The change takes effect on the next build.
+
+### First deploy: env vars and DNS
+
+A private-repo project typically needs env vars before its container will boot. `moor_deploy` exposes an `env` map; pre-populate it on the first call so the container starts cleanly. Adding them after a failed boot works too via `moor_env_set` followed by `moor_restart`.
+
+Deploy without `domain` on the first run unless DNS already points at the moor host. The container will run on its internal port and you can attach a domain in a follow-up `moor_project_update` once the A/AAAA record propagates. Setting `domain` before DNS resolves leaves Caddy unable to issue a certificate.
+
+### Post-deploy confirmation
+
+```
+moor_project_get({ project: "<id-or-name>" }) → check live_status: "running"
+```
+
+`moor_project_get` reads the project row and reconciles `live_status` against Docker. `moor_status` is the all-projects list tool; use `moor_project_get` for single-project confirmation.
+
+### Rotation and recovery
+
+A credential whose probe failed (expired or revoked PAT) flips to `state: failed` and is rejected at build time with `credential_not_active`. Recovery is two calls:
+
+```
+1. moor_source_credential_update({ id: 1, secret: "github_pat_NEW" })
+2. moor_source_credential_check({ github_url: "...", source_credential_id: 1 })
+   → ok: true → state flips back to active
+```
+
+`_check` is the only call that flips state. `_update` alone leaves the credential in whatever state it was in, so existing builds keep rejecting it until `_check` proves the new secret works.
+
+### Storage and reads
+
+Secrets are stored plaintext in moor's SQLite file, matching `env_vars` and registry credentials. All read paths (HTTP and MCP) return metadata only: `secret` comes back as `{ "configured": true, "kind": "github_classic_pat" | "github_fine_grained_pat" | "unknown" }`. The raw value is never returned by API or MCP responses.
+
+Honest trust boundary: the secret transits to the Docker daemon as part of the build `remote=` URL (the daemon clones, not moor). The SQLite file and the Docker socket are the trust boundary; this is not full secret isolation. Anyone with admin access or a valid `MOOR_API_KEY` can rotate, attach, or detach credentials. Build output is redacted before being persisted or streamed, so embedded `https://user:secret@host` patterns do not appear in `moor_run_get` output or in the deploy SSE stream. (`moor_logs` returns container runtime logs, which never see the clone URL.)
+
+### Out of scope
+
+The v1 surface is intentionally narrow:
+
+- **SSH deploy keys.** HTTPS PATs cover the same use cases and avoid a second key-management surface.
+- **Moor-controlled clone.** The Docker daemon clones via `remote=` so moor never touches the source tarball.
+- **Private base images inside the Dockerfile.** Same as the registry section above: `X-Registry-Config` on `/build` is not wired.
+- **Submodules, Git LFS, GitHub App tokens.** PATs only.
+
 ## Scheduled dangling-image cleanup
 
 Builds create new image layers and leave the previous tagged image as a dangling artifact. On an active host these add up fast (8 GB+ regenerates within minutes when several projects rebuild). The MCP tools `moor_cleanup_plan` + `moor_cleanup_execute` let you reclaim that space manually.

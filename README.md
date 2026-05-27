@@ -45,7 +45,7 @@ Then open `http://localhost:8080` and log in with the password from `.env`.
 
 ## Docs
 
-- [Self-hosting guide](docs/self-hosting.md) - first boot, admin domain, API keys, project ports, private registry images, Docker socket
+- [Self-hosting guide](docs/self-hosting.md) - first boot, admin domain, API keys, project ports, private registry images, private GitHub repos, Docker socket
 - [`@moor-sh/cli`](packages/cli) - command-line interface
 - [`@moor-sh/mcp`](packages/mcp) - MCP server for AI agents
 
