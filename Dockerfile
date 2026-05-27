@@ -23,8 +23,14 @@ WORKDIR /app
 # which shells out to `git ls-remote` to verify HTTPS PAT access
 # against a private repo before any deploy attempts. The slim base
 # image does not include git.
+#
+# ca-certificates is a Recommends of git on Debian, not a Depends, so
+# --no-install-recommends skips it. Without it, every HTTPS git
+# operation fails TLS verification ("server certificate verification
+# failed. CAfile: none CRLfile: none") and /check returns git_error.
+# Surfaced by the 0.45.0 deploy smoke; install explicitly.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends git \
+ && apt-get install -y --no-install-recommends git ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 
 COPY package.json bun.lock* ./
