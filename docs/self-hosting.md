@@ -177,7 +177,7 @@ This covers private images referenced as `docker_image` (the pull path through `
 
 ## Private GitHub repos
 
-For projects whose `github_url` points at a private repo, moor stores an HTTPS PAT per host in a separate table from registry credentials. At build time, moor synthesizes the credentialed clone URL in memory and hands it to the Docker daemon's `remote=` build, then discards it. The credential never lives on the project row, never appears in `github_url`, and is never returned by any API or MCP read.
+For projects whose `github_url` points at a private repo, moor stores an HTTPS PAT per host in a separate table from registry credentials. At build time, moor synthesizes the credentialed clone URL in memory and hands it to the Docker daemon's `remote=` build, then discards it. The raw secret never lives on the project row (only a `source_credential_id` FK does), never appears in `github_url`, and is never returned by any API or MCP read.
 
 v1 supports HTTPS PATs only. For GitHub: a fine-grained PAT with `Contents: read` (username `x-access-token`) is the recommended path; classic PATs with `repo` scope also work.
 
@@ -234,14 +234,14 @@ To attach a credential to an existing project without redeploying, `moor_project
 
 ### First deploy: env vars and DNS
 
-A private-repo project typically needs env vars before its container will boot. `moor_deploy` exposes an `env_vars` map; pre-populate it on the first call so the container starts cleanly. Adding them after a failed boot works too via `moor_env_set` followed by `moor_restart`.
+A private-repo project typically needs env vars before its container will boot. `moor_deploy` exposes an `env` map; pre-populate it on the first call so the container starts cleanly. Adding them after a failed boot works too via `moor_env_set` followed by `moor_restart`.
 
 Deploy without `domain` on the first run unless DNS already points at the moor host. The container will run on its internal port and you can attach a domain in a follow-up `moor_project_update` once the A/AAAA record propagates. Setting `domain` before DNS resolves leaves Caddy unable to issue a certificate.
 
 ### Post-deploy confirmation
 
 ```
-moor_project_get({ id: <id> }) → check live_status: "running"
+moor_project_get({ project: "<id-or-name>" }) → check live_status: "running"
 ```
 
 `moor_project_get` reads the project row and reconciles `live_status` against Docker. `moor_status` is the all-projects list tool; use `moor_project_get` for single-project confirmation.
@@ -262,7 +262,7 @@ A credential whose probe failed (expired or revoked PAT) flips to `state: failed
 
 Secrets are stored plaintext in moor's SQLite file, matching `env_vars` and registry credentials. All read paths (HTTP and MCP) return metadata only: `secret` comes back as `{ "configured": true, "kind": "github_classic_pat" | "github_fine_grained_pat" | "unknown" }`. The raw value is never returned by API or MCP responses.
 
-Honest trust boundary: the secret transits to the Docker daemon as part of the build `remote=` URL (the daemon clones, not moor). The SQLite file and the Docker socket are the trust boundary; this is not full secret isolation. Anyone with admin access or a valid `MOOR_API_KEY` can rotate, attach, or detach credentials. Build logs are redacted before being persisted or streamed, so embedded `https://user:secret@host` patterns do not appear in `moor_logs` or SSE output.
+Honest trust boundary: the secret transits to the Docker daemon as part of the build `remote=` URL (the daemon clones, not moor). The SQLite file and the Docker socket are the trust boundary; this is not full secret isolation. Anyone with admin access or a valid `MOOR_API_KEY` can rotate, attach, or detach credentials. Build output is redacted before being persisted or streamed, so embedded `https://user:secret@host` patterns do not appear in `moor_run_get` output or in the deploy SSE stream. (`moor_logs` returns container runtime logs, which never see the clone URL.)
 
 ### Out of scope
 
