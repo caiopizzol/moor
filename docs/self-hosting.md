@@ -192,7 +192,7 @@ curl -fsS -X POST http://127.0.0.1:3000/api/server/source-credentials \
   -d '{"hostname":"github.com","label":"personal","username":"x-access-token","secret":"github_pat_..."}'
 ```
 
-`hostname` must be the bare host as parsed from a Git URL: `github.com`, `gitlab.com`, etc. No scheme, no path. Case is normalized at storage. The `(hostname, label)` pair is unique, so multiple credentials per host are fine as long as labels differ (`personal` vs `work-org`, etc.).
+`hostname` must be the bare Git host for this repo. The supported v1 recipe is `github.com`; the build path rejects other hosts today (`apps/api/routes/docker.ts` `validateGithubUrl`). No scheme, no path. Case is normalized at storage. The `(hostname, label)` pair is unique, so multiple credentials per host are fine as long as labels differ (`personal` vs `work-org`, etc.).
 
 ### List, rotate, delete
 
