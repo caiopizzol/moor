@@ -5,6 +5,7 @@ import { ContainerLogs } from "./ContainerLogs";
 import { CronJobs } from "./CronJobs";
 import { EnvVars } from "./EnvVars";
 import { ProjectHistory } from "./ProjectHistory";
+import { ProjectStats } from "./ProjectStats";
 import { Terminal } from "./Terminal";
 
 type Props = {
@@ -14,7 +15,7 @@ type Props = {
   onDelete: () => void;
 };
 
-type Tab = "build" | "logs" | "terminal" | "env" | "cron" | "history";
+type Tab = "build" | "logs" | "terminal" | "env" | "cron" | "stats" | "history";
 type Action = null | "stopping" | "restarting" | "rebuilding" | "building";
 
 function formatElapsed(iso: string) {
@@ -379,6 +380,14 @@ export function ProjectDetail({ project, onUpdate, onEdit, onDelete }: Props) {
 
           <button
             type="button"
+            className={`log-tab ${tab === "stats" ? "active" : ""}`}
+            onClick={() => setTab("stats")}
+          >
+            Stats
+          </button>
+
+          <button
+            type="button"
             className={`log-tab ${tab === "history" ? "active" : ""}`}
             onClick={() => setTab("history")}
           >
@@ -398,6 +407,7 @@ export function ProjectDetail({ project, onUpdate, onEdit, onDelete }: Props) {
           {tab === "terminal" && <Terminal projectId={project.id} running={isRunning} />}
           {tab === "env" && <EnvVars projectId={project.id} />}
           {tab === "cron" && <CronJobs projectId={project.id} />}
+          {tab === "stats" && <ProjectStats projectId={project.id} />}
           {tab === "history" && <ProjectHistory projectId={project.id} />}
         </div>
       </div>

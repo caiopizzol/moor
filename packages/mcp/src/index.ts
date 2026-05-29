@@ -587,6 +587,7 @@ server.registerTool(
       load?: { one_min: number; cores: number; normalized_percent: number };
       memory: { total: string; used: string; percent: number };
       disk: { total: string; used: string; percent: number };
+      disks?: { mount: string; total: string; used: string; percent: number }[];
       containers: { running: number; total: number };
       docker?: {
         images: { bytes: number; reclaimable_bytes: number; count: number; unused_count: number };
@@ -611,11 +612,12 @@ server.registerTool(
         `Load (1m): ${s.load.one_min.toFixed(2)} on ${s.load.cores} cores (${s.load.normalized_percent}%)`,
       );
     }
-    lines.push(
-      `Memory: ${s.memory.used} / ${s.memory.total} (${s.memory.percent}%)`,
-      `Disk (root /): ${s.disk.used} / ${s.disk.total} (${s.disk.percent}%)`,
-      `Containers: ${s.containers.running} running / ${s.containers.total} total`,
-    );
+    lines.push(`Memory: ${s.memory.used} / ${s.memory.total} (${s.memory.percent}%)`);
+    const disks = s.disks?.length ? s.disks : [{ mount: "/", ...s.disk }];
+    for (const d of disks) {
+      lines.push(`Disk ${d.mount}: ${d.used} / ${d.total} (${d.percent}%)`);
+    }
+    lines.push(`Containers: ${s.containers.running} running / ${s.containers.total} total`);
     if (s.docker) {
       const d = s.docker;
       lines.push(

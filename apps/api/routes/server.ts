@@ -162,8 +162,9 @@ export async function getServerStats() {
   const memory = getMemoryInfo();
   const disk = getDiskInfo();
   const [containers, docker] = await Promise.all([getContainerInfo(), getDockerDiskInfo()]);
+  const disks = getAllDisks();
 
-  return { hostname, os, uptime, cpu, load, memory, disk, containers, docker };
+  return { hostname, os, uptime, cpu, load, memory, disk, disks, containers, docker };
 }
 
 function getLoadInfo(cores: number): LoadInfo {
@@ -293,6 +294,47 @@ function getDiskInfo(): { total: string; used: string; percent: number } {
   }
 
   return { total: "?", used: "?", percent: 0 };
+}
+
+// #137: the single-root `disk` above hides additional mounted volumes (e.g. a
+// separate data disk holding project databases that can be near-full while
+// root looks empty). Report every real filesystem instead.
+export type DiskFs = { mount: string; total: string; used: string; percent: number };
+
+/** Pure: parse `df -B1 --output=source,size,used,pcent,target` into real
+ *  filesystems. Skips pseudo filesystems (tmpfs/overlay/devtmpfs — their
+ *  source isn't a /dev/ node) and the boot partition. */
+export function parseDiskList(raw: string): DiskFs[] {
+  const out: DiskFs[] = [];
+  for (const line of raw.trim().split("\n")) {
+    const p = line.trim().split(/\s+/);
+    if (p.length < 5) continue;
+    const source = p[0];
+    if (!source.startsWith("/dev/")) continue; // drops header + tmpfs/overlay/etc.
+    const total = Number(p[1]);
+    const used = Number(p[2]);
+    const pct = Number((p[3] ?? "").replace("%", ""));
+    const mount = p.slice(4).join(" ");
+    if (mount.startsWith("/boot")) continue;
+    if (!Number.isFinite(total) || total <= 0) continue;
+    out.push({
+      mount,
+      total: formatBytes(total),
+      used: formatBytes(used),
+      percent: Number.isFinite(pct) && pct > 0 ? pct : Math.round((used / total) * 100),
+    });
+  }
+  return out;
+}
+
+function getAllDisks(): DiskFs[] {
+  const raw = tryExec("df -B1 --output=source,size,used,pcent,target 2>/dev/null");
+  const list = raw ? parseDiskList(raw) : [];
+  if (list.length > 0) return list;
+  // df --output unsupported (older coreutils / non-Linux dev host): fall back
+  // to the root-only figure so the card still shows something.
+  const root = getDiskInfo();
+  return [{ mount: "/", total: root.total, used: root.used, percent: root.percent }];
 }
 
 async function getContainerInfo(): Promise<{ running: number; total: number }> {
