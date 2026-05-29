@@ -7,9 +7,8 @@ import { describe, expect, test } from "bun:test";
 
 // Dynamic import: routes/server pulls in db.ts (side-effect opens the DB), so
 // the in-memory path must be set first.
-const { parseDiskList, parseMonitoredDisks, parseDfOne, isSafeMonitoredPath } = await import(
-  "./routes/server"
-);
+const { parseDiskList, parseMonitoredDisks, parseDfOne, isSafeMonitoredPath, mergeDisks } =
+  await import("./routes/server");
 
 // `df -B1 --output=source,size,used,pcent,target` shape (bytes), mirroring the
 // real host: root + a large data volume + pseudo filesystems + boot.
@@ -60,6 +59,34 @@ describe("parseDfOne (#140)", () => {
   test("unmounted / empty → null", () => {
     expect(parseDfOne("")).toBeNull();
     expect(parseDfOne("1B-blocks Used Use%")).toBeNull();
+  });
+});
+
+describe("mergeDisks (#140 dedup)", () => {
+  test("drops the container-visible duplicate of a monitored mount; labeled wins", () => {
+    // Bind-mounting the monitored path makes df list it too (unlabeled).
+    const visible = [
+      { mount: "/app/data", total: "150 GB", used: "15 GB", percent: 11 },
+      { mount: "/host/mnt/volume-hil-1", total: "343 GB", used: "168 GB", percent: 49 },
+    ];
+    const monitored = [
+      {
+        mount: "/host/mnt/volume-hil-1",
+        label: "CNPJ data",
+        total: "343 GB",
+        used: "168 GB",
+        percent: 49,
+      },
+    ];
+    const merged = mergeDisks(visible, monitored);
+    expect(merged).toHaveLength(2); // not 3 — the duplicate is gone
+    expect(merged.map((d) => d.mount)).toEqual(["/app/data", "/host/mnt/volume-hil-1"]);
+    expect(merged.find((d) => d.mount === "/host/mnt/volume-hil-1")?.label).toBe("CNPJ data");
+  });
+
+  test("no monitored disks → visible list unchanged", () => {
+    const visible = [{ mount: "/app/data", total: "150 GB", used: "15 GB", percent: 11 }];
+    expect(mergeDisks(visible, [])).toEqual(visible);
   });
 });
 
