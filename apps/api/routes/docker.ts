@@ -10,6 +10,7 @@ import {
   ExecTimeoutError,
   execInContainer,
   getContainerLogs,
+  projectLabels,
   pullImageStreaming,
   stopContainer,
 } from "../docker";
@@ -317,6 +318,7 @@ async function handleRun(req: Request, project: Project): Promise<Response> {
           project.restart_policy,
           { memoryLimitMb: project.memory_limit_mb, cpus: project.cpus },
           getProjectVolumes(project.id),
+          projectLabels(project.id, project.name),
         );
         console.log(`[run] container started: ${containerId}`);
 
@@ -609,6 +611,7 @@ async function handleStart(project: Project): Promise<Response> {
       project.restart_policy,
       { memoryLimitMb: project.memory_limit_mb, cpus: project.cpus },
       getProjectVolumes(project.id),
+      projectLabels(project.id, project.name),
     );
     console.log(`[start] container started: ${containerId}`);
     db.query("UPDATE projects SET container_id = ? WHERE id = ?").run(containerId, project.id);

@@ -17,6 +17,21 @@ function findSocket(): string {
 
 export const SOCKET = findSocket();
 
+// #131: label keys stamped on every moor-created project container, used by
+// the observability event consumer to correlate Docker /events back to a
+// project. Namespaced under sh.moor to avoid clashing with image/compose
+// labels.
+export const LABEL_PROJECT_ID = "sh.moor.project_id";
+export const LABEL_PROJECT_NAME = "sh.moor.project_name";
+
+/** Build the moor container-label set for a project. */
+export function projectLabels(projectId: number, projectName: string): Record<string, string> {
+  return {
+    [LABEL_PROJECT_ID]: String(projectId),
+    [LABEL_PROJECT_NAME]: projectName,
+  };
+}
+
 const BUILD_TIMEOUT = 1_800_000; // 30 minutes
 
 async function dockerFetch(
@@ -303,6 +318,7 @@ export async function createAndStartContainer(
   restartPolicy = "unless-stopped",
   limits: { memoryLimitMb?: number | null; cpus?: number | null } = {},
   volumes: Array<{ docker_name: string; target: string }> = [],
+  labels: Record<string, string> = {},
 ): Promise<string> {
   console.log(
     `[createContainer] image=${imageTag} name=${name} envVars=${envVars.length} ports=${ports.length} mem_mb=${limits.memoryLimitMb ?? ""} cpus=${limits.cpus ?? ""} volumes=${volumes.length}`,
@@ -357,10 +373,16 @@ export async function createAndStartContainer(
     }));
   }
 
+  // #131: container labels for observability event correlation. Top-level
+  // sibling of HostConfig (Docker's create body puts Labels at the config
+  // level, not under HostConfig). The Docker /events consumer reads these from
+  // each event's Actor.Attributes to map a container back to its project
+  // without a timing-sensitive container_id round-trip.
   const body = {
     Image: imageTag,
     Env: envVars.map((e) => `${e.key}=${e.value}`),
     ExposedPorts: exposedPorts,
+    Labels: labels,
     HostConfig: hostConfig,
   };
 
