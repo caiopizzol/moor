@@ -316,8 +316,9 @@ export async function pullImageStreaming(
  *  failure here would otherwise orphan a `Created` container that project
  *  delete can't reap. Cleanup is best-effort and never masks the original
  *  error — the start/connect failure is always what propagates. `remove` is
- *  injectable for tests; production uses removeContainer (force DELETE,
- *  404-tolerant). */
+ *  injectable for tests; production uses removeContainer (force DELETE, treats
+ *  404 as already-gone, throws on other failures so the cleanup log is
+ *  truthful about whether the orphan was actually removed). */
 export async function startOrCleanup(
   id: string,
   start: () => Promise<void>,
@@ -506,9 +507,15 @@ export async function removeContainer(containerId: string): Promise<void> {
   const res = await dockerFetch(`/v1.44/containers/${containerId}?force=true`, {
     method: "DELETE",
   });
+  // 404 = already gone, which is success for a force-remove. Any other non-2xx
+  // is a real failure and must throw: callers wrap this in try/catch and treat
+  // removal as best-effort, but they need to TELL failure from success — e.g.
+  // startOrCleanup (#134) must not log "removed orphaned container" when Docker
+  // actually refused the delete. (Previously this logged and returned, which
+  // silently reported success.)
   if (!res.ok && res.status !== 404) {
     const err = await res.text();
-    console.error(`[removeContainer] error: ${err}`);
+    throw new Error(`removeContainer failed (${res.status}): ${err}`);
   }
 }
 
