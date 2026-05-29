@@ -7,7 +7,9 @@ import { describe, expect, test } from "bun:test";
 
 // Dynamic import: routes/server pulls in db.ts (side-effect opens the DB), so
 // the in-memory path must be set first.
-const { parseDiskList, parseMonitoredDisks, parseDfOne } = await import("./routes/server");
+const { parseDiskList, parseMonitoredDisks, parseDfOne, isSafeMonitoredPath } = await import(
+  "./routes/server"
+);
 
 // `df -B1 --output=source,size,used,pcent,target` shape (bytes), mirroring the
 // real host: root + a large data volume + pseudo filesystems + boot.
@@ -58,5 +60,19 @@ describe("parseDfOne (#140)", () => {
   test("unmounted / empty → null", () => {
     expect(parseDfOne("")).toBeNull();
     expect(parseDfOne("1B-blocks Used Use%")).toBeNull();
+  });
+});
+
+describe("isSafeMonitoredPath (#140)", () => {
+  test("accepts plain absolute paths", () => {
+    expect(isSafeMonitoredPath("/host/mnt/volume-hil-1")).toBe(true);
+    expect(isSafeMonitoredPath("/app/data")).toBe(true);
+  });
+  test("rejects option-shaped, relative, and metacharacter paths", () => {
+    expect(isSafeMonitoredPath("-h")).toBe(false); // df flag, not a path
+    expect(isSafeMonitoredPath("relative/path")).toBe(false); // not absolute
+    expect(isSafeMonitoredPath("/path; rm -rf /")).toBe(false); // injection
+    expect(isSafeMonitoredPath("/a $(whoami)")).toBe(false);
+    expect(isSafeMonitoredPath("")).toBe(false);
   });
 });

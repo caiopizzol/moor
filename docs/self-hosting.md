@@ -387,10 +387,17 @@ services:
       - MOOR_MONITORED_DISKS
 ```
 
-Then set the env (the value maps the in-container path to a friendly label):
+Then set the env (the value maps the in-container path to a friendly label). Put it in your `.env` file, where the value is taken literally — no quoting needed:
+
+```dotenv
+# .env
+MOOR_MONITORED_DISKS=/host/mnt/volume-hil-1|CNPJ data
+```
+
+If you instead export it in a shell, quote it so the `|` and space aren't interpreted:
 
 ```bash
-MOOR_MONITORED_DISKS=/host/mnt/volume-hil-1|CNPJ data
+export MOOR_MONITORED_DISKS='/host/mnt/volume-hil-1|CNPJ data'
 ```
 
 Comma-separate multiple entries; the label after `|` is optional (defaults to the path). Each monitored disk shows up alongside the container-visible ones, labeled. moor only ever reads these paths to run `df` - the mount is read-only, and only the paths you list are looked at (no wholesale host-filesystem access). A configured path that isn't actually mounted in is skipped rather than shown as empty.

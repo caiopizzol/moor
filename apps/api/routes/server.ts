@@ -348,13 +348,18 @@ export function parseDfOne(raw: string): { total: number; used: number; percent:
   return null;
 }
 
+/** A monitored path reaches a shell, so require an absolute path of plain
+ *  characters. This blocks injection AND option-shaped values like `-h` (which
+ *  df would treat as a flag). The `--` in the df command is a second guard. */
+export function isSafeMonitoredPath(path: string): boolean {
+  return path.startsWith("/") && /^[A-Za-z0-9_./-]+$/.test(path);
+}
+
 function getMonitoredDisks(): DiskFs[] {
   const out: DiskFs[] = [];
   for (const cfg of parseMonitoredDisks(process.env.MOOR_MONITORED_DISKS)) {
-    // Path comes from operator env but reaches a shell; allow only plain
-    // absolute-path characters so it can't inject. Skip anything else.
-    if (!/^[A-Za-z0-9_./-]+$/.test(cfg.path)) continue;
-    const raw = tryExec(`df -B1 --output=size,used,pcent ${cfg.path} 2>/dev/null`);
+    if (!isSafeMonitoredPath(cfg.path)) continue;
+    const raw = tryExec(`df -B1 --output=size,used,pcent -- ${cfg.path} 2>/dev/null`);
     const d = raw ? parseDfOne(raw) : null;
     if (!d) continue; // not mounted into the container — skip rather than show a phantom
     out.push({

@@ -574,7 +574,7 @@ server.registerTool(
   {
     title: "Server Stats",
     description:
-      "Get server resource usage: load, memory, per-filesystem disk usage (every real mount, not just root — so a separate data volume can't hide), Docker disk by category (images/containers/volumes/build cache) with reclaimable bytes, and container counts. Note: cpu.percent is load-derived (load avg ÷ cores), not instantaneous CPU; use the `load` field for the same signal with explicit naming.",
+      "Get server resource usage: load, memory, per-filesystem disk usage (the filesystems the moor container can see, plus any operator-configured monitored host disks via MOOR_MONITORED_DISKS), Docker disk by category (images/containers/volumes/build cache) with reclaimable bytes, and container counts. Note: cpu.percent is load-derived (load avg ÷ cores), not instantaneous CPU; use the `load` field for the same signal with explicit naming.",
   },
   async () => {
     const res = await apiGet("/api/server/stats");
