@@ -18,6 +18,7 @@ import { startBackupScheduler, stopBackupScheduler } from "./db-backup";
 import { maybeAutoClearForBoot } from "./drain";
 import { interruptActiveExecRuns } from "./exec-async";
 import { hostTerminalHandlers, isHostTerminal, upgradeHostTerminal } from "./host-terminal";
+import { type HostSample, startMetricsSampler, stopMetricsSampler } from "./metrics-sampler";
 import { handleAuth } from "./routes/auth";
 import { handleCaddy } from "./routes/caddy";
 import { handleCleanup } from "./routes/cleanup";
@@ -30,7 +31,7 @@ import { handlePorts } from "./routes/ports";
 import { handleProjects } from "./routes/projects";
 import { handleRegistryCredentials } from "./routes/registry-credentials";
 import { handleRuns } from "./routes/runs";
-import { handleServer } from "./routes/server";
+import { getServerStats, handleServer } from "./routes/server";
 import { handleSourceCredentials } from "./routes/source-credentials";
 import { handleTerminalSessions } from "./routes/terminal-sessions";
 import { handleVolumes } from "./routes/volumes";
@@ -252,6 +253,25 @@ setInterval(cleanExpiredSessions, 3600_000);
 startCleanupScheduler();
 startStatusReconciler();
 startBackupScheduler();
+// #131: project observability sampler. Sibling loop to the reconciler (kept
+// separate so the heavier stats call can't delay lifecycle freshness). The
+// host fetcher reuses the server route's gatherer, projecting it onto the
+// percent-gauge HostSample shape.
+startMetricsSampler(async (): Promise<HostSample | null> => {
+  try {
+    const s = await getServerStats();
+    return {
+      cpu_percent: s.cpu.percent,
+      cpu_cores: s.cpu.cores,
+      mem_percent: s.memory.percent,
+      disk_percent: s.disk.percent,
+      containers_running: s.containers.running,
+      containers_total: s.containers.total,
+    };
+  } catch {
+    return null;
+  }
+});
 // #80 PR #2: background poller for respawner-result markers. Fast
 // 5s ticks for the first 2 min after boot (catches markers landing
 // post-startup), then slow 30s thereafter.
@@ -289,6 +309,7 @@ const shutdown = async () => {
     stopBackupScheduler();
     stopMarkerPoller();
     stopStatusReconciler();
+    stopMetricsSampler();
     stopCronScheduler();
     server.stop();
 

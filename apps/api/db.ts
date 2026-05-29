@@ -486,10 +486,8 @@ db.exec(`
     sampled_at_ms INTEGER NOT NULL,
     cpu_percent REAL,
     cpu_cores INTEGER,
-    mem_total_bytes INTEGER,
-    mem_used_bytes INTEGER,
-    disk_total_bytes INTEGER,
-    disk_used_bytes INTEGER,
+    mem_percent REAL,
+    disk_percent REAL,
     containers_running INTEGER,
     containers_total INTEGER
   );

@@ -153,7 +153,7 @@ async function handleStats(): Promise<Response> {
   }
 }
 
-async function getServerStats() {
+export async function getServerStats() {
   const hostname = tryExec("hostname") || "unknown";
   const os = getOsInfo();
   const uptime = getUptime();

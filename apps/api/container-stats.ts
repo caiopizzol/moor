@@ -172,6 +172,45 @@ export function sumBlockIo(payload: DockerStatsPayload): {
   return { read_bytes: read, write_bytes: write };
 }
 
+/** Raw, cumulative counters extracted from a stats payload for persistence
+ *  (#131). Unlike buildStatsResponse, which renders an instantaneous
+ *  cpu_percent from Docker's ~1s precpu delta, this keeps the cumulative CPU
+ *  counters so the history query can average CPU across the real inter-sample
+ *  interval, and keeps network/block as cumulative totals so the query
+ *  computes deltas/rates between consecutive samples. Memory is the same
+ *  cache-excluded gauge the live route reports. */
+export type RawCounterSample = {
+  cpu_total_ns: number;
+  cpu_system_ns: number;
+  online_cpus: number;
+  mem_bytes: number;
+  mem_limit_bytes: number;
+  net_rx_bytes: number;
+  net_tx_bytes: number;
+  blk_read_bytes: number;
+  blk_write_bytes: number;
+  pids: number;
+};
+
+export function extractRawSample(payload: DockerStatsPayload): RawCounterSample {
+  const mem = computeMemory(payload);
+  const net = sumNetwork(payload);
+  const blk = sumBlockIo(payload);
+  const cpu = payload.cpu_stats ?? {};
+  return {
+    cpu_total_ns: cpu.cpu_usage?.total_usage ?? 0,
+    cpu_system_ns: cpu.system_cpu_usage ?? 0,
+    online_cpus: cpu.online_cpus ?? cpu.cpu_usage?.percpu_usage?.length ?? 0,
+    mem_bytes: mem.bytes,
+    mem_limit_bytes: mem.limit_bytes,
+    net_rx_bytes: net.rx_bytes,
+    net_tx_bytes: net.tx_bytes,
+    blk_read_bytes: blk.read_bytes,
+    blk_write_bytes: blk.write_bytes,
+    pids: payload.pids_stats?.current ?? 0,
+  };
+}
+
 /** Compose the route's JSON response from a Docker stats payload. */
 export function buildStatsResponse(payload: DockerStatsPayload): StatsResponse {
   const mem = computeMemory(payload);
