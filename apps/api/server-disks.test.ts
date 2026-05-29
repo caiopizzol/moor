@@ -7,7 +7,7 @@ import { describe, expect, test } from "bun:test";
 
 // Dynamic import: routes/server pulls in db.ts (side-effect opens the DB), so
 // the in-memory path must be set first.
-const { parseDiskList } = await import("./routes/server");
+const { parseDiskList, parseMonitoredDisks, parseDfOne } = await import("./routes/server");
 
 // `df -B1 --output=source,size,used,pcent,target` shape (bytes), mirroring the
 // real host: root + a large data volume + pseudo filesystems + boot.
@@ -34,5 +34,29 @@ describe("parseDiskList", () => {
   test("empty / header-only input yields no disks", () => {
     expect(parseDiskList("")).toEqual([]);
     expect(parseDiskList("Filesystem 1B-blocks Used Use% Mounted on")).toEqual([]);
+  });
+});
+
+describe("parseMonitoredDisks (#140)", () => {
+  test("parses path|label entries, defaults label to path, skips blanks", () => {
+    expect(parseMonitoredDisks("/host/mnt/volume-hil-1|CNPJ data, /host/data , ,")).toEqual([
+      { path: "/host/mnt/volume-hil-1", label: "CNPJ data" },
+      { path: "/host/data", label: "/host/data" },
+    ]);
+  });
+  test("unset/empty → none", () => {
+    expect(parseMonitoredDisks(undefined)).toEqual([]);
+    expect(parseMonitoredDisks("")).toEqual([]);
+  });
+});
+
+describe("parseDfOne (#140)", () => {
+  test("parses size/used/pcent body, ignoring the header", () => {
+    const raw = "1B-blocks         Used Use%\n369435906048 180457364684  49%";
+    expect(parseDfOne(raw)).toEqual({ total: 369435906048, used: 180457364684, percent: 49 });
+  });
+  test("unmounted / empty → null", () => {
+    expect(parseDfOne("")).toBeNull();
+    expect(parseDfOne("1B-blocks Used Use%")).toBeNull();
   });
 });

@@ -370,6 +370,33 @@ services:
 
 What this is not: it is not live monitoring (use `moor_project_stats` for the current snapshot), and it is not a dashboard. Host-level samples are stored as percentages, not raw bytes. OOM is recorded from Docker's own `oom` event, not guessed from an exit code. Two known gaps: a container created before this feature shipped joins the event stream only after its next rebuild, and events that occur while moor itself is down are not backfilled.
 
+## Monitored disks
+
+The Server view's disk cards (and `moor stats` / `moor_stats`) report the filesystems moor can see. Because moor runs in a container, that's only what's mounted into it - its own data volume and the host root it sits on. A separate data volume (say a 344 GB disk holding your project databases) is invisible by default, which can make the host look emptier than it is.
+
+To report such a volume, bind-mount it read-only into the moor container and name it in `MOOR_MONITORED_DISKS`. In `docker-compose.yml`:
+
+```yaml
+services:
+  moor:
+    volumes:
+      - moor-data:/app/data
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /mnt/volume-hil-1:/host/mnt/volume-hil-1:ro
+    environment:
+      - MOOR_MONITORED_DISKS
+```
+
+Then set the env (the value maps the in-container path to a friendly label):
+
+```bash
+MOOR_MONITORED_DISKS=/host/mnt/volume-hil-1|CNPJ data
+```
+
+Comma-separate multiple entries; the label after `|` is optional (defaults to the path). Each monitored disk shows up alongside the container-visible ones, labeled. moor only ever reads these paths to run `df` - the mount is read-only, and only the paths you list are looked at (no wholesale host-filesystem access). A configured path that isn't actually mounted in is skipped rather than shown as empty.
+
+Changing the mount needs the container recreated (`docker compose up -d --no-deps moor`); a plain env change alone won't add the bind mount.
+
 ## Self-update and Compose override files
 
 `moor_update_apply` replays Compose commands inside a transient respawner container with the operator's compose `working_dir` bind-mounted **read-only at the same absolute path**. Any `-f` override file used at `docker compose up` time is recorded in Compose's `com.docker.compose.project.config_files` label, and the respawner reads that label to reproduce the same `-f` stack.

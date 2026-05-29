@@ -12,6 +12,10 @@ services:
     volumes:
       - moor-data:/app/data
       - /var/run/docker.sock:/var/run/docker.sock
+      # Optional (#140). moor runs in a container, so its Disk card only sees
+      # filesystems mounted in here. To report a separate host data volume,
+      # bind-mount it read-only and list it in MOOR_MONITORED_DISKS below:
+      # - /mnt/your-data-volume:/host/mnt/your-data-volume:ro
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "bun", "-e", "fetch('http://localhost:3000/api/health').then(r=>{if(!r.ok)process.exit(1)})"]
@@ -44,6 +48,12 @@ services:
       # Accepted range: ~0.017 hours (1 minute) to 596 hours (~24 days).
       # See docs/self-hosting.md.
       - MOOR_DB_BACKUP_INTERVAL_HOURS
+      # Optional (#140). Report host data volumes the moor container can't
+      # otherwise see. Comma-separated `containerPath|label` entries, where
+      # containerPath is a read-only bind mount declared above, e.g.
+      # MOOR_MONITORED_DISKS=/host/mnt/your-data-volume|Project data
+      # See docs/self-hosting.md.
+      - MOOR_MONITORED_DISKS
 
   caddy:
     image: caddy:2-alpine

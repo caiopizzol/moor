@@ -7,7 +7,7 @@ type ServerStats = {
   cpu: { percent: number; cores: number };
   memory: { total: string; used: string; percent: number };
   disk: { total: string; used: string; percent: number };
-  disks?: { mount: string; total: string; used: string; percent: number }[];
+  disks?: { mount: string; total: string; used: string; percent: number; label?: string }[];
   containers: { running: number; total: number };
 };
 
@@ -27,8 +27,9 @@ export async function statsCommand() {
   console.log(`Memory:      ${s.memory.used} / ${s.memory.total} (${s.memory.percent}%)`);
   const disks = s.disks?.length ? s.disks : [{ mount: "/", ...s.disk }];
   disks.forEach((d, i) => {
-    const label = i === 0 ? "Disk:" : "     ";
-    console.log(`${label}        ${d.mount}  ${d.used} / ${d.total} (${d.percent}%)`);
+    const prefix = i === 0 ? "Disk:" : "     ";
+    const name = d.label ? `${d.label} (${d.mount})` : d.mount;
+    console.log(`${prefix}        ${name}  ${d.used} / ${d.total} (${d.percent}%)`);
   });
   console.log(`Containers:  ${s.containers.running} running / ${s.containers.total} total`);
 }

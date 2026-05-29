@@ -587,7 +587,7 @@ server.registerTool(
       load?: { one_min: number; cores: number; normalized_percent: number };
       memory: { total: string; used: string; percent: number };
       disk: { total: string; used: string; percent: number };
-      disks?: { mount: string; total: string; used: string; percent: number }[];
+      disks?: { mount: string; total: string; used: string; percent: number; label?: string }[];
       containers: { running: number; total: number };
       docker?: {
         images: { bytes: number; reclaimable_bytes: number; count: number; unused_count: number };
@@ -615,7 +615,8 @@ server.registerTool(
     lines.push(`Memory: ${s.memory.used} / ${s.memory.total} (${s.memory.percent}%)`);
     const disks = s.disks?.length ? s.disks : [{ mount: "/", ...s.disk }];
     for (const d of disks) {
-      lines.push(`Disk ${d.mount}: ${d.used} / ${d.total} (${d.percent}%)`);
+      const name = d.label ? `${d.label} (${d.mount})` : `Disk ${d.mount}`;
+      lines.push(`${name}: ${d.used} / ${d.total} (${d.percent}%)`);
     }
     lines.push(`Containers: ${s.containers.running} running / ${s.containers.total} total`);
     if (s.docker) {
