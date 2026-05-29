@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type ContainerStats } from "../lib/api";
 
 // #138: live per-project resource stats. Polls the single-snapshot
@@ -17,13 +17,23 @@ function fmtBytes(bytes: number): string {
 export function ProjectStats({ projectId }: { projectId: number }) {
   const [stats, setStats] = useState<ContainerStats | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [updatedAt, setUpdatedAt] = useState<number | null>(null);
+  // Single-flight: /container-stats can block up to 10s on the Docker daemon,
+  // longer than the 4s poll — without this, a slow call would stack multiple
+  // in-flight requests from one open tab.
+  const inFlight = useRef(false);
 
   const load = useCallback(async () => {
+    if (inFlight.current) return;
+    inFlight.current = true;
     try {
       setStats(await api.projects.containerStats(projectId));
+      setUpdatedAt(Date.now());
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load stats");
+    } finally {
+      inFlight.current = false;
     }
   }, [projectId]);
 
@@ -71,12 +81,12 @@ export function ProjectStats({ projectId }: { projectId: number }) {
         </div>
       </div>
       <div className="server-stat">
-        <div className="server-stat-label">Network</div>
+        <div className="server-stat-label">Network (total)</div>
         <div className="server-stat-value">{fmtBytes(stats.network_rx_bytes)}</div>
         <div className="server-stat-sub">in &middot; out {fmtBytes(stats.network_tx_bytes)}</div>
       </div>
       <div className="server-stat">
-        <div className="server-stat-label">Block I/O</div>
+        <div className="server-stat-label">Block I/O (total)</div>
         <div className="server-stat-value">{fmtBytes(stats.block_read_bytes)}</div>
         <div className="server-stat-sub">
           read &middot; write {fmtBytes(stats.block_write_bytes)}
@@ -85,6 +95,18 @@ export function ProjectStats({ projectId }: { projectId: number }) {
       <div className="server-stat">
         <div className="server-stat-label">PIDs</div>
         <div className="server-stat-value">{stats.pids}</div>
+      </div>
+      <div
+        style={{
+          gridColumn: "1 / -1",
+          flexBasis: "100%",
+          fontSize: 11,
+          color: "#888",
+          marginTop: 4,
+        }}
+      >
+        Live snapshot{updatedAt ? ` · updated ${new Date(updatedAt).toLocaleTimeString()}` : ""}{" "}
+        &middot; network &amp; block I/O are cumulative since the container started
       </div>
     </div>
   );
