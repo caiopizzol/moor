@@ -310,6 +310,37 @@ export async function pullImageStreaming(
   if (pullError) throw new Error(pullError);
 }
 
+/** #134: run `start` for a just-created container, removing the container if it
+ *  throws. createAndStartContainer creates the container before this runs but
+ *  only persists container_id after it returns, so a network-attach or start
+ *  failure here would otherwise orphan a `Created` container that project
+ *  delete can't reap. Cleanup is best-effort and never masks the original
+ *  error — the start/connect failure is always what propagates. `remove` is
+ *  injectable for tests; production uses removeContainer (force DELETE,
+ *  404-tolerant). */
+export async function startOrCleanup(
+  id: string,
+  start: () => Promise<void>,
+  remove: (id: string) => Promise<void> = removeContainer,
+): Promise<void> {
+  try {
+    await start();
+  } catch (startErr) {
+    try {
+      await remove(id);
+      console.warn(
+        `[createContainer] removed orphaned container ${id.slice(0, 12)} after start/connect failure`,
+      );
+    } catch (cleanupErr) {
+      const m = cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr);
+      console.warn(
+        `[createContainer] could not remove container ${id.slice(0, 12)} after start/connect failure: ${m} (original error preserved)`,
+      );
+    }
+    throw startErr;
+  }
+}
+
 export async function createAndStartContainer(
   imageTag: string,
   name: string,
@@ -414,35 +445,43 @@ export async function createAndStartContainer(
     const msg = e instanceof Error ? e.message : String(e);
     console.warn(`[createContainer] not running under compose; skipping network attach: ${msg}`);
   }
-  if (underCompose) {
-    const networkName = await findDefaultNetworkName();
-    const connectRes = await dockerFetch(
-      `/v1.44/networks/${encodeURIComponent(networkName)}/connect`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ Container: Id }),
-      },
-    );
-    if (!connectRes.ok) {
-      const detail = await connectRes.text();
-      // Docker returns 403 with "endpoint with name X already exists" or
-      // "Container already attached" when the container is already on this
-      // network. Treat that case as success; everything else is a real error.
-      const alreadyConnected =
-        connectRes.status === 403 && /already|endpoint .* exists/i.test(detail);
-      if (!alreadyConnected) {
-        throw new Error(`Network connect failed (${connectRes.status}): ${detail}`);
+  // #134: the container now EXISTS in Docker, but container_id is only
+  // persisted on the project row AFTER this function returns. So any failure
+  // attaching the network or starting it must remove the orphan here —
+  // otherwise it lingers in `Created` state and project delete can't reap it
+  // (the row has container_id = NULL). Cleanup is best-effort and never masks
+  // the original failure.
+  await startOrCleanup(Id, async () => {
+    if (underCompose) {
+      const networkName = await findDefaultNetworkName();
+      const connectRes = await dockerFetch(
+        `/v1.44/networks/${encodeURIComponent(networkName)}/connect`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ Container: Id }),
+        },
+      );
+      if (!connectRes.ok) {
+        const detail = await connectRes.text();
+        // Docker returns 403 with "endpoint with name X already exists" or
+        // "Container already attached" when the container is already on this
+        // network. Treat that case as success; everything else is a real error.
+        const alreadyConnected =
+          connectRes.status === 403 && /already|endpoint .* exists/i.test(detail);
+        if (!alreadyConnected) {
+          throw new Error(`Network connect failed (${connectRes.status}): ${detail}`);
+        }
       }
+      console.log(`[createContainer] connected ${name} to ${networkName}`);
     }
-    console.log(`[createContainer] connected ${name} to ${networkName}`);
-  }
 
-  const startRes = await dockerFetch(`/v1.44/containers/${Id}/start`, { method: "POST" });
-  if (!startRes.ok && startRes.status !== 304) {
-    const err = await startRes.text();
-    throw new Error(`Container start failed: ${err}`);
-  }
+    const startRes = await dockerFetch(`/v1.44/containers/${Id}/start`, { method: "POST" });
+    if (!startRes.ok && startRes.status !== 304) {
+      const err = await startRes.text();
+      throw new Error(`Container start failed: ${err}`);
+    }
+  });
 
   return Id;
 }
