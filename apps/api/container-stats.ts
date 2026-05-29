@@ -103,6 +103,16 @@ export function computeCpuPercent(payload: DockerStatsPayload): number {
   const cpuDelta = (cur.cpu_usage?.total_usage ?? 0) - (pre.cpu_usage?.total_usage ?? 0);
   const sysDelta = (cur.system_cpu_usage ?? 0) - (pre.system_cpu_usage ?? 0);
   const cpus = cur.online_cpus ?? cur.cpu_usage?.percpu_usage?.length ?? 0;
+  return cpuPercentFromDeltas(cpuDelta, sysDelta, cpus);
+}
+
+/** Container CPU percent from a (cpu, system) usage-counter delta pair, per the
+ *  Docker formula. Returns 0 when the deltas can't yield a meaningful number
+ *  (no prior sample, idle, missing cpu count). Shared by the live route
+ *  (precpu delta) and the history query (inter-sample delta) — the math is
+ *  identical across any interval since system_cpu_usage is cumulative host
+ *  CPU time. */
+export function cpuPercentFromDeltas(cpuDelta: number, sysDelta: number, cpus: number): number {
   if (cpuDelta <= 0 || sysDelta <= 0 || cpus <= 0) return 0;
   const pct = (cpuDelta / sysDelta) * cpus * 100;
   return Math.round(pct * 100) / 100;
