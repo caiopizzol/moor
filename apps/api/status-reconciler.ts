@@ -14,6 +14,7 @@
 
 import db from "./db";
 import { SOCKET as SOCKET_PATH } from "./docker";
+import { appendProjectEvent } from "./project-events";
 
 const INTERVAL_MS = 30_000;
 
@@ -77,12 +78,64 @@ export const realInspect: Inspector = async (containerId: string) => {
   }
 };
 
-function writeLiveOk(projectId: number, liveStatus: LiveStatus, liveExitCode: number | null): void {
+/** Centralized live-state writer. Writes the live_* columns (Docker truth)
+ *  and appends a poll-source project_events row when live_status actually
+ *  changes. This is the poll-derived backstop to the Docker /events consumer:
+ *  if an action path (requireLiveContainer) or a one-off observer (moor_logs
+ *  noticing a 404) sees a transition before the 30s reconciler does, the edge
+ *  is still recorded — closing the "event observed first, reconciler sees no
+ *  edge" hole. Never touches projects.status (#71 dual-field semantic).
+ *
+ *  Intentionally distinct from setProjectRecordedStatus: live_* is Docker
+ *  truth, status is moor's recorded action state, and their drift is itself
+ *  diagnostic signal — they must not collapse into one writer. */
+export function setProjectLiveState(
+  projectId: number,
+  containerId: string | null,
+  liveStatus: LiveStatus,
+  liveExitCode: number | null,
+): void {
+  const prev = db.query("SELECT live_status FROM projects WHERE id = ?").get(projectId) as {
+    live_status: string | null;
+  } | null;
   db.query(
     `UPDATE projects
      SET live_status = ?, live_exit_code = ?, live_checked_at = datetime('now'), live_error = NULL
      WHERE id = ?`,
   ).run(liveStatus, liveExitCode, projectId);
+  if (prev && prev.live_status !== liveStatus) {
+    appendProjectEvent({
+      projectId,
+      containerId,
+      source: "poll",
+      action: `live:${liveStatus}`,
+      occurredAtMs: Date.now(),
+    });
+  }
+}
+
+/** Centralized recorded-status writer. projects.status is moor's recorded
+ *  action state (#71); this writes the column and appends a moor_action event
+ *  on change, through the same project_events path as live-state edges. Kept
+ *  semantically separate from setProjectLiveState on purpose (see its note). */
+export function setProjectRecordedStatus(
+  projectId: number,
+  status: string,
+  containerId: string | null = null,
+): void {
+  const prev = db.query("SELECT status FROM projects WHERE id = ?").get(projectId) as {
+    status: string | null;
+  } | null;
+  db.query("UPDATE projects SET status = ? WHERE id = ?").run(status, projectId);
+  if (prev && prev.status !== status) {
+    appendProjectEvent({
+      projectId,
+      containerId,
+      source: "moor_action",
+      action: `status:${status}`,
+      occurredAtMs: Date.now(),
+    });
+  }
 }
 
 function writeLiveError(projectId: number, message: string): void {
@@ -116,14 +169,14 @@ export async function reconcileOnce(inspect: Inspector = realInspect): Promise<v
       const result = await inspect(row.container_id);
       if (!result.ok) {
         if (result.kind === "missing") {
-          writeLiveOk(row.id, "missing", null);
+          setProjectLiveState(row.id, row.container_id, "missing", null);
         } else {
           writeLiveError(row.id, result.message);
         }
         continue;
       }
       const parsed = parseContainerState(result.state);
-      writeLiveOk(row.id, parsed.live_status, parsed.live_exit_code);
+      setProjectLiveState(row.id, row.container_id, parsed.live_status, parsed.live_exit_code);
     }
   } finally {
     cycleRunning = false;
@@ -181,14 +234,14 @@ export async function requireLiveContainer(
   const result = await inspect(project.container_id);
   if (!result.ok) {
     if (result.kind === "missing") {
-      writeLiveOk(project.id, "missing", null);
+      setProjectLiveState(project.id, project.container_id, "missing", null);
       return { ok: false, reason: "missing" };
     }
     writeLiveError(project.id, result.message);
     return { ok: false, reason: "docker_error", message: result.message };
   }
   const parsed = parseContainerState(result.state);
-  writeLiveOk(project.id, parsed.live_status, parsed.live_exit_code);
+  setProjectLiveState(project.id, project.container_id, parsed.live_status, parsed.live_exit_code);
   if (parsed.live_status === "running") return { ok: true };
   return { ok: false, reason: "not_running", live_status: parsed.live_status };
 }
@@ -252,6 +305,6 @@ export async function reconcileProjectStatusAfterInterrupt(
     const result = await inspect(containerId);
     if (result.ok && result.state.Running) next = "running";
   }
-  db.query("UPDATE projects SET status = ? WHERE id = ?").run(next, projectId);
+  setProjectRecordedStatus(projectId, next, containerId);
   return next;
 }

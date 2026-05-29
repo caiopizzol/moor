@@ -21,6 +21,8 @@ import {
   liveRequireErrorResponse,
   reconcileProjectStatusAfterInterrupt,
   requireLiveContainer,
+  setProjectLiveState,
+  setProjectRecordedStatus,
 } from "../status-reconciler";
 import { getProjectVolumes } from "./volumes";
 
@@ -181,7 +183,7 @@ async function handleRun(req: Request, project: Project): Promise<Response> {
           ? " anonymous-clone"
           : ""),
   );
-  db.query(`UPDATE projects SET status = ? WHERE id = ?`).run(status, project.id);
+  setProjectRecordedStatus(project.id, status, project.container_id);
 
   // #65: one deploy run row covers build/pull + port detection + container
   // start. INSERT before the build starts so moor_run_get can tail mid-build;
@@ -262,10 +264,8 @@ async function handleRun(req: Request, project: Project): Promise<Response> {
         // AbortController on the build/pull fetch won't reach them.
         run.markStreamingDone();
 
-        db.query("UPDATE projects SET image_tag = ?, status = 'stopped' WHERE id = ?").run(
-          tag,
-          project.id,
-        );
+        db.query("UPDATE projects SET image_tag = ? WHERE id = ?").run(tag, project.id);
+        setProjectRecordedStatus(project.id, "stopped", project.container_id);
 
         log(`\n${verb} completed in ${elapsed}s\n`);
 
@@ -294,7 +294,7 @@ async function handleRun(req: Request, project: Project): Promise<Response> {
         console.error(`[run] FAILED: ${message}`);
         run.appendStderr(`${message}\n`);
         run.finalize(1);
-        db.query("UPDATE projects SET status = 'error' WHERE id = ?").run(project.id);
+        setProjectRecordedStatus(project.id, "error", project.container_id);
         for (const ev of buildErrorEvents(message)) send(ev.event, ev.data);
         safeClose();
         return;
@@ -320,10 +320,8 @@ async function handleRun(req: Request, project: Project): Promise<Response> {
         );
         console.log(`[run] container started: ${containerId}`);
 
-        db.query("UPDATE projects SET container_id = ?, status = 'running' WHERE id = ?").run(
-          containerId,
-          project.id,
-        );
+        db.query("UPDATE projects SET container_id = ? WHERE id = ?").run(containerId, project.id);
+        setProjectRecordedStatus(project.id, "running", containerId);
 
         if (project.domain) {
           await syncCaddyRoutes();
@@ -333,7 +331,7 @@ async function handleRun(req: Request, project: Project): Promise<Response> {
         run.finalize(0);
         send("done", "Container started");
       } catch (e) {
-        db.query("UPDATE projects SET status = 'error' WHERE id = ?").run(project.id);
+        setProjectRecordedStatus(project.id, "error", project.container_id);
         const message = e instanceof Error ? e.message : "Unknown error";
         console.error(`[run] CONTAINER START FAILED: ${message}`);
         run.appendStderr(`${message}\n`);
@@ -411,11 +409,7 @@ async function handleLogs(project: Project, url: URL): Promise<Response> {
   // moor_status could keep showing stale live_status='running' even
   // though moor_logs just observed a 404.
   if (!result.ok && result.kind === "missing") {
-    db.query(
-      `UPDATE projects SET live_status = 'missing', live_exit_code = NULL,
-                           live_checked_at = datetime('now'), live_error = NULL
-       WHERE id = ?`,
-    ).run(project.id);
+    setProjectLiveState(project.id, project.container_id, "missing", null);
   }
 
   const live = db.query("SELECT live_status FROM projects WHERE id = ?").get(project.id) as {
@@ -536,7 +530,7 @@ async function handleBuild(project: Project): Promise<Response> {
         ? `source_credential_id=${used_credential_id}`
         : "anonymous-clone"),
   );
-  db.query("UPDATE projects SET status = 'building' WHERE id = ?").run(project.id);
+  setProjectRecordedStatus(project.id, "building", project.container_id);
 
   // /build is the legacy non-SSE path used by api.projects.build in the web
   // wrapper. We still wire it through BuildRun + buildImageStreaming so the
@@ -557,10 +551,8 @@ async function handleBuild(project: Project): Promise<Response> {
       run.abort.signal,
     );
     run.markStreamingDone();
-    db.query("UPDATE projects SET image_tag = ?, status = 'stopped' WHERE id = ?").run(
-      tag,
-      project.id,
-    );
+    db.query("UPDATE projects SET image_tag = ? WHERE id = ?").run(tag, project.id);
+    setProjectRecordedStatus(project.id, "stopped", project.container_id);
 
     // Auto-detect exposed ports from image (always re-detect on rebuild)
     await autoDetectPorts(project.id, tag, true);
@@ -576,7 +568,7 @@ async function handleBuild(project: Project): Promise<Response> {
       await reconcileProjectStatusAfterInterrupt(project.id, project.container_id);
       return new Response("cancelled by user", { status: 499 });
     }
-    db.query("UPDATE projects SET status = 'error' WHERE id = ?").run(project.id);
+    setProjectRecordedStatus(project.id, "error", project.container_id);
     const rawMessage = e instanceof Error ? e.message : "Unknown error";
     const message = redactCredentialsInText(rawMessage);
     console.error(`[build] FAILED: ${message}`);
@@ -619,10 +611,8 @@ async function handleStart(project: Project): Promise<Response> {
       getProjectVolumes(project.id),
     );
     console.log(`[start] container started: ${containerId}`);
-    db.query("UPDATE projects SET container_id = ?, status = 'running' WHERE id = ?").run(
-      containerId,
-      project.id,
-    );
+    db.query("UPDATE projects SET container_id = ? WHERE id = ?").run(containerId, project.id);
+    setProjectRecordedStatus(project.id, "running", containerId);
 
     if (project.domain) {
       await syncCaddyRoutes();
@@ -630,7 +620,7 @@ async function handleStart(project: Project): Promise<Response> {
 
     return Response.json({ message: "Container started" });
   } catch (e) {
-    db.query("UPDATE projects SET status = 'error' WHERE id = ?").run(project.id);
+    setProjectRecordedStatus(project.id, "error", project.container_id);
     const message = e instanceof Error ? e.message : "Unknown error";
     console.error(`[start] FAILED: ${message}`);
     return new Response(message, { status: 500 });
@@ -641,7 +631,7 @@ async function handleStop(project: Project): Promise<Response> {
   console.log(`[stop] project=${project.name} container=${project.container_id}`);
   if (!project.container_id) {
     console.log("[stop] no container — marking as stopped");
-    db.query("UPDATE projects SET status = 'stopped' WHERE id = ?").run(project.id);
+    setProjectRecordedStatus(project.id, "stopped", project.container_id);
     return Response.json({ message: "Container stopped" });
   }
 
@@ -653,6 +643,6 @@ async function handleStop(project: Project): Promise<Response> {
     console.error(`[stop] error during stop (marking as stopped anyway): ${message}`);
   }
 
-  db.query("UPDATE projects SET status = 'stopped' WHERE id = ?").run(project.id);
+  setProjectRecordedStatus(project.id, "stopped", project.container_id);
   return Response.json({ message: "Container stopped" });
 }
