@@ -299,7 +299,79 @@ function getDiskInfo(): { total: string; used: string; percent: number } {
 // #137: the single-root `disk` above hides additional mounted volumes (e.g. a
 // separate data disk holding project databases that can be near-full while
 // root looks empty). Report every real filesystem instead.
-export type DiskFs = { mount: string; total: string; used: string; percent: number };
+export type DiskFs = {
+  mount: string;
+  total: string;
+  used: string;
+  percent: number;
+  label?: string;
+};
+
+// #140: moor runs in a container, so the df-derived list above only sees
+// filesystems mounted INTO the container — it can't see a host data volume
+// that isn't bind-mounted in. MOOR_MONITORED_DISKS lets an operator bind-mount
+// specific host paths read-only and have moor report them with friendly
+// labels. Format: comma-separated `containerPath` entries, each optionally
+// `|label` (e.g. `/host/mnt/volume-hil-1|CNPJ data`).
+export type MonitoredDiskConfig = { path: string; label: string };
+
+export function parseMonitoredDisks(raw: string | undefined): MonitoredDiskConfig[] {
+  if (!raw) return [];
+  const out: MonitoredDiskConfig[] = [];
+  for (const entry of raw.split(",")) {
+    const trimmed = entry.trim();
+    if (!trimmed) continue;
+    const bar = trimmed.indexOf("|");
+    const path = (bar >= 0 ? trimmed.slice(0, bar) : trimmed).trim();
+    const label = (bar >= 0 ? trimmed.slice(bar + 1).trim() : "") || path;
+    if (path) out.push({ path, label });
+  }
+  return out;
+}
+
+/** Pure: parse a `df -B1 --output=size,used,pcent <path>` body into totals.
+ *  Returns null when the path isn't a mounted filesystem (df failed / empty). */
+export function parseDfOne(raw: string): { total: number; used: number; percent: number } | null {
+  for (const line of raw.trim().split("\n")) {
+    const p = line.trim().split(/\s+/);
+    const total = Number(p[0]);
+    const used = Number(p[1]);
+    const pct = Number((p[2] ?? "").replace("%", ""));
+    if (Number.isFinite(total) && total > 0) {
+      return {
+        total,
+        used,
+        percent: Number.isFinite(pct) && pct > 0 ? pct : Math.round((used / total) * 100),
+      };
+    }
+  }
+  return null;
+}
+
+/** A monitored path reaches a shell, so require an absolute path of plain
+ *  characters. This blocks injection AND option-shaped values like `-h` (which
+ *  df would treat as a flag). The `--` in the df command is a second guard. */
+export function isSafeMonitoredPath(path: string): boolean {
+  return path.startsWith("/") && /^[A-Za-z0-9_./-]+$/.test(path);
+}
+
+function getMonitoredDisks(): DiskFs[] {
+  const out: DiskFs[] = [];
+  for (const cfg of parseMonitoredDisks(process.env.MOOR_MONITORED_DISKS)) {
+    if (!isSafeMonitoredPath(cfg.path)) continue;
+    const raw = tryExec(`df -B1 --output=size,used,pcent -- ${cfg.path} 2>/dev/null`);
+    const d = raw ? parseDfOne(raw) : null;
+    if (!d) continue; // not mounted into the container — skip rather than show a phantom
+    out.push({
+      mount: cfg.path,
+      label: cfg.label,
+      total: formatBytes(d.total),
+      used: formatBytes(d.used),
+      percent: d.percent,
+    });
+  }
+  return out;
+}
 
 /** Pure: parse `df -B1 --output=source,size,used,pcent,target` into real
  *  filesystems. Skips pseudo filesystems (tmpfs/overlay/devtmpfs — their
@@ -329,12 +401,13 @@ export function parseDiskList(raw: string): DiskFs[] {
 
 function getAllDisks(): DiskFs[] {
   const raw = tryExec("df -B1 --output=source,size,used,pcent,target 2>/dev/null");
-  const list = raw ? parseDiskList(raw) : [];
-  if (list.length > 0) return list;
+  const visible = raw ? parseDiskList(raw) : [];
   // df --output unsupported (older coreutils / non-Linux dev host): fall back
   // to the root-only figure so the card still shows something.
-  const root = getDiskInfo();
-  return [{ mount: "/", total: root.total, used: root.used, percent: root.percent }];
+  const base = visible.length > 0 ? visible : [{ mount: "/", ...getDiskInfo() } satisfies DiskFs];
+  // Append operator-configured host volumes (#140) that the container can't
+  // otherwise see.
+  return [...base, ...getMonitoredDisks()];
 }
 
 async function getContainerInfo(): Promise<{ running: number; total: number }> {

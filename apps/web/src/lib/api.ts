@@ -268,7 +268,7 @@ export const api = {
         cpu: { percent: number; cores: number };
         memory: { total: string; used: string; percent: number };
         disk: { total: string; used: string; percent: number };
-        disks?: { mount: string; total: string; used: string; percent: number }[];
+        disks?: { mount: string; total: string; used: string; percent: number; label?: string }[];
         containers: { running: number; total: number };
       }>("/api/server/stats"),
   },
