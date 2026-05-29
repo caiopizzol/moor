@@ -44,8 +44,9 @@ test("returns derived samples + events + summary for the window", async () => {
   ).run(id);
 
   const res = await call(`/api/projects/${id}/stats/history?from=0&to=100000`);
-  expect(res?.status).toBe(200);
-  const body = (await res!.json()) as {
+  if (!res) throw new Error("expected a response from the history route");
+  expect(res.status).toBe(200);
+  const body = (await res.json()) as {
     from_ms: number;
     to_ms: number;
     samples: Array<{ cpu_percent: number | null }>;
