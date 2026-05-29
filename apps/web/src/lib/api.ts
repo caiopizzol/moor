@@ -103,6 +103,21 @@ export type ProjectHistory = {
   };
 };
 
+// #138: live per-project container stats (single Docker snapshot). running=false
+// (stopped / never started) comes back with zeroed counters, not a 404.
+export type ContainerStats = {
+  running: boolean;
+  cpu_percent: number;
+  memory_bytes: number;
+  memory_limit_bytes: number;
+  memory_percent: number;
+  network_rx_bytes: number;
+  network_tx_bytes: number;
+  block_read_bytes: number;
+  block_write_bytes: number;
+  pids: number;
+};
+
 async function request<T>(path: string, opts?: RequestInit): Promise<T> {
   const res = await fetch(path, {
     headers: { "Content-Type": "application/json" },
@@ -157,6 +172,7 @@ export const api = {
       request<{ message: string }>(`/api/projects/${id}/run`, { method: "POST" }),
     history: (id: number, fromMs: number, toMs: number) =>
       request<ProjectHistory>(`/api/projects/${id}/stats/history?from=${fromMs}&to=${toMs}`),
+    containerStats: (id: number) => request<ContainerStats>(`/api/projects/${id}/container-stats`),
     runStream: async (
       id: number,
       onLog: (text: string) => void,
@@ -252,6 +268,7 @@ export const api = {
         cpu: { percent: number; cores: number };
         memory: { total: string; used: string; percent: number };
         disk: { total: string; used: string; percent: number };
+        disks?: { mount: string; total: string; used: string; percent: number }[];
         containers: { running: number; total: number };
       }>("/api/server/stats"),
   },

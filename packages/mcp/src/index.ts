@@ -574,7 +574,7 @@ server.registerTool(
   {
     title: "Server Stats",
     description:
-      "Get server resource usage: load, memory, root disk, Docker disk by category (images/containers/volumes/build cache) with reclaimable bytes, and container counts. Note: cpu.percent is load-derived (load avg ÷ cores), not instantaneous CPU; use the `load` field for the same signal with explicit naming.",
+      "Get server resource usage: load, memory, per-filesystem disk usage (every real mount, not just root — so a separate data volume can't hide), Docker disk by category (images/containers/volumes/build cache) with reclaimable bytes, and container counts. Note: cpu.percent is load-derived (load avg ÷ cores), not instantaneous CPU; use the `load` field for the same signal with explicit naming.",
   },
   async () => {
     const res = await apiGet("/api/server/stats");
@@ -587,6 +587,7 @@ server.registerTool(
       load?: { one_min: number; cores: number; normalized_percent: number };
       memory: { total: string; used: string; percent: number };
       disk: { total: string; used: string; percent: number };
+      disks?: { mount: string; total: string; used: string; percent: number }[];
       containers: { running: number; total: number };
       docker?: {
         images: { bytes: number; reclaimable_bytes: number; count: number; unused_count: number };
@@ -611,11 +612,12 @@ server.registerTool(
         `Load (1m): ${s.load.one_min.toFixed(2)} on ${s.load.cores} cores (${s.load.normalized_percent}%)`,
       );
     }
-    lines.push(
-      `Memory: ${s.memory.used} / ${s.memory.total} (${s.memory.percent}%)`,
-      `Disk (root /): ${s.disk.used} / ${s.disk.total} (${s.disk.percent}%)`,
-      `Containers: ${s.containers.running} running / ${s.containers.total} total`,
-    );
+    lines.push(`Memory: ${s.memory.used} / ${s.memory.total} (${s.memory.percent}%)`);
+    const disks = s.disks?.length ? s.disks : [{ mount: "/", ...s.disk }];
+    for (const d of disks) {
+      lines.push(`Disk ${d.mount}: ${d.used} / ${d.total} (${d.percent}%)`);
+    }
+    lines.push(`Containers: ${s.containers.running} running / ${s.containers.total} total`);
     if (s.docker) {
       const d = s.docker;
       lines.push(

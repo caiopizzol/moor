@@ -9,6 +9,9 @@ type Stats = {
   cpu: { percent: number; cores: number };
   memory: { total: string; used: string; percent: number };
   disk: { total: string; used: string; percent: number };
+  // #137: every real filesystem, not just root. Falls back to [disk] if a
+  // pre-#137 API doesn't send it.
+  disks?: { mount: string; total: string; used: string; percent: number }[];
   containers: { running: number; total: number };
 };
 
@@ -109,14 +112,18 @@ export function ServerView() {
               <div className="server-stat-fill" style={{ width: `${stats.memory.percent}%` }} />
             </div>
           </div>
-          <div className="server-stat">
-            <div className="server-stat-label">Disk</div>
-            <div className="server-stat-value">{stats.disk.used}</div>
-            <div className="server-stat-sub">of {stats.disk.total}</div>
-            <div className="server-stat-bar">
-              <div className="server-stat-fill" style={{ width: `${stats.disk.percent}%` }} />
+          {(stats.disks?.length ? stats.disks : [{ mount: "/", ...stats.disk }]).map((d) => (
+            <div className="server-stat" key={d.mount}>
+              <div className="server-stat-label">Disk {d.mount}</div>
+              <div className="server-stat-value">{d.used}</div>
+              <div className="server-stat-sub">
+                of {d.total} &middot; {d.percent}%
+              </div>
+              <div className="server-stat-bar">
+                <div className="server-stat-fill" style={{ width: `${d.percent}%` }} />
+              </div>
             </div>
-          </div>
+          ))}
           <div className="server-stat">
             <div className="server-stat-label">Containers</div>
             <div className="server-stat-value">
