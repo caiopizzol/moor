@@ -15,6 +15,7 @@ import { interruptActiveRuns, startCronScheduler, stopCronScheduler } from "./cr
 // Initialize DB (side-effect import runs migrations)
 import db from "./db";
 import { startBackupScheduler, stopBackupScheduler } from "./db-backup";
+import { startDockerEventConsumer, stopDockerEventConsumer } from "./docker-events";
 import { maybeAutoClearForBoot } from "./drain";
 import { interruptActiveExecRuns } from "./exec-async";
 import { hostTerminalHandlers, isHostTerminal, upgradeHostTerminal } from "./host-terminal";
@@ -272,6 +273,9 @@ startMetricsSampler(async (): Promise<HostSample | null> => {
     return null;
   }
 });
+// #131: Docker /events consumer — primary lifecycle-event source (the poll is
+// the backstop). Self-reconnecting; safe to start unconditionally.
+startDockerEventConsumer();
 // #80 PR #2: background poller for respawner-result markers. Fast
 // 5s ticks for the first 2 min after boot (catches markers landing
 // post-startup), then slow 30s thereafter.
@@ -310,6 +314,7 @@ const shutdown = async () => {
     stopMarkerPoller();
     stopStatusReconciler();
     stopMetricsSampler();
+    stopDockerEventConsumer();
     stopCronScheduler();
     server.stop();
 
