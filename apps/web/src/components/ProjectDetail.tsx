@@ -4,6 +4,7 @@ import { BuildOutput } from "./BuildOutput";
 import { ContainerLogs } from "./ContainerLogs";
 import { CronJobs } from "./CronJobs";
 import { EnvVars } from "./EnvVars";
+import { ProjectHistory } from "./ProjectHistory";
 import { Terminal } from "./Terminal";
 
 type Props = {
@@ -13,7 +14,7 @@ type Props = {
   onDelete: () => void;
 };
 
-type Tab = "build" | "logs" | "terminal" | "env" | "cron";
+type Tab = "build" | "logs" | "terminal" | "env" | "cron" | "history";
 type Action = null | "stopping" | "restarting" | "rebuilding" | "building";
 
 function formatElapsed(iso: string) {
@@ -375,6 +376,14 @@ export function ProjectDetail({ project, onUpdate, onEdit, onDelete }: Props) {
           >
             Cron
           </button>
+
+          <button
+            type="button"
+            className={`log-tab ${tab === "history" ? "active" : ""}`}
+            onClick={() => setTab("history")}
+          >
+            History
+          </button>
         </div>
 
         <div className="tab-panel">
@@ -389,6 +398,7 @@ export function ProjectDetail({ project, onUpdate, onEdit, onDelete }: Props) {
           {tab === "terminal" && <Terminal projectId={project.id} running={isRunning} />}
           {tab === "env" && <EnvVars projectId={project.id} />}
           {tab === "cron" && <CronJobs projectId={project.id} />}
+          {tab === "history" && <ProjectHistory projectId={project.id} />}
         </div>
       </div>
     </div>

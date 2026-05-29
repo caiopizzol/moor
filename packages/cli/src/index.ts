@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { envCommand } from "./commands/env";
 import { execCommand } from "./commands/exec";
+import { historyCommand } from "./commands/history";
 import { logsCommand } from "./commands/logs";
 import { mcpCommand } from "./commands/mcp";
 import { rebuildCommand } from "./commands/rebuild";
@@ -34,6 +35,7 @@ Commands:
   env list <project>              List environment variables
   env set <project> K=V [K=V ...] Set environment variables
   stats                           Show server resource usage
+  history <project> [--hours N]   Stored resource history + events (default 24h)
   mcp config --client <name>      Generate MCP client config snippet
 
 Environment:
@@ -65,6 +67,9 @@ switch (command) {
     break;
   case "stats":
     await statsCommand();
+    break;
+  case "history":
+    await historyCommand(args.slice(1));
     break;
   case "mcp":
     mcpCommand(args.slice(1));

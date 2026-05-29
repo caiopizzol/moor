@@ -60,6 +60,49 @@ export type Run = {
   cron_command?: string;
 };
 
+// #131 project observability history. Resource samples derived from raw
+// counters at query time (CPU averaged per interval; network/block as rates),
+// plus lifecycle events. Null metric fields mean the container wasn't running
+// at that sample (an honest gap, not a zero).
+export type HistorySample = {
+  sampled_at_ms: number;
+  status: string;
+  cpu_percent: number | null;
+  mem_bytes: number | null;
+  mem_percent: number | null;
+  net_rx_rate: number | null;
+  net_tx_rate: number | null;
+  blk_read_rate: number | null;
+  blk_write_rate: number | null;
+  pids: number | null;
+};
+
+export type HistoryEvent = {
+  occurred_at_ms: number;
+  source: string;
+  action: string;
+  container_id: string | null;
+  time_nano: number | null;
+};
+
+export type ProjectHistory = {
+  from_ms: number;
+  to_ms: number;
+  samples: HistorySample[];
+  events: HistoryEvent[];
+  summary: {
+    sample_count: number;
+    running_sample_count: number;
+    cpu_percent_avg: number | null;
+    cpu_percent_max: number | null;
+    mem_bytes_max: number | null;
+    net_rx_bytes_total: number;
+    net_tx_bytes_total: number;
+    event_counts: Record<string, number>;
+    has_gap: boolean;
+  };
+};
+
 async function request<T>(path: string, opts?: RequestInit): Promise<T> {
   const res = await fetch(path, {
     headers: { "Content-Type": "application/json" },
@@ -112,6 +155,8 @@ export const api = {
       request<{ message: string }>(`/api/projects/${id}/stop`, { method: "POST" }),
     run: (id: number) =>
       request<{ message: string }>(`/api/projects/${id}/run`, { method: "POST" }),
+    history: (id: number, fromMs: number, toMs: number) =>
+      request<ProjectHistory>(`/api/projects/${id}/stats/history?from=${fromMs}&to=${toMs}`),
     runStream: async (
       id: number,
       onLog: (text: string) => void,
