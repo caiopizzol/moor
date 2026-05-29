@@ -399,15 +399,22 @@ export function parseDiskList(raw: string): DiskFs[] {
   return out;
 }
 
+/** Merge container-visible filesystems with operator-configured monitored
+ *  disks, deduping by mount. A monitored path is bind-mounted in, so df also
+ *  lists it as a container-visible filesystem; the labeled monitored entry
+ *  wins over that unlabeled duplicate. Pure + exported for tests. */
+export function mergeDisks(visible: DiskFs[], monitored: DiskFs[]): DiskFs[] {
+  const monitoredMounts = new Set(monitored.map((d) => d.mount));
+  return [...visible.filter((d) => !monitoredMounts.has(d.mount)), ...monitored];
+}
+
 function getAllDisks(): DiskFs[] {
   const raw = tryExec("df -B1 --output=source,size,used,pcent,target 2>/dev/null");
   const visible = raw ? parseDiskList(raw) : [];
   // df --output unsupported (older coreutils / non-Linux dev host): fall back
   // to the root-only figure so the card still shows something.
   const base = visible.length > 0 ? visible : [{ mount: "/", ...getDiskInfo() } satisfies DiskFs];
-  // Append operator-configured host volumes (#140) that the container can't
-  // otherwise see.
-  return [...base, ...getMonitoredDisks()];
+  return mergeDisks(base, getMonitoredDisks());
 }
 
 async function getContainerInfo(): Promise<{ running: number; total: number }> {
