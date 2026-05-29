@@ -25,25 +25,56 @@ function formatBytes(bytes: number): string {
   return `${val.toFixed(val < 10 ? 1 : 0)} ${units[i]}`;
 }
 
+// Parse `<project> [--hours N]` in any order. Critically, `--hours`'s value is
+// consumed as the flag's argument, not mistaken for the project — so both
+// `history p --hours 1` and `history --hours 1 p` resolve `p` (the old
+// first-non-flag-token approach silently took the hours value as the project).
+// Also accepts `--hours=N`. Pure + exported for tests.
+export function parseHistoryArgs(args: string[]): {
+  project?: string;
+  hours: number;
+  error?: string;
+} {
+  let project: string | undefined;
+  let hours = 24;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === "--hours") {
+      const n = Number(args[++i]); // consume the next token as the value
+      if (!Number.isFinite(n) || n <= 0)
+        return { hours, error: "--hours must be a positive number" };
+      hours = n;
+    } else if (a.startsWith("--hours=")) {
+      const n = Number(a.slice("--hours=".length));
+      if (!Number.isFinite(n) || n <= 0)
+        return { hours, error: "--hours must be a positive number" };
+      hours = n;
+    } else if (!a.startsWith("-") && project === undefined) {
+      project = a;
+    }
+    // other flags / extra positionals are ignored
+  }
+  if (!project) return { hours, error: "missing project" };
+  return { project, hours };
+}
+
 // Stored resource history + lifecycle events for one project (not live — use
 // `moor stats` for the host snapshot). Mirrors the moor_project_history MCP
 // tool: a window summary plus recent events.
 export async function historyCommand(args: string[]) {
-  const projectName = args.find((a) => !a.startsWith("-"));
-  if (!projectName) {
-    console.error("Usage: moor history <project> [--hours N]");
-    process.exit(1);
-  }
-  const hoursIdx = args.indexOf("--hours");
-  const hours = hoursIdx >= 0 ? Number(args[hoursIdx + 1]) : 24;
-  if (!Number.isFinite(hours) || hours <= 0) {
-    console.error("--hours must be a positive number");
+  const parsed = parseHistoryArgs(args);
+  if (parsed.error || !parsed.project) {
+    console.error(
+      parsed.error && parsed.error !== "missing project"
+        ? parsed.error
+        : "Usage: moor history <project> [--hours N]",
+    );
     process.exit(1);
   }
 
-  const project = await resolveProject(projectName);
+  const project = await resolveProject(parsed.project);
   const to = Date.now();
-  const from = to - hours * 3_600_000;
+  const from = to - parsed.hours * 3_600_000;
   const res = await apiGet(`/api/projects/${project.id}/stats/history?from=${from}&to=${to}`);
   if (!res.ok) {
     console.error(`Failed to get history: ${res.status} ${await res.text()}`);
