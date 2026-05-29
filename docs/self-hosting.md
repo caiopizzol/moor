@@ -336,6 +336,40 @@ Accepted range and out-of-range handling are the same as the cleanup scheduler. 
 
 Restore (if ever needed): stop moor, replace `/app/data/moor.db` with a snapshot file, start moor again. Restore tooling beyond that is out of scope for now.
 
+## Project history
+
+`moor_project_stats` shows you a container right now. `moor_project_history` shows you what happened: resource usage over time plus the lifecycle events around it, so you can answer "what was going on with this project around 3pm yesterday?" without having been watching.
+
+This runs by default. No opt-in. Moor samples each project's container about once a minute (CPU, memory, network, block I/O, PIDs) and records lifecycle events as they happen, straight from the Docker event stream (start, die, oom, kill, stop, restart). It stores raw counters and derives the rest on read, so CPU is averaged across each interval and network/block come back as rates. A container that is not running records the gap honestly rather than a row of zeros.
+
+Read it from the MCP:
+
+```
+moor_project_history({ project: "<id-or-name>", hours: 24 })
+```
+
+Pass `from_ms` / `to_ms` (epoch milliseconds) for an exact window instead of a lookback. The same data is on the API at `GET /api/projects/:id/stats/history?from=&to=`. The response carries the per-sample series, the events, and a summary (CPU average and max, peak memory, total bytes in and out, a count of each event type). A gap warning means events may be incomplete for that window.
+
+Retention is enforced from the start, since a per-minute sample would otherwise grow without bound. The default keeps 30 days; tune it with:
+
+```bash
+MOOR_HISTORY_RETENTION_DAYS=30
+```
+
+Unset, empty, or invalid values fall back to 30 days. The prune never turns itself off. Samples and events both age out on this window, hourly.
+
+**Existing installs:** the default needs no configuration. To change it, the var also has to be declared in the moor service's `environment` block (Compose only forwards what's listed there; setting it in `.env` alone is not enough):
+
+```yaml
+services:
+  moor:
+    environment:
+      - MOOR_API_KEY
+      - MOOR_HISTORY_RETENTION_DAYS
+```
+
+What this is not: it is not live monitoring (use `moor_project_stats` for the current snapshot), and it is not a dashboard. Host-level samples are stored as percentages, not raw bytes. OOM is recorded from Docker's own `oom` event, not guessed from an exit code. Two known gaps: a container created before this feature shipped joins the event stream only after its next rebuild, and events that occur while moor itself is down are not backfilled.
+
 ## Self-update and Compose override files
 
 `moor_update_apply` replays Compose commands inside a transient respawner container with the operator's compose `working_dir` bind-mounted **read-only at the same absolute path**. Any `-f` override file used at `docker compose up` time is recorded in Compose's `com.docker.compose.project.config_files` label, and the respawner reads that label to reproduce the same `-f` stack.

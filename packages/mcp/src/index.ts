@@ -1124,6 +1124,71 @@ function formatBytes(bytes: number): string {
 }
 
 server.registerTool(
+  "moor_project_history",
+  {
+    title: "Project History (stored)",
+    description:
+      "Stored resource history + lifecycle events for one project over a time window — answers 'what was going on with this project around this case?' (NOT live: use moor_project_stats for a current snapshot). Resource samples are taken ~every minute; CPU is averaged across each interval and network/block reported as rates, both computed from raw counters and reset-aware. Events come from the Docker event stream (start/die/oom/kill/restart) and moor's own state changes. Window defaults to the last `hours` (24); pass from_ms/to_ms (epoch ms) for an exact window. A gap warning means events may be incomplete in that window.",
+    inputSchema: z.object({
+      project: z.string().describe("Project name or ID"),
+      hours: z
+        .number()
+        .optional()
+        .describe("Lookback window in hours (default 24). Ignored if from_ms/to_ms are given."),
+      from_ms: z.number().optional().describe("Window start, epoch milliseconds"),
+      to_ms: z.number().optional().describe("Window end, epoch milliseconds"),
+    }),
+  },
+  async ({ project, hours, from_ms, to_ms }) => {
+    const p = await resolveProject(project);
+    const to = to_ms ?? Date.now();
+    const from = from_ms ?? to - (hours ?? 24) * 3_600_000;
+    const res = await apiGet(`/api/projects/${p.id}/stats/history?from=${from}&to=${to}`);
+    if (!res.ok) throw new Error(`Failed: ${res.status} ${await res.text()}`);
+    const h = (await res.json()) as {
+      from_ms: number;
+      to_ms: number;
+      events: Array<{ occurred_at_ms: number; source: string; action: string }>;
+      summary: {
+        sample_count: number;
+        running_sample_count: number;
+        cpu_percent_avg: number | null;
+        cpu_percent_max: number | null;
+        mem_bytes_max: number | null;
+        net_rx_bytes_total: number;
+        net_tx_bytes_total: number;
+        event_counts: Record<string, number>;
+        has_gap: boolean;
+      };
+    };
+    const s = h.summary;
+    const windowH = Math.round(((h.to_ms - h.from_ms) / 3_600_000) * 10) / 10;
+    const lines = [
+      `${p.name} history — window ~${windowH}h${s.has_gap ? "  [⚠ event gap recorded: events may be incomplete]" : ""}`,
+      `Samples: ${s.sample_count} total, ${s.running_sample_count} running`,
+      `CPU: avg ${s.cpu_percent_avg ?? "n/a"}% / max ${s.cpu_percent_max ?? "n/a"}%`,
+      `Memory: max ${s.mem_bytes_max !== null ? formatBytes(s.mem_bytes_max) : "n/a"}`,
+      `Network: in ${formatBytes(s.net_rx_bytes_total)} / out ${formatBytes(s.net_tx_bytes_total)}`,
+    ];
+    const counts = Object.entries(s.event_counts);
+    if (counts.length > 0) {
+      lines.push(`Events: ${counts.map(([a, n]) => `${a} ${n}`).join(", ")}`);
+    }
+    const recent = h.events.slice(-8);
+    if (recent.length > 0) {
+      lines.push("Recent events:");
+      for (const e of recent) {
+        lines.push(`  ${new Date(e.occurred_at_ms).toISOString()} ${e.action} (${e.source})`);
+      }
+    }
+    if (s.sample_count === 0 && h.events.length === 0) {
+      lines.push("(no stored history in this window)");
+    }
+    return { content: [{ type: "text", text: lines.join("\n") }] };
+  },
+);
+
+server.registerTool(
   "moor_project_get",
   {
     title: "Get Project",

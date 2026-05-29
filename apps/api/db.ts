@@ -441,4 +441,75 @@ try {
   // Column already exists
 }
 
+// Project observability history. Three additive tables, all keyed on the
+// project so "what happened to this project around this case?" can be answered
+// from stored evidence rather than a live snapshot.
+//
+// Design notes that are load-bearing:
+//  - resource samples store RAW Docker counters, not pre-rendered percentages.
+//    CPU is the cumulative cpu_total_ns / cpu_system_ns pair so query-time can
+//    average CPU across the inter-sample interval; network/block are cumulative
+//    since container start, so query-time computes deltas/rates. Both must be
+//    segmented by container_id (Docker resets these counters when a container
+//    is recreated). NULL metric columns mean "not running at sample time" — we
+//    store a status-only row rather than fake zeros, so gaps stay honest.
+//  - project_events is append-only with provenance (docker_event | poll |
+//    moor_action). UNIQUE(container_id, action, time_nano) dedups Docker event
+//    replays after a /events reconnect (those rows carry a non-null time_nano);
+//    poll/action edges carry time_nano = NULL, and SQLite treats NULLs as
+//    distinct in a UNIQUE index, so every genuine state change still records.
+//  - host samples are a flat gauge snapshot; no counters to segment.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS project_resource_samples (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    container_id TEXT,
+    sampled_at_ms INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    cpu_total_ns INTEGER,
+    cpu_system_ns INTEGER,
+    online_cpus INTEGER,
+    mem_bytes INTEGER,
+    mem_limit_bytes INTEGER,
+    net_rx_bytes INTEGER,
+    net_tx_bytes INTEGER,
+    blk_read_bytes INTEGER,
+    blk_write_bytes INTEGER,
+    pids INTEGER
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_prs_project_sampled
+    ON project_resource_samples(project_id, sampled_at_ms);
+
+  CREATE TABLE IF NOT EXISTS host_metric_samples (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    sampled_at_ms INTEGER NOT NULL,
+    cpu_percent REAL,
+    cpu_cores INTEGER,
+    mem_percent REAL,
+    disk_percent REAL,
+    containers_running INTEGER,
+    containers_total INTEGER
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_hms_sampled
+    ON host_metric_samples(sampled_at_ms);
+
+  CREATE TABLE IF NOT EXISTS project_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
+    container_id TEXT,
+    occurred_at_ms INTEGER NOT NULL,
+    time_nano INTEGER,
+    source TEXT NOT NULL,
+    action TEXT NOT NULL,
+    raw_json TEXT,
+    created_at_ms INTEGER NOT NULL,
+    UNIQUE(container_id, action, time_nano)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_project_events_project_occurred
+    ON project_events(project_id, occurred_at_ms);
+`);
+
 export default db;

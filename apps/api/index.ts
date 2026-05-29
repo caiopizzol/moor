@@ -15,9 +15,12 @@ import { interruptActiveRuns, startCronScheduler, stopCronScheduler } from "./cr
 // Initialize DB (side-effect import runs migrations)
 import db from "./db";
 import { startBackupScheduler, stopBackupScheduler } from "./db-backup";
+import { startDockerEventConsumer, stopDockerEventConsumer } from "./docker-events";
 import { maybeAutoClearForBoot } from "./drain";
 import { interruptActiveExecRuns } from "./exec-async";
+import { startHistoryRetention, stopHistoryRetention } from "./history-retention";
 import { hostTerminalHandlers, isHostTerminal, upgradeHostTerminal } from "./host-terminal";
+import { type HostSample, startMetricsSampler, stopMetricsSampler } from "./metrics-sampler";
 import { handleAuth } from "./routes/auth";
 import { handleCaddy } from "./routes/caddy";
 import { handleCleanup } from "./routes/cleanup";
@@ -27,10 +30,11 @@ import { handleDocker } from "./routes/docker";
 import { handleEnvs } from "./routes/envs";
 import { handleExec } from "./routes/exec";
 import { handlePorts } from "./routes/ports";
+import { handleProjectHistory } from "./routes/project-history";
 import { handleProjects } from "./routes/projects";
 import { handleRegistryCredentials } from "./routes/registry-credentials";
 import { handleRuns } from "./routes/runs";
-import { handleServer } from "./routes/server";
+import { getServerStats, handleServer } from "./routes/server";
 import { handleSourceCredentials } from "./routes/source-credentials";
 import { handleTerminalSessions } from "./routes/terminal-sessions";
 import { handleVolumes } from "./routes/volumes";
@@ -188,6 +192,7 @@ const server = Bun.serve({
           (await handleTerminalSessions(req, url)) ??
           (await handleCaddy(req, url)) ??
           (await handleCleanup(req, url)) ??
+          (await handleProjectHistory(req, url)) ??
           (await handleContainerStats(req, url)) ??
           (await handleRegistryCredentials(req, url)) ??
           (await handleSourceCredentials(req, url)) ??
@@ -252,6 +257,31 @@ setInterval(cleanExpiredSessions, 3600_000);
 startCleanupScheduler();
 startStatusReconciler();
 startBackupScheduler();
+// #131: project observability sampler. Sibling loop to the reconciler (kept
+// separate so the heavier stats call can't delay lifecycle freshness). The
+// host fetcher reuses the server route's gatherer, projecting it onto the
+// percent-gauge HostSample shape.
+startMetricsSampler(async (): Promise<HostSample | null> => {
+  try {
+    const s = await getServerStats();
+    return {
+      cpu_percent: s.cpu.percent,
+      cpu_cores: s.cpu.cores,
+      mem_percent: s.memory.percent,
+      disk_percent: s.disk.percent,
+      containers_running: s.containers.running,
+      containers_total: s.containers.total,
+    };
+  } catch {
+    return null;
+  }
+});
+// #131: Docker /events consumer — primary lifecycle-event source (the poll is
+// the backstop). Self-reconnecting; safe to start unconditionally.
+startDockerEventConsumer();
+// #131: prune observability history (on by default; unbounded sample growth
+// would be a silent disk leak).
+startHistoryRetention();
 // #80 PR #2: background poller for respawner-result markers. Fast
 // 5s ticks for the first 2 min after boot (catches markers landing
 // post-startup), then slow 30s thereafter.
@@ -289,6 +319,9 @@ const shutdown = async () => {
     stopBackupScheduler();
     stopMarkerPoller();
     stopStatusReconciler();
+    stopMetricsSampler();
+    stopDockerEventConsumer();
+    stopHistoryRetention();
     stopCronScheduler();
     server.stop();
 

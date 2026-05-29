@@ -103,6 +103,16 @@ export function computeCpuPercent(payload: DockerStatsPayload): number {
   const cpuDelta = (cur.cpu_usage?.total_usage ?? 0) - (pre.cpu_usage?.total_usage ?? 0);
   const sysDelta = (cur.system_cpu_usage ?? 0) - (pre.system_cpu_usage ?? 0);
   const cpus = cur.online_cpus ?? cur.cpu_usage?.percpu_usage?.length ?? 0;
+  return cpuPercentFromDeltas(cpuDelta, sysDelta, cpus);
+}
+
+/** Container CPU percent from a (cpu, system) usage-counter delta pair, per the
+ *  Docker formula. Returns 0 when the deltas can't yield a meaningful number
+ *  (no prior sample, idle, missing cpu count). Shared by the live route
+ *  (precpu delta) and the history query (inter-sample delta) — the math is
+ *  identical across any interval since system_cpu_usage is cumulative host
+ *  CPU time. */
+export function cpuPercentFromDeltas(cpuDelta: number, sysDelta: number, cpus: number): number {
   if (cpuDelta <= 0 || sysDelta <= 0 || cpus <= 0) return 0;
   const pct = (cpuDelta / sysDelta) * cpus * 100;
   return Math.round(pct * 100) / 100;
@@ -170,6 +180,45 @@ export function sumBlockIo(payload: DockerStatsPayload): {
     else if (tag === "w") write += v;
   }
   return { read_bytes: read, write_bytes: write };
+}
+
+/** Raw, cumulative counters extracted from a stats payload for persistence
+ *  (#131). Unlike buildStatsResponse, which renders an instantaneous
+ *  cpu_percent from Docker's ~1s precpu delta, this keeps the cumulative CPU
+ *  counters so the history query can average CPU across the real inter-sample
+ *  interval, and keeps network/block as cumulative totals so the query
+ *  computes deltas/rates between consecutive samples. Memory is the same
+ *  cache-excluded gauge the live route reports. */
+export type RawCounterSample = {
+  cpu_total_ns: number;
+  cpu_system_ns: number;
+  online_cpus: number;
+  mem_bytes: number;
+  mem_limit_bytes: number;
+  net_rx_bytes: number;
+  net_tx_bytes: number;
+  blk_read_bytes: number;
+  blk_write_bytes: number;
+  pids: number;
+};
+
+export function extractRawSample(payload: DockerStatsPayload): RawCounterSample {
+  const mem = computeMemory(payload);
+  const net = sumNetwork(payload);
+  const blk = sumBlockIo(payload);
+  const cpu = payload.cpu_stats ?? {};
+  return {
+    cpu_total_ns: cpu.cpu_usage?.total_usage ?? 0,
+    cpu_system_ns: cpu.system_cpu_usage ?? 0,
+    online_cpus: cpu.online_cpus ?? cpu.cpu_usage?.percpu_usage?.length ?? 0,
+    mem_bytes: mem.bytes,
+    mem_limit_bytes: mem.limit_bytes,
+    net_rx_bytes: net.rx_bytes,
+    net_tx_bytes: net.tx_bytes,
+    blk_read_bytes: blk.read_bytes,
+    blk_write_bytes: blk.write_bytes,
+    pids: payload.pids_stats?.current ?? 0,
+  };
 }
 
 /** Compose the route's JSON response from a Docker stats payload. */
