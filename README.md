@@ -78,6 +78,6 @@ bun run dev:web   # Vite dev server
 
 Bun, SQLite, React, Vite, Docker Engine API (Unix socket).
 
-## Contribuidores
+## Contributors
 
 <a href="https://github.com/caiopizzol"><img src="https://github.com/caiopizzol.png" width="50" height="50" alt="caiopizzol" title="Caio Pizzol" /></a>
