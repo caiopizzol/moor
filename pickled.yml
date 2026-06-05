@@ -1,0 +1,170 @@
+# yaml-language-server: $schema=https://pickled.dev/schema/pickled.schema.json
+
+schemaVersion: 2
+
+product:
+  name: moor
+  description: Docker control panel for a single server
+
+sources:
+  readme: { path: ./README.md }
+  self_hosting: { path: ./docs/self-hosting.md }
+  cli: { path: ./packages/cli/README.md }
+  mcp: { path: ./packages/mcp/README.md }
+
+agents:
+  quick:
+    provider: claude-code
+    model: claude-haiku-4-5
+    maxTurns: 5
+  builder:
+    provider: claude-code
+    model: claude-haiku-4-5
+    maxTurns: 30
+
+contexts:
+  given_readme: { mode: inject, source: readme }
+  given_self_hosting: { mode: inject, source: self_hosting }
+  given_cli: { mode: inject, source: cli }
+  given_mcp: { mode: inject, source: mcp }
+
+facts:
+  install_commands:
+    statement: Installs moor with the installer and starts it with Docker Compose.
+    match:
+      allOf: ["curl -fsSL moor.sh/install | sh", "docker compose up -d"]
+  initial_password:
+    statement: Explains that MOOR_INITIAL_PASSWORD is written to .env and used on first boot.
+    match:
+      allOf: ["MOOR_INITIAL_PASSWORD", ".env"]
+  admin_tunnel:
+    statement: Explains that the admin is private by default and reached through an SSH tunnel.
+    match:
+      allOf: ["127.0.0.1:3000", "ssh -L 8080:127.0.0.1:3000"]
+  docker_socket_trust:
+    statement: Names the Docker socket trust boundary.
+    match:
+      allOf: ["/var/run/docker.sock"]
+      anyOf: ["SSH access", "controls the host", "admin-equivalent"]
+  cli_install:
+    statement: Gives both one-shot and global CLI install commands.
+    match:
+      allOf: ["bunx @moor-sh/cli status", "bun add -g @moor-sh/cli"]
+  cli_env:
+    statement: Says the CLI reads MOOR_URL and MOOR_API_KEY.
+    match:
+      allOf: ["MOOR_URL", "MOOR_API_KEY"]
+  api_key_authority:
+    statement: Says MOOR_API_KEY has admin-equivalent authority.
+    match:
+      allOf: ["MOOR_API_KEY"]
+      anyOf: ["admin-equivalent", "admin access", "SSH access"]
+  mcp_config_command:
+    statement: Uses the CLI helper to generate MCP client config.
+    match:
+      allOf: ["bunx @moor-sh/cli mcp config --client"]
+  mcp_package:
+    statement: Names the MCP package and its required environment variables.
+    match:
+      allOf: ["@moor-sh/mcp", "MOOR_URL", "MOOR_API_KEY"]
+  mcp_stdio:
+    statement: Says the Moor MCP server uses stdio transport today.
+    match:
+      allOf: ["stdio"]
+  private_repo_check:
+    statement: Says private GitHub deploys should check source credentials before deploy.
+    match:
+      allOf: ["moor_source_credential_check", "source_credential_id"]
+      anyOf: ["moor_deploy", "project row"]
+  no_auto_attach:
+    statement: Says moor does not auto-attach source credentials on build.
+    match:
+      anyOf: ["does not auto-select", "no auto-attach", "anonymous clone"]
+
+misstatements:
+  unscoped_moor_package:
+    statement: Uses the unrelated unscoped moor package.
+    match:
+      anyOf: ["bunx moor", "npm install moor"]
+  public_admin_default:
+    statement: Claims Caddy serves the admin publicly by default.
+    match:
+      anyOf: ["Caddy serves the admin by default", "admin is public by default"]
+  mcp_http_shipped:
+    statement: Claims the Moor MCP server ships HTTP transport today.
+    match:
+      anyOf: ["HTTP transport is shipped", "HTTP MCP transport is available"]
+
+questions:
+  - id: self_host_first_login
+    question: How do I install moor on a VPS and reach the first admin login?
+    agents: [quick]
+    contexts: [given_readme, given_self_hosting]
+    expects: [install_commands, initial_password, admin_tunnel, docker_socket_trust]
+    rejects: [public_admin_default]
+    examples:
+      pass:
+        - "Run `curl -fsSL moor.sh/install | sh`, then `docker compose up -d`. The installer writes MOOR_INITIAL_PASSWORD to .env. Moor binds admin to 127.0.0.1:3000, so use `ssh -L 8080:127.0.0.1:3000 your-server`. It mounts /var/run/docker.sock, so admin access controls the host."
+      fail:
+        - "Run the installer, then open the public Caddy admin domain because Caddy serves the admin by default."
+
+  - id: cli_setup
+    question: How do I install and configure the moor CLI for a remote server?
+    agents: [quick]
+    contexts: [given_cli, given_self_hosting]
+    expects: [cli_install, cli_env, api_key_authority]
+    rejects: [unscoped_moor_package]
+    examples:
+      pass:
+        - "Use `bunx @moor-sh/cli status` for one-shot use or `bun add -g @moor-sh/cli` for a global install. Set MOOR_URL and MOOR_API_KEY; the API key is admin-equivalent."
+      fail:
+        - "Install with `bunx moor` and use a read-only API key."
+
+  - id: mcp_setup
+    question: How do I connect moor to an AI coding agent through MCP?
+    agents: [quick]
+    contexts: [given_mcp, given_cli]
+    expects: [mcp_config_command, mcp_package, mcp_stdio]
+    rejects: [unscoped_moor_package, mcp_http_shipped]
+    examples:
+      pass:
+        - "Run `bunx @moor-sh/cli mcp config --client claude-code` or codex. It configures `@moor-sh/mcp` with MOOR_URL and MOOR_API_KEY. The MCP server uses stdio today."
+      fail:
+        - "Run `npm install moor` and use it because HTTP transport is shipped."
+
+  - id: private_repo_deploy
+    question: What should an agent do before deploying a private GitHub repo with moor?
+    agents: [quick]
+    contexts: [given_self_hosting]
+    expects: [private_repo_check, no_auto_attach]
+    examples:
+      pass:
+        - "Call `moor_source_credential_check` first. If it returns an auto_selected_credential_id, pass that source_credential_id into `moor_deploy`. The build path does not auto-select; otherwise it performs an anonymous clone."
+      fail:
+        - "Just call moor_deploy. Moor will automatically attach the right credential during the build."
+
+builds:
+  - id: create_mcp_client_configs
+    goal: >-
+      Create MCP client configuration files for a remote moor server reached
+      through an SSH tunnel. Write `.claude.json` and `.codex/config.toml`.
+      Both configs should launch `@moor-sh/mcp` with `bunx`, set
+      `MOOR_URL` to `http://127.0.0.1:8080`, and use `<your-api-key>` as the
+      `MOOR_API_KEY` placeholder. Do not use the unrelated unscoped `moor`
+      package.
+    agents: [builder]
+    contexts: [given_mcp]
+    trials: 2
+    workspace:
+      path: ./fixtures/pickled/mcp-client-config
+    verifier:
+      failToPass:
+        - { name: mcp config files, run: ./tests/verify-mcp-config.sh }
+      passToPass:
+        - { name: keeps fixture instructions, run: test -f README.md }
+    referenceSolution:
+      patch: ./fixtures/pickled/mcp-client-config.solution.patch
+
+thresholds:
+  questions: 80
+  builds: 80
