@@ -1,0 +1,31 @@
+diff --git a/.claude.json b/.claude.json
+new file mode 100644
+index 0000000..ae5612d
+--- /dev/null
++++ b/.claude.json
+@@ -0,0 +1,12 @@
++{
++  "mcpServers": {
++    "moor": {
++      "command": "bunx",
++      "args": ["@moor-sh/mcp"],
++      "env": {
++        "MOOR_URL": "http://127.0.0.1:8080",
++        "MOOR_API_KEY": "<your-api-key>"
++      }
++    }
++  }
++}
+diff --git a/.codex/config.toml b/.codex/config.toml
+new file mode 100644
+index 0000000..b5d3d3c
+--- /dev/null
++++ b/.codex/config.toml
+@@ -0,0 +1,7 @@
++[mcp_servers.moor]
++command = "bunx"
++args = ["@moor-sh/mcp"]
++
++[mcp_servers.moor.env]
++MOOR_URL = "http://127.0.0.1:8080"
++MOOR_API_KEY = "<your-api-key>"
