@@ -1283,6 +1283,20 @@ server.registerTool(
         .describe(
           "For github_url projects: pin the source credential row (from moor_source_credential_add) the build path should use. Build synthesizes the credentialed clone URL in memory; the secret is never stored on the project. Ignored when docker_image is set; save-time validation is structural only (id exists).",
         ),
+      command: z
+        .array(z.string())
+        .nullable()
+        .optional()
+        .describe(
+          'Override the image\'s default command (Docker Cmd) as an argv array, e.g. ["tunnel","run"]. Lets a stock image run a custom command with no throwaway Dockerfile. Omit to keep the image default; pass [] or null to clear a previously-set override. Applies on container recreate.',
+        ),
+      entrypoint: z
+        .array(z.string())
+        .nullable()
+        .optional()
+        .describe(
+          "Override the image's ENTRYPOINT as an argv array. Omit to keep the image default; pass [] or null to clear. Applies on container recreate.",
+        ),
     }),
   },
   async (input) => {
@@ -1371,6 +1385,20 @@ server.registerTool(
         .optional()
         .describe(
           "Pin (or unlink, by passing null) the source credential the build path should use for this github_url project. Switching to docker_image force-clears the id regardless of input. Save-time validation is structural only; host-mismatch / not-active is enforced at build time.",
+        ),
+      command: z
+        .array(z.string())
+        .nullable()
+        .optional()
+        .describe(
+          'Override the image\'s default command (Docker Cmd) as an argv array, e.g. ["tunnel","run"]. Pass [] or null to clear the override and return to the image default. Takes effect on container recreate.',
+        ),
+      entrypoint: z
+        .array(z.string())
+        .nullable()
+        .optional()
+        .describe(
+          "Override the image's ENTRYPOINT as an argv array. Pass [] or null to clear. Takes effect on container recreate.",
         ),
     }),
   },
@@ -1729,6 +1757,124 @@ server.registerTool(
   },
 );
 
+// --- Declarative file injection ---
+
+server.registerTool(
+  "moor_file_set",
+  {
+    title: "Set Project File",
+    description:
+      "Declare a file to inject into a project's container. moor writes it via a tar archive PUT right before the container starts, on every recreate, honoring the octal mode (e.g. 0600 for a TLS key). Identified by path — setting the same path again updates its content/mode rather than duplicating. Provide exactly one of content (inline) or env_ref (the name of a project env var to source content from at create time, so a secret stays in the env store instead of plaintext here). Takes effect on next container recreate (moor_rebuild / moor_restart / moor_deploy / moor_project run).",
+    inputSchema: z.object({
+      project: z.string().describe("Project name or ID"),
+      path: z
+        .string()
+        .min(1)
+        .describe("Absolute in-container destination path, e.g. /etc/ssl/cert.pem"),
+      content: z
+        .string()
+        .optional()
+        .describe("Inline file contents. Provide exactly one of content or env_ref."),
+      env_ref: z
+        .string()
+        .optional()
+        .describe(
+          "Name of a project env var to source the contents from at create time. Keeps secrets (keys, certs) in the env store instead of plaintext here. Provide exactly one of content or env_ref.",
+        ),
+      mode: z
+        .string()
+        .optional()
+        .describe(
+          "Octal permission string applied in the tar header, e.g. '0600'. Default '0644'.",
+        ),
+    }),
+  },
+  async ({ project, path, content, env_ref, mode }) => {
+    const p = await resolveProject(project);
+    const body: Record<string, unknown> = { path };
+    if (content !== undefined) body.content = content;
+    if (env_ref !== undefined) body.env_ref = env_ref;
+    if (mode !== undefined) body.mode = mode;
+    const res = await apiPost(`/api/projects/${p.id}/files`, body);
+    if (!res.ok) throw new Error(`Failed: ${await res.text()}`);
+    const saved = (await res.json()) as {
+      id: number;
+      path: string;
+      mode: string;
+      source: string;
+      env_ref: string | null;
+    };
+    const verb = res.status === 201 ? "Added" : "Updated";
+    return {
+      content: [
+        {
+          type: "text",
+          text: `${verb} file on ${p.name}: id=${saved.id}, path=${saved.path}, mode=${saved.mode}, source=${saved.source}${saved.env_ref ? ` (env_ref=${saved.env_ref})` : ""}. Written into the container on next recreate.`,
+        },
+      ],
+    };
+  },
+);
+
+server.registerTool(
+  "moor_file_list",
+  {
+    title: "List Project Files",
+    description:
+      "List the declarative files configured for a project. Each entry shows the in-container path, octal mode, and how content is sourced (inline or env). Raw inline content is never returned (it may be large, and env-sourced content lives in the env store).",
+    inputSchema: z.object({
+      project: z.string().describe("Project name or ID"),
+    }),
+  },
+  async ({ project }) => {
+    const p = await resolveProject(project);
+    const res = await apiGet(`/api/projects/${p.id}/files`);
+    if (!res.ok) throw new Error(`Failed: ${await res.text()}`);
+    const rows = (await res.json()) as Array<{
+      id: number;
+      path: string;
+      mode: string;
+      source: string;
+      env_ref: string | null;
+    }>;
+    if (rows.length === 0) {
+      return { content: [{ type: "text", text: `No files configured for ${p.name}.` }] };
+    }
+    const lines = rows.map(
+      (f) =>
+        `id=${f.id}  path=${f.path}  mode=${f.mode}  source=${f.source}${f.env_ref ? `  env_ref=${f.env_ref}` : ""}`,
+    );
+    return { content: [{ type: "text", text: lines.join("\n") }] };
+  },
+);
+
+server.registerTool(
+  "moor_file_remove",
+  {
+    title: "Remove Project File",
+    description:
+      "Remove a declared file from a project's injection set. The file stops being written on future container recreates; a copy already present in a running container is not deleted until the next recreate. Takes effect on next container recreate.",
+    inputSchema: z.object({
+      project: z.string().describe("Project name or ID"),
+      file_id: z.number().int().positive().describe("File ID from moor_file_list"),
+    }),
+  },
+  async ({ project, file_id }) => {
+    const p = await resolveProject(project);
+    const res = await apiDelete(`/api/projects/${p.id}/files/${file_id}`);
+    if (res.status === 404) throw new Error(`File ${file_id} not found on project ${p.name}`);
+    if (!res.ok) throw new Error(`Failed: ${await res.text()}`);
+    return {
+      content: [
+        {
+          type: "text",
+          text: `Removed file ${file_id} from ${p.name}. Applies on next container recreate.`,
+        },
+      ],
+    };
+  },
+);
+
 // --- Runs history (#37) ---
 
 // A runs row can be a cron run, a build/manual run, OR a cron run whose cron
@@ -2006,6 +2152,47 @@ server.registerTool(
         .describe(
           "For github_url projects: pin the source credential row (created via moor_source_credential_add). Build path synthesizes the credentialed clone URL in memory; secret never gets stored on the project row. Pass null to detach without switching source type. Ignored when docker_image is set. Save-time validation is structural only (id exists); host-mismatch / not-active is enforced at build time so configuration can survive transient credential outages.",
         ),
+      command: z
+        .array(z.string())
+        .nullable()
+        .optional()
+        .describe(
+          'Override the image default command (Docker Cmd) as an argv array, e.g. ["tunnel","run"]. Lets a stock image (e.g. cloudflare/cloudflared) run a custom command with no throwaway Dockerfile. Omit to keep the image default; pass [] or null to clear. Applies on the recreate the run step performs.',
+        ),
+      entrypoint: z
+        .array(z.string())
+        .nullable()
+        .optional()
+        .describe(
+          "Override the image ENTRYPOINT as an argv array. Omit to keep the image default; pass [] or null to clear. Applies on container recreate.",
+        ),
+      files: z
+        .array(
+          z.object({
+            path: z
+              .string()
+              .min(1)
+              .describe("Absolute in-container destination path, e.g. /etc/ssl/cert.pem"),
+            content: z
+              .string()
+              .optional()
+              .describe("Inline file contents. Provide exactly one of content or env_ref."),
+            env_ref: z
+              .string()
+              .optional()
+              .describe(
+                "Name of a project env var to source the contents from at create time, so a secret (TLS key, token) lives in the env store rather than in plaintext here. Provide exactly one of content or env_ref.",
+              ),
+            mode: z
+              .string()
+              .optional()
+              .describe("Octal permission string for the tar header, e.g. '0600'. Default '0644'."),
+          }),
+        )
+        .optional()
+        .describe(
+          "Declarative files to inject into the container before it starts, written on every recreate (additions/updates only — moor_deploy never removes files; use moor_file_remove). Each file's path identifies it; re-deploying the same path updates its content. Honors the octal mode in the tar header (e.g. 0600 for a key).",
+        ),
       run: z
         .boolean()
         .optional()
@@ -2106,6 +2293,8 @@ server.registerTool(
         memory_limit_mb: input.memory_limit_mb,
         cpus: input.cpus,
         source_credential_id: input.source_credential_id,
+        command: input.command,
+        entrypoint: input.entrypoint,
       };
       const res = await apiPost("/api/projects", createBody);
       if (!res.ok) throw new Error(`[create] ${await res.text()}`);
@@ -2127,6 +2316,8 @@ server.registerTool(
       if (input.cpus !== undefined) updateBody.cpus = input.cpus;
       if (input.source_credential_id !== undefined)
         updateBody.source_credential_id = input.source_credential_id;
+      if (input.command !== undefined) updateBody.command = input.command;
+      if (input.entrypoint !== undefined) updateBody.entrypoint = input.entrypoint;
 
       if (Object.keys(updateBody).length > 0) {
         const res = await apiPut(`/api/projects/${existing.id}`, updateBody);
@@ -2178,6 +2369,19 @@ server.registerTool(
           );
         }
         // Same name, same target — idempotent re-run, tolerable.
+      }
+    }
+
+    // Step 1.6: inject declarative files (additions/updates only — deploy never
+    // removes files; use moor_file_remove for that). The route upserts by path,
+    // so re-deploying the same path updates its content. Files are written into
+    // the container right before start on the recreate the run step triggers.
+    if (input.files && input.files.length > 0) {
+      for (const f of input.files) {
+        const fRes = await apiPost(`/api/projects/${projectId}/files`, f);
+        if (!fRes.ok) {
+          throw new Error(`[files] failed to set ${f.path}: ${await fRes.text()}`);
+        }
       }
     }
 

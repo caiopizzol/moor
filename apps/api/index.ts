@@ -29,6 +29,7 @@ import { handleCrons } from "./routes/crons";
 import { handleDocker } from "./routes/docker";
 import { handleEnvs } from "./routes/envs";
 import { handleExec } from "./routes/exec";
+import { handleFiles } from "./routes/files";
 import { handlePorts } from "./routes/ports";
 import { handleProjectHistory } from "./routes/project-history";
 import { handleProjects } from "./routes/projects";
@@ -183,6 +184,7 @@ const server = Bun.serve({
         const res =
           (await handleProjects(req, url)) ??
           (await handleVolumes(req, url)) ??
+          (await handleFiles(req, url)) ??
           (await handleExec(req, url)) ??
           (await handleDocker(req, url)) ??
           (await handleCrons(req, url)) ??

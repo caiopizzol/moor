@@ -129,6 +129,29 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_project_volumes_project ON project_volumes(project_id);
 
+  -- Declarative per-project file injection. Mirrors project_volumes: the row
+  -- captures intent, and the files are (re)written into the container on every
+  -- (re)create, right before start, via a tar PUT to the Docker archive
+  -- endpoint. path is the absolute in-container destination. mode is the octal
+  -- permission string applied in the tar header (e.g. '0600' for a TLS key).
+  -- Content is EITHER inline plaintext (content) OR sourced at create time from
+  -- an env var by name (env_ref) — the CHECK enforces exactly one. env_ref
+  -- reuses env_vars as the secret store so sensitive content (keys, certs) is
+  -- never persisted in plaintext here. UNIQUE(project_id, path) keeps one spec
+  -- per destination so a re-add updates intent instead of duplicating a file.
+  CREATE TABLE IF NOT EXISTS project_files (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    path TEXT NOT NULL,
+    content TEXT,
+    env_ref TEXT,
+    mode TEXT NOT NULL DEFAULT '0644',
+    CHECK ((content IS NULL) != (env_ref IS NULL)),
+    UNIQUE(project_id, path)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_project_files_project ON project_files(project_id);
+
   -- #54: per-execute audit of guarded cleanup runs. candidates_json captures
   -- the exact list the caller passed (after server-side validation of shape);
   -- results_json captures the post-revalidation outcome for each one. Keeping
@@ -437,6 +460,23 @@ try {
   db.exec(
     "ALTER TABLE projects ADD COLUMN source_credential_id INTEGER REFERENCES source_credentials(id)",
   );
+} catch {
+  // Column already exists
+}
+
+// Declarative container command/entrypoint override. NULL = today's behavior
+// (run the image's own default CMD/ENTRYPOINT). When set, stored as a JSON
+// string array and threaded into the Docker create body as Cmd / Entrypoint on
+// the next container recreate. Lets a stock image (e.g. cloudflare/cloudflared)
+// run a custom command without a throwaway Dockerfile.
+try {
+  db.exec("ALTER TABLE projects ADD COLUMN command TEXT");
+} catch {
+  // Column already exists
+}
+
+try {
+  db.exec("ALTER TABLE projects ADD COLUMN entrypoint TEXT");
 } catch {
   // Column already exists
 }
