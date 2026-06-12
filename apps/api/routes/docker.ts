@@ -1,6 +1,7 @@
 import { classifyBuildError } from "../build-error-classifier";
 import { BuildRun } from "../build-runs";
 import { syncCaddyRoutes } from "../caddy";
+import { parseStringArray } from "../container-config";
 import db from "../db";
 import {
   buildImageStreaming,
@@ -25,6 +26,7 @@ import {
   setProjectLiveState,
   setProjectRecordedStatus,
 } from "../status-reconciler";
+import { getResolvedProjectFiles } from "./files";
 import { getProjectVolumes } from "./volumes";
 
 type Project = {
@@ -43,6 +45,10 @@ type Project = {
   memory_limit_mb: number | null;
   cpus: number | null;
   source_credential_id: number | null;
+  // JSON-encoded string arrays (or null). Parsed via parseStringArray before
+  // they reach the Docker create body as Cmd / Entrypoint.
+  command: string | null;
+  entrypoint: string | null;
 };
 
 /** Map a build-time credential-resolver failure to an HTTP Response.
@@ -319,6 +325,11 @@ async function handleRun(req: Request, project: Project): Promise<Response> {
           { memoryLimitMb: project.memory_limit_mb, cpus: project.cpus },
           getProjectVolumes(project.id),
           projectLabels(project.id, project.name),
+          {
+            command: parseStringArray(project.command),
+            entrypoint: parseStringArray(project.entrypoint),
+            files: getResolvedProjectFiles(project.id, envs),
+          },
         );
         console.log(`[run] container started: ${containerId}`);
 
@@ -612,6 +623,11 @@ async function handleStart(project: Project): Promise<Response> {
       { memoryLimitMb: project.memory_limit_mb, cpus: project.cpus },
       getProjectVolumes(project.id),
       projectLabels(project.id, project.name),
+      {
+        command: parseStringArray(project.command),
+        entrypoint: parseStringArray(project.entrypoint),
+        files: getResolvedProjectFiles(project.id, envs),
+      },
     );
     console.log(`[start] container started: ${containerId}`);
     db.query("UPDATE projects SET container_id = ? WHERE id = ?").run(containerId, project.id);

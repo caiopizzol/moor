@@ -474,3 +474,87 @@ describe("#112 source_credential_id on projects", () => {
     });
   });
 });
+
+describe("command/entrypoint override on projects", () => {
+  beforeEach(() => {
+    db.query("DELETE FROM projects").run();
+  });
+
+  function storedRaw(id: number): { command: string | null; entrypoint: string | null } {
+    return db.query("SELECT command, entrypoint FROM projects WHERE id = ?").get(id) as {
+      command: string | null;
+      entrypoint: string | null;
+    };
+  }
+
+  test("POST persists command/entrypoint as JSON; response presents them as arrays", async () => {
+    const res = await call("POST", "/api/projects", {
+      name: "tunnel",
+      docker_image: "cloudflare/cloudflared:latest",
+      command: ["tunnel", "run"],
+      entrypoint: ["/bin/tini", "--"],
+    });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as {
+      id: number;
+      command: string[] | null;
+      entrypoint: string[] | null;
+    };
+    expect(body.command).toEqual(["tunnel", "run"]);
+    expect(body.entrypoint).toEqual(["/bin/tini", "--"]);
+    // Stored as JSON text, not the array.
+    expect(storedRaw(body.id).command).toBe('["tunnel","run"]');
+  });
+
+  test("POST without command/entrypoint stores NULL and presents null", async () => {
+    const res = await call("POST", "/api/projects", {
+      name: "plain",
+      docker_image: "nginx:alpine",
+    });
+    const body = (await res.json()) as { id: number; command: unknown; entrypoint: unknown };
+    expect(body.command).toBeNull();
+    expect(body.entrypoint).toBeNull();
+    expect(storedRaw(body.id).command).toBeNull();
+  });
+
+  test("POST rejects a non-array command", async () => {
+    const res = await call("POST", "/api/projects", {
+      name: "bad",
+      docker_image: "nginx:alpine",
+      command: "tunnel run",
+    });
+    expect(res.status).toBe(400);
+    expect(await res.text()).toContain("command must be an array");
+  });
+
+  test("PUT sets command, and [] or null clears it back to the image default", async () => {
+    const created = await call("POST", "/api/projects", {
+      name: "p",
+      docker_image: "nginx:alpine",
+    });
+    const { id } = (await created.json()) as { id: number };
+
+    await call("PUT", `/api/projects/${id}`, { command: ["serve", "--port", "8080"] });
+    expect(storedRaw(id).command).toBe('["serve","--port","8080"]');
+
+    // Empty array clears (Docker reads Cmd:[] as "clear default"; we map clear → NULL).
+    await call("PUT", `/api/projects/${id}`, { command: [] });
+    expect(storedRaw(id).command).toBeNull();
+
+    // null also clears.
+    await call("PUT", `/api/projects/${id}`, { command: ["x"] });
+    await call("PUT", `/api/projects/${id}`, { command: null });
+    expect(storedRaw(id).command).toBeNull();
+  });
+
+  test("PUT without the command field leaves the stored override untouched", async () => {
+    const created = await call("POST", "/api/projects", {
+      name: "p",
+      docker_image: "nginx:alpine",
+      command: ["keep", "me"],
+    });
+    const { id } = (await created.json()) as { id: number };
+    await call("PUT", `/api/projects/${id}`, { branch: "develop" });
+    expect(storedRaw(id).command).toBe('["keep","me"]');
+  });
+});

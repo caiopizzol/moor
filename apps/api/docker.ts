@@ -1,11 +1,22 @@
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
+import type { ResolvedFile } from "./container-config";
 import { createFrameParser } from "./docker-frame-parser";
 import { buildKillScript, buildWrappedExecCmd, parseKillResult } from "./exec-kill";
 import { parseImageRef } from "./image-ref";
 import { redactCredentials, redactCredentialsInText, redactDockerBuildPath } from "./redact";
 import { buildPullAuthHeaders } from "./registry-auth";
 import { getCredentialByHostname } from "./registry-credentials-db";
+import { buildTar } from "./tar";
+
+/** Injectable Docker fetcher. Production passes the module-local dockerFetch;
+ *  tests pass a stub that records calls and returns synthetic Responses. Mirrors
+ *  the LogsFetcher seam but carries method/body/headers for the create + start
+ *  + archive flow. */
+export type DockerFetch = (
+  path: string,
+  opts?: RequestInit & { timeout?: number },
+) => Promise<Response>;
 
 function findSocket(): string {
   if (process.env.DOCKER_HOST) return process.env.DOCKER_HOST.replace("unix://", "");
@@ -342,26 +353,32 @@ export async function startOrCleanup(
   }
 }
 
-export async function createAndStartContainer(
-  imageTag: string,
-  name: string,
-  envVars: { key: string; value: string }[],
-  ports: { host_port: number; container_port: number }[] = [],
-  restartPolicy = "unless-stopped",
-  limits: { memoryLimitMb?: number | null; cpus?: number | null } = {},
-  volumes: Array<{ docker_name: string; target: string }> = [],
-  labels: Record<string, string> = {},
-): Promise<string> {
-  console.log(
-    `[createContainer] image=${imageTag} name=${name} envVars=${envVars.length} ports=${ports.length} mem_mb=${limits.memoryLimitMb ?? ""} cpus=${limits.cpus ?? ""} volumes=${volumes.length}`,
-  );
-  // Remove existing container with this name if it exists
-  try {
-    console.log(`[createContainer] removing existing container ${name}...`);
-    await dockerFetch(`/v1.44/containers/${name}?force=true`, { method: "DELETE" });
-  } catch {
-    console.log("[createContainer] no existing container to remove");
-  }
+/** Optional declarative container config beyond env/ports/volumes: command +
+ *  entrypoint overrides (omitted → image default) and files written into the
+ *  container before start. */
+export type ContainerExtras = {
+  command?: string[] | null;
+  entrypoint?: string[] | null;
+  files?: ResolvedFile[];
+};
+
+/** Build the Docker container-create body. Pure (no I/O) so the create-body
+ *  contract — including the rule that Cmd/Entrypoint appear ONLY when set — is
+ *  unit-testable without a Docker socket. */
+export function buildContainerCreateBody(opts: {
+  imageTag: string;
+  envVars: { key: string; value: string }[];
+  ports?: { host_port: number; container_port: number }[];
+  restartPolicy?: string;
+  limits?: { memoryLimitMb?: number | null; cpus?: number | null };
+  volumes?: Array<{ docker_name: string; target: string }>;
+  labels?: Record<string, string>;
+  command?: string[] | null;
+  entrypoint?: string[] | null;
+}): Record<string, unknown> {
+  const ports = opts.ports ?? [];
+  const limits = opts.limits ?? {};
+  const volumes = opts.volumes ?? [];
 
   // Build port bindings for Docker API. Bind to loopback so project containers
   // are reachable from inside the VM for local debugging but not from the public
@@ -381,7 +398,7 @@ export async function createAndStartContainer(
   // host swap. NanoCpus is Docker's cgroup CPU quota (cpus * 1e9 = nanoseconds
   // of CPU time per second).
   const hostConfig: Record<string, unknown> = {
-    RestartPolicy: { Name: restartPolicy },
+    RestartPolicy: { Name: opts.restartPolicy ?? "unless-stopped" },
     PortBindings: portBindings,
   };
   if (limits.memoryLimitMb != null) {
@@ -410,15 +427,93 @@ export async function createAndStartContainer(
   // level, not under HostConfig). The Docker /events consumer reads these from
   // each event's Actor.Attributes to map a container back to its project
   // without a timing-sensitive container_id round-trip.
-  const body = {
-    Image: imageTag,
-    Env: envVars.map((e) => `${e.key}=${e.value}`),
+  const body: Record<string, unknown> = {
+    Image: opts.imageTag,
+    Env: opts.envVars.map((e) => `${e.key}=${e.value}`),
     ExposedPorts: exposedPorts,
-    Labels: labels,
+    Labels: opts.labels ?? {},
     HostConfig: hostConfig,
   };
 
-  const createRes = await dockerFetch(`/v1.44/containers/create?name=${name}`, {
+  // Command/entrypoint override: only set the fields when present so the image
+  // default is preserved otherwise. An empty array would tell Docker to CLEAR
+  // the image default — the storage layer maps "unset" to null/undefined, so an
+  // empty array never reaches here from absence of input.
+  if (opts.command && opts.command.length > 0) body.Cmd = opts.command;
+  if (opts.entrypoint && opts.entrypoint.length > 0) body.Entrypoint = opts.entrypoint;
+  return body;
+}
+
+/** Write declarative project files into a container via Docker's archive
+ *  endpoint. Runs on every (re)create, right before start, so the files always
+ *  match the stored specs. We PUT to path=/ with each entry's absolute path
+ *  (leading slash stripped) as the tar member name; Docker creates intermediate
+ *  directories during extraction. The mode in each tar header is honored, so a
+ *  TLS key can land as 0600. fetchImpl is injectable for tests. */
+export async function putContainerArchive(
+  containerId: string,
+  files: ResolvedFile[],
+  fetchImpl: DockerFetch = dockerFetch,
+): Promise<void> {
+  const tar = buildTar(
+    files.map((f) => ({ name: f.path.replace(/^\/+/, ""), content: f.content, mode: f.mode })),
+  );
+  const res = await fetchImpl(`/v1.44/containers/${containerId}/archive?path=/`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/x-tar" },
+    // Uint8Array is a valid fetch body at runtime (Bun/Node); the TS lib's
+    // BodyInit is narrower, so cast through unknown like the docker tests do.
+    body: tar as unknown as BodyInit,
+  });
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Container file injection failed (${res.status}): ${err}`);
+  }
+  console.log(
+    `[createContainer] injected ${files.length} file(s) into ${containerId.slice(0, 12)}`,
+  );
+}
+
+export async function createAndStartContainer(
+  imageTag: string,
+  name: string,
+  envVars: { key: string; value: string }[],
+  ports: { host_port: number; container_port: number }[] = [],
+  restartPolicy = "unless-stopped",
+  limits: { memoryLimitMb?: number | null; cpus?: number | null } = {},
+  volumes: Array<{ docker_name: string; target: string }> = [],
+  labels: Record<string, string> = {},
+  extras: ContainerExtras = {},
+  // Injectable for tests; production uses the module dockerFetch. Note the
+  // compose-network resolution still goes through the module fetch — tests run
+  // outside compose (HOSTNAME unset), so that path short-circuits to skip.
+  fetchImpl: DockerFetch = dockerFetch,
+): Promise<string> {
+  const files = extras.files ?? [];
+  console.log(
+    `[createContainer] image=${imageTag} name=${name} envVars=${envVars.length} ports=${ports.length} mem_mb=${limits.memoryLimitMb ?? ""} cpus=${limits.cpus ?? ""} volumes=${volumes.length} cmd=${extras.command ? extras.command.length : ""} entrypoint=${extras.entrypoint ? extras.entrypoint.length : ""} files=${files.length}`,
+  );
+  // Remove existing container with this name if it exists
+  try {
+    console.log(`[createContainer] removing existing container ${name}...`);
+    await fetchImpl(`/v1.44/containers/${name}?force=true`, { method: "DELETE" });
+  } catch {
+    console.log("[createContainer] no existing container to remove");
+  }
+
+  const body = buildContainerCreateBody({
+    imageTag,
+    envVars,
+    ports,
+    restartPolicy,
+    limits,
+    volumes,
+    labels,
+    command: extras.command,
+    entrypoint: extras.entrypoint,
+  });
+
+  const createRes = await fetchImpl(`/v1.44/containers/create?name=${name}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -448,14 +543,14 @@ export async function createAndStartContainer(
   }
   // #134: the container now EXISTS in Docker, but container_id is only
   // persisted on the project row AFTER this function returns. So any failure
-  // attaching the network or starting it must remove the orphan here —
-  // otherwise it lingers in `Created` state and project delete can't reap it
-  // (the row has container_id = NULL). Cleanup is best-effort and never masks
-  // the original failure.
+  // attaching the network, injecting files, or starting it must remove the
+  // orphan here — otherwise it lingers in `Created` state and project delete
+  // can't reap it (the row has container_id = NULL). Cleanup is best-effort and
+  // never masks the original failure.
   await startOrCleanup(Id, async () => {
     if (underCompose) {
       const networkName = await findDefaultNetworkName();
-      const connectRes = await dockerFetch(
+      const connectRes = await fetchImpl(
         `/v1.44/networks/${encodeURIComponent(networkName)}/connect`,
         {
           method: "POST",
@@ -477,7 +572,13 @@ export async function createAndStartContainer(
       console.log(`[createContainer] connected ${name} to ${networkName}`);
     }
 
-    const startRes = await dockerFetch(`/v1.44/containers/${Id}/start`, { method: "POST" });
+    // Inject declarative files BEFORE start so the process sees them on boot.
+    // Runs on every (re)create, same lifecycle point as env.
+    if (files.length > 0) {
+      await putContainerArchive(Id, files, fetchImpl);
+    }
+
+    const startRes = await fetchImpl(`/v1.44/containers/${Id}/start`, { method: "POST" });
     if (!startRes.ok && startRes.status !== 304) {
       const err = await startRes.text();
       throw new Error(`Container start failed: ${err}`);

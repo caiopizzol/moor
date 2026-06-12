@@ -1,9 +1,24 @@
 import { syncCaddyRoutes } from "../caddy";
+import { parseStringArray, serializeStringArray, validateStringArray } from "../container-config";
 import db from "../db";
 import { removeContainer, removeVolume, stopContainer } from "../docker";
 import { reconcileGithubUrl, redactCredentials, serializeProject } from "../redact";
 import { validateCpus, validateMemoryLimitMb } from "../resource-limits";
 import { collectProjectVolumeDockerNames } from "./volumes";
+
+/** serializeProject (credential redaction) plus deserialization of the
+ *  command/entrypoint JSON columns back into string arrays, so the API always
+ *  presents them as arrays (or null) rather than leaking the stored JSON text. */
+function presentProject(row: { github_url?: string | null } & Record<string, unknown>) {
+  const redacted = serializeProject(row) as Record<string, unknown>;
+  return {
+    ...redacted,
+    command: parseStringArray(typeof redacted.command === "string" ? redacted.command : null),
+    entrypoint: parseStringArray(
+      typeof redacted.entrypoint === "string" ? redacted.entrypoint : null,
+    ),
+  };
+}
 
 /** Structural validation for source_credential_id on project save:
  *  null OK, positive integer OK iff the row exists. Host-mismatch and
@@ -52,7 +67,7 @@ export async function handleProjects(req: Request, url: URL): Promise<Response |
       github_url: string | null;
     }>;
     console.log(`[projects] listing ${rows.length} projects`);
-    return Response.json(rows.map(serializeProject));
+    return Response.json(rows.map(presentProject));
   }
 
   if (req.method === "GET" && id) {
@@ -60,7 +75,7 @@ export async function handleProjects(req: Request, url: URL): Promise<Response |
       github_url: string | null;
     } | null;
     if (!row) return new Response("Not found", { status: 404 });
-    return Response.json(serializeProject(row));
+    return Response.json(presentProject(row));
   }
 
   if (req.method === "POST" && !id) {
@@ -168,6 +183,8 @@ async function handleCreate(req: Request): Promise<Response> {
     memory_limit_mb,
     cpus,
     source_credential_id,
+    command,
+    entrypoint,
   } = body;
   console.log(
     `[projects] create: name=${name} github_url=${redactCredentials(github_url) ?? ""} docker_image=${docker_image} branch=${branch || "main"} dockerfile=${dockerfile || "Dockerfile"} domain=${domain || ""} domain_port=${domain_port || ""} memory_limit_mb=${memory_limit_mb ?? ""} cpus=${cpus ?? ""} source_credential_id=${source_credential_id ?? ""}`,
@@ -183,6 +200,10 @@ async function handleCreate(req: Request): Promise<Response> {
   if (memErr) return new Response(memErr, { status: 400 });
   const cpuErr = validateCpus(cpus);
   if (cpuErr) return new Response(cpuErr, { status: 400 });
+  const cmdErr = validateStringArray(command, "command");
+  if (cmdErr) return new Response(cmdErr, { status: 400 });
+  const epErr = validateStringArray(entrypoint, "entrypoint");
+  if (epErr) return new Response(epErr, { status: 400 });
   // docker_image projects cannot pin a source credential; the id is
   // about to be force-nulled regardless of input. Skip validation so
   // a caller mixing docker_image + a stale id doesn't get a 400 for
@@ -207,7 +228,7 @@ async function handleCreate(req: Request): Promise<Response> {
 
   const result = db
     .query(
-      "INSERT INTO projects (name, github_url, docker_image, branch, dockerfile, domain, domain_port, restart_policy, memory_limit_mb, cpus, source_credential_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *",
+      "INSERT INTO projects (name, github_url, docker_image, branch, dockerfile, domain, domain_port, restart_policy, memory_limit_mb, cpus, source_credential_id, command, entrypoint) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *",
     )
     .get(
       name,
@@ -221,6 +242,8 @@ async function handleCreate(req: Request): Promise<Response> {
       memory_limit_mb ?? null,
       cpus ?? null,
       effectiveSourceCredentialId,
+      serializeStringArray(command),
+      serializeStringArray(entrypoint),
     );
 
   if (domain?.trim()) {
@@ -228,7 +251,7 @@ async function handleCreate(req: Request): Promise<Response> {
     if (failed) return failed;
   }
 
-  const safe = serializeProject(result as { github_url: string | null });
+  const safe = presentProject(result as { github_url: string | null });
   console.log("[projects] created:", JSON.stringify(safe));
   return Response.json(safe, { status: 201 });
 }
@@ -246,6 +269,14 @@ async function handleUpdate(req: Request, id: number): Promise<Response> {
   }
   if ("cpus" in body) {
     const err = validateCpus(body.cpus);
+    if (err) return new Response(err, { status: 400 });
+  }
+  if ("command" in body) {
+    const err = validateStringArray(body.command, "command");
+    if (err) return new Response(err, { status: 400 });
+  }
+  if ("entrypoint" in body) {
+    const err = validateStringArray(body.entrypoint, "entrypoint");
     if (err) return new Response(err, { status: 400 });
   }
   // Skip credential validation when the update switches to docker_image:
@@ -281,6 +312,8 @@ async function handleUpdate(req: Request, id: number): Promise<Response> {
     "memory_limit_mb",
     "cpus",
     "source_credential_id",
+    "command",
+    "entrypoint",
   ]) {
     if (key === "github_url" && skipGithubUrl) continue;
     // Skip any caller-supplied source_credential_id when switching to
@@ -294,6 +327,9 @@ async function handleUpdate(req: Request, id: number): Promise<Response> {
         values.push(body[key]?.trim() || null);
       } else if (key === "restart_policy") {
         values.push(validPolicies.includes(body[key]) ? body[key] : "unless-stopped");
+      } else if (key === "command" || key === "entrypoint") {
+        // Stored as JSON text; an empty array or null clears the override.
+        values.push(serializeStringArray(body[key]));
       } else {
         // memory_limit_mb and cpus: null is the clear signal, numbers persist as-is.
         values.push(body[key]);
@@ -338,7 +374,7 @@ async function handleUpdate(req: Request, id: number): Promise<Response> {
         github_url: string | null;
       } | null;
       if (!current) return new Response("Not found", { status: 404 });
-      return Response.json(serializeProject(current));
+      return Response.json(presentProject(current));
     }
     return new Response("No fields to update", { status: 400 });
   }
@@ -365,5 +401,5 @@ async function handleUpdate(req: Request, id: number): Promise<Response> {
     if (failed) return failed;
   }
 
-  return Response.json(serializeProject(row as { github_url: string | null }));
+  return Response.json(presentProject(row as { github_url: string | null }));
 }
