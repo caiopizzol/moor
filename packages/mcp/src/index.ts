@@ -1,16 +1,45 @@
 #!/usr/bin/env bun
 import { McpServer, StdioServerTransport } from "@modelcontextprotocol/server";
+import {
+  createMoorApiClient,
+  type FetchLike,
+  type MoorApiClient,
+  type Project,
+  validateCronSchedule,
+  validateGithubRepoUrl,
+  validateGithubUrl,
+} from "@moor-sh/contract";
 import { z } from "zod";
 import { tailUtf8 } from "./tail-utf8";
 
 // --- Config ---
 
-const baseUrl = (process.env.MOOR_URL || "").replace(/\/$/, "");
-const apiKey = process.env.MOOR_API_KEY || "";
+const config = {
+  baseUrl: (process.env.MOOR_URL || "").replace(/\/$/, ""),
+  apiKey: process.env.MOOR_API_KEY || "",
+};
 
-if (!baseUrl || !apiKey) {
+if (!config.baseUrl || !config.apiKey) {
   console.error("MOOR_URL and MOOR_API_KEY environment variables are required");
   process.exit(1);
+}
+
+async function rawResponseRequest(
+  callClient: (client: MoorApiClient) => Promise<unknown>,
+): Promise<Response> {
+  let rawResponse: Response | undefined;
+  const fetchRawResponse: FetchLike = async (input, init) => {
+    rawResponse = await globalThis.fetch(input, init);
+    return new Response(null, { status: 204 });
+  };
+  const client = createMoorApiClient({
+    ...config,
+    fetch: fetchRawResponse,
+  });
+
+  await callClient(client);
+  if (!rawResponse) throw new Error("No response received");
+  return rawResponse;
 }
 
 // --- Startup probe ---
@@ -20,91 +49,42 @@ if (!baseUrl || !apiKey) {
 {
   let probeRes: Response;
   try {
-    probeRes = await fetch(`${baseUrl}/api/projects`, {
-      headers: { Authorization: `Bearer ${apiKey}` },
-      signal: AbortSignal.timeout(5000),
-    });
+    probeRes = await rawResponseRequest((client) =>
+      client.get("/api/projects", { signal: AbortSignal.timeout(5000) }),
+    );
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    console.error(`Cannot reach moor at ${baseUrl}: ${msg}`);
+    console.error(`Cannot reach moor at ${config.baseUrl}: ${msg}`);
     console.error("Check MOOR_URL and that moor is running (and tunneled, if remote).");
     process.exit(1);
   }
   if (probeRes.status === 401) {
-    console.error(`Authentication failed against ${baseUrl}.`);
+    console.error(`Authentication failed against ${config.baseUrl}.`);
     console.error("Check MOOR_API_KEY matches the value in moor's .env on the server.");
     process.exit(1);
   }
   if (probeRes.status === 503) {
-    console.error(`moor at ${baseUrl} returned 503.`);
+    console.error(`moor at ${config.baseUrl} returned 503.`);
     console.error("Likely cause: MOOR_INITIAL_PASSWORD not configured. Set it and restart moor.");
     process.exit(1);
   }
   if (!probeRes.ok) {
-    console.error(`moor at ${baseUrl} returned ${probeRes.status} on startup probe.`);
+    console.error(`moor at ${config.baseUrl} returned ${probeRes.status} on startup probe.`);
     process.exit(1);
   }
 }
 
 // --- HTTP client ---
 
-function headers(json = false): Record<string, string> {
-  const h: Record<string, string> = { Authorization: `Bearer ${apiKey}` };
-  if (json) h["Content-Type"] = "application/json";
-  return h;
-}
-
-async function apiGet(path: string) {
-  return fetch(`${baseUrl}${path}`, { headers: headers() });
-}
-
-async function apiPost(path: string, body?: unknown) {
-  return fetch(`${baseUrl}${path}`, {
-    method: "POST",
-    headers: headers(body !== undefined),
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  });
-}
-
-async function apiPut(path: string, body: unknown) {
-  return fetch(`${baseUrl}${path}`, {
-    method: "PUT",
-    headers: headers(true),
-    body: JSON.stringify(body),
-  });
-}
-
-async function apiDelete(path: string) {
-  return fetch(`${baseUrl}${path}`, {
-    method: "DELETE",
-    headers: headers(),
-  });
-}
-
-type Project = {
-  id: number;
-  name: string;
-  status: string;
-  container_id: string | null;
-  image_tag: string | null;
-  domain: string | null;
-  docker_image: string | null;
-  github_url: string | null;
-  // #71: live_* fields are written by the API's status reconciler.
-  // status above is moor's RECORDED state (only changes on explicit
-  // start/stop/build/cancel). live_status reflects Docker's view at
-  // last successful inspect. Differences mean moor missed an external
-  // change (or the reconciler hasn't run yet). live_error non-null
-  // means the most recent inspect failed; the live_status / exit_code
-  // shown is the last successful snapshot.
-  live_status?: "running" | "stopped" | "error" | "missing" | null;
-  live_exit_code?: number | null;
-  live_checked_at?: string | null;
-  live_error?: string | null;
+const apiResponse = {
+  get: (path: string) => rawResponseRequest((client) => client.get(path)),
+  post: (path: string, body?: unknown) => rawResponseRequest((client) => client.post(path, body)),
+  put: (path: string, body: unknown) => rawResponseRequest((client) => client.put(path, body)),
+  delete: (path: string) => rawResponseRequest((client) => client.delete(path)),
 };
 
 async function resolveProject(name: string): Promise<Project> {
-  const res = await apiGet("/api/projects");
+  const res = await apiResponse.get("/api/projects");
   if (!res.ok) throw new Error(`Failed to list projects: ${res.status}`);
   const projects = (await res.json()) as Project[];
   const match = projects.find((p) => p.name === name || String(p.id) === name);
@@ -156,142 +136,6 @@ async function readSSE(res: Response): Promise<{
   return { logs, error, structuredError };
 }
 
-// --- Validators ---
-
-/** Validate that a string is a github.com URL. Throws with a clear message on failure.
- *  Stricter than apps/api/routes/docker.ts:validateGithubUrl, which accepts any host
- *  ending in "github.com" (so "evilgithub.com" slips through). MCP rejects that and
- *  surfaces the error at create/update time, not at first build/run. */
-function validateGithubUrl(url: string): void {
-  let host: string;
-  try {
-    host = new URL(url).hostname;
-  } catch {
-    throw new Error(`github_url is not a valid URL: ${url}`);
-  }
-  if (host !== "github.com" && !host.endsWith(".github.com")) {
-    throw new Error(`github_url must be a github.com URL (got hostname "${host}")`);
-  }
-}
-
-/** Strict GitHub repo URL validator used by moor_deploy. Stricter than
- *  validateGithubUrl: requires host = github.com or www.github.com AND a path of
- *  exactly /owner/repo (with optional .git suffix, optional trailing slash).
- *  Rejects gist.github.com, the bare root, and /owner/repo/tree/... extras.
- *  Failed deploys trigger an actual image build/pull, so the up-front check is
- *  worth being pickier than the create/update wrappers. */
-function validateGithubRepoUrl(url: string): void {
-  let parsed: URL;
-  try {
-    parsed = new URL(url);
-  } catch {
-    throw new Error(`github_url is not a valid URL: ${url}`);
-  }
-  // The downstream build path (apps/api/docker.ts:buildImageStreaming) appends ".git"
-  // and a branch ref to whatever URL we forward, so a non-http protocol, query string,
-  // or fragment quietly mangles the resulting git remote. Reject those up front.
-  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
-    throw new Error(`github_url must use http or https (got protocol "${parsed.protocol}")`);
-  }
-  if (parsed.search) {
-    throw new Error(`github_url must not contain query parameters (got "${parsed.search}")`);
-  }
-  if (parsed.hash) {
-    throw new Error(`github_url must not contain a URL fragment (got "${parsed.hash}")`);
-  }
-  const host = parsed.hostname;
-  if (host !== "github.com" && host !== "www.github.com") {
-    throw new Error(`github_url must use github.com or www.github.com (got "${host}")`);
-  }
-  if (!/^\/[^/]+\/[^/]+?(\.git)?\/?$/.test(parsed.pathname)) {
-    throw new Error(
-      `github_url must point to /owner/repo (with optional .git); got "${parsed.pathname}"`,
-    );
-  }
-}
-
-/** Validate a 5-field crontab schedule against what apps/api/cron.ts can actually execute.
- *  Stricter than the scheduler's permissive parser: the scheduler silently never fires
- *  on bad input, so MCP rejects up-front. Returns an error string or null. */
-const CRON_FIELDS: ReadonlyArray<{ name: string; min: number; max: number }> = [
-  { name: "minute", min: 0, max: 59 },
-  { name: "hour", min: 0, max: 23 },
-  { name: "day-of-month", min: 1, max: 31 },
-  { name: "month", min: 1, max: 12 },
-  { name: "day-of-week", min: 0, max: 6 }, // 0=Sunday; scheduler does not translate 7
-];
-
-// Whitelist each comma-separated part against one of the canonical forms below.
-// Anything else (empty parts, leading "-", bare "N/S", "/S", stray characters) is
-// rejected. The scheduler at apps/api/cron.ts silently ignores or mis-parses these
-// inputs, so the validator must be strict where the scheduler is loose.
-const CRON_PART_PATTERNS = [
-  /^\*$/, // *
-  /^(\d+)$/, // N
-  /^(\d+)-(\d+)$/, // A-B
-  /^\*\/(\d+)$/, // */S
-  /^(\d+)-(\d+)\/(\d+)$/, // A-B/S
-];
-
-function validateCronField(field: string, min: number, max: number, name: string): string | null {
-  if (field === "*") return null;
-  if (/[?LW#]/i.test(field)) return `${name}: ?, L, W, # are not supported`;
-  if (/[a-zA-Z]/.test(field))
-    return `${name}: month/day names are not supported, use numeric values`;
-
-  for (const part of field.split(",")) {
-    if (part === "") return `${name}: empty list element`;
-
-    const match = CRON_PART_PATTERNS.map((re) => part.match(re)).find((m) => m !== null);
-    if (!match) return `${name}: invalid expression "${part}"`;
-
-    // Validate captured numbers against per-field bounds and step positivity.
-    // Capture layout depends on which pattern matched, identified by length.
-    const groups = match.slice(1);
-    if (groups.length === 1 && match[0].startsWith("*/")) {
-      // */S
-      const step = Number(groups[0]);
-      if (step <= 0) return `${name}: step must be a positive integer (got "${groups[0]}")`;
-    } else if (groups.length === 1) {
-      // N
-      const n = Number(groups[0]);
-      if (n < min || n > max) return `${name}: ${n} out of bounds [${min}-${max}]`;
-    } else if (groups.length === 2) {
-      // A-B
-      const a = Number(groups[0]);
-      const b = Number(groups[1]);
-      if (a < min || b > max) return `${name}: range ${a}-${b} out of bounds [${min}-${max}]`;
-      if (a > b) return `${name}: range ${a}-${b} is descending`;
-    } else if (groups.length === 3) {
-      // A-B/S
-      const a = Number(groups[0]);
-      const b = Number(groups[1]);
-      const step = Number(groups[2]);
-      if (a < min || b > max) return `${name}: range ${a}-${b} out of bounds [${min}-${max}]`;
-      if (a > b) return `${name}: range ${a}-${b} is descending`;
-      if (step <= 0) return `${name}: step must be a positive integer (got "${groups[2]}")`;
-    }
-  }
-  return null;
-}
-
-function validateCronSchedule(schedule: string): string | null {
-  const parts = schedule.trim().split(/\s+/);
-  if (parts.length !== 5) {
-    return `schedule must have exactly 5 space-separated fields (got ${parts.length})`;
-  }
-  for (let i = 0; i < 5; i++) {
-    const err = validateCronField(
-      parts[i],
-      CRON_FIELDS[i].min,
-      CRON_FIELDS[i].max,
-      CRON_FIELDS[i].name,
-    );
-    if (err) return err;
-  }
-  return null;
-}
-
 // --- MCP Server ---
 
 const server = new McpServer({
@@ -309,7 +153,7 @@ server.registerTool(
       "List all projects managed by Moor. `status` is moor's recorded state (only changes on explicit start/stop/build/cancel). `live_status` is Docker's view at last successful inspect; differences (e.g. recorded='running' live='error') mean moor missed an external change like a host docker stop, crash, or OOM kill. `live_error` non-null means the most recent inspect failed and the live_* values are the last successful snapshot, not necessarily current.",
   },
   async () => {
-    const res = await apiGet("/api/projects");
+    const res = await apiResponse.get("/api/projects");
     if (!res.ok) throw new Error(`Failed: ${res.status}`);
     const projects = (await res.json()) as Project[];
     const summary = projects.map((p) => ({
@@ -339,7 +183,7 @@ server.registerTool(
   },
   async ({ project, lines }) => {
     const p = await resolveProject(project);
-    const res = await apiGet(`/api/projects/${p.id}/logs?tail=${lines}`);
+    const res = await apiResponse.get(`/api/projects/${p.id}/logs?tail=${lines}`);
     // 502 = API surfaced a Docker daemon failure. Throw so the agent
     // gets a tool error, not silent empty logs.
     if (res.status === 502) {
@@ -394,7 +238,7 @@ server.registerTool(
   async ({ project, no_cache }) => {
     const p = await resolveProject(project);
     const query = no_cache ? "?nocache=true" : "";
-    const res = await apiPost(`/api/projects/${p.id}/run${query}`);
+    const res = await apiResponse.post(`/api/projects/${p.id}/run${query}`);
     // /run can fail BEFORE opening the SSE stream — resolver validation,
     // drain mode, invalid URL, credential_not_active. Those land as a
     // plain JSON or text body that readSSE walks without matching any
@@ -435,9 +279,9 @@ server.registerTool(
   },
   async ({ project }) => {
     const p = await resolveProject(project);
-    const stopRes = await apiPost(`/api/projects/${p.id}/stop`);
+    const stopRes = await apiResponse.post(`/api/projects/${p.id}/stop`);
     if (!stopRes.ok) throw new Error(`Failed to stop: ${await stopRes.text()}`);
-    const startRes = await apiPost(`/api/projects/${p.id}/start`);
+    const startRes = await apiResponse.post(`/api/projects/${p.id}/start`);
     if (!startRes.ok) throw new Error(`Failed to start: ${await startRes.text()}`);
     return { content: [{ type: "text", text: `${p.name} restarted.` }] };
   },
@@ -467,7 +311,7 @@ server.registerTool(
     const p = await resolveProject(project);
     const body: Record<string, unknown> = { command };
     if (timeout_ms !== undefined) body.timeout_ms = timeout_ms;
-    const res = await apiPost(`/api/projects/${p.id}/exec`, body);
+    const res = await apiResponse.post(`/api/projects/${p.id}/exec`, body);
     // The API returns 504 with a structured timeout body when the exec hit
     // timeout_ms. Surface the kill outcome in the tool error so the agent can
     // tell "the process was actually stopped" from "we just stopped waiting."
@@ -515,7 +359,7 @@ server.registerTool(
   },
   async ({ project }) => {
     const p = await resolveProject(project);
-    const res = await apiGet(`/api/projects/${p.id}/envs`);
+    const res = await apiResponse.get(`/api/projects/${p.id}/envs`);
     if (!res.ok) throw new Error(`Failed: ${res.status}`);
     const vars = (await res.json()) as { key: string; value: string }[];
     if (vars.length === 0)
@@ -542,7 +386,7 @@ server.registerTool(
     const p = await resolveProject(project);
 
     // Fetch existing and merge
-    const existingRes = await apiGet(`/api/projects/${p.id}/envs`);
+    const existingRes = await apiResponse.get(`/api/projects/${p.id}/envs`);
     if (!existingRes.ok) throw new Error(`Failed to get envs: ${existingRes.status}`);
     const existing = (await existingRes.json()) as { key: string; value: string }[];
     const merged = new Map(existing.map((v) => [v.key, v.value]));
@@ -551,7 +395,7 @@ server.registerTool(
     }
     const allVars = Array.from(merged, ([key, value]) => ({ key, value }));
 
-    const setRes = await apiPut(`/api/projects/${p.id}/envs`, allVars);
+    const setRes = await apiResponse.put(`/api/projects/${p.id}/envs`, allVars);
     if (!setRes.ok) throw new Error(`Failed to set envs: ${await setRes.text()}`);
 
     const keys = Object.keys(vars).join(", ");
@@ -559,8 +403,8 @@ server.registerTool(
 
     // Restart if running
     if (p.status === "running") {
-      await apiPost(`/api/projects/${p.id}/stop`);
-      const startRes = await apiPost(`/api/projects/${p.id}/start`);
+      await apiResponse.post(`/api/projects/${p.id}/stop`);
+      const startRes = await apiResponse.post(`/api/projects/${p.id}/start`);
       if (!startRes.ok) throw new Error(`Set vars but failed to restart: ${await startRes.text()}`);
       text += " Container restarted.";
     }
@@ -577,7 +421,7 @@ server.registerTool(
       "Get server resource usage: load, memory, per-filesystem disk usage (the filesystems the moor container can see, plus any operator-configured monitored host disks via MOOR_MONITORED_DISKS), Docker disk by category (images/containers/volumes/build cache) with reclaimable bytes, and container counts. Note: cpu.percent is load-derived (load avg ÷ cores), not instantaneous CPU; use the `load` field for the same signal with explicit naming.",
   },
   async () => {
-    const res = await apiGet("/api/server/stats");
+    const res = await apiResponse.get("/api/server/stats");
     if (!res.ok) throw new Error(`Failed: ${res.status}`);
     const s = (await res.json()) as {
       hostname: string;
@@ -641,7 +485,7 @@ server.registerTool(
       "Report moor's current version + image digest, the latest available digest on GHCR, active in-flight work counts, DB backup recency, and a safe_to_update boolean. update_available is null (not false) when either the local repo_digest or the registry digest is unknown — never lies by comparing across identifier spaces. unsafe_reasons is a human-readable array; render inline rather than re-deriving from booleans. Read-only diagnostic — does NOT perform any update.",
   },
   async () => {
-    const res = await apiGet("/api/server/update-status");
+    const res = await apiResponse.get("/api/server/update-status");
     if (!res.ok) throw new Error(`Failed: ${res.status} ${await res.text()}`);
     const s = (await res.json()) as {
       current: {
@@ -754,7 +598,7 @@ server.registerTool(
       "Read-only: current drain state (enabled, reason, expires_at, clear_after_version) plus counts of active work the operator should wait on before an update. active_work uses the same counter as moor_update_status so the two never disagree.",
   },
   async () => {
-    const res = await apiGet("/api/server/drain");
+    const res = await apiResponse.get("/api/server/drain");
     if (!res.ok) throw new Error(`drain status failed: ${res.status} ${await res.text()}`);
     const s = (await res.json()) as DrainStatusResponse;
     const lines = renderDrainState(s.state);
@@ -791,7 +635,7 @@ server.registerTool(
     }),
   },
   async ({ reason, ttl_minutes, clear_after_version }) => {
-    const res = await apiPost("/api/server/drain/enable", {
+    const res = await apiResponse.post("/api/server/drain/enable", {
       reason,
       ttl_minutes,
       clear_after_version,
@@ -810,7 +654,7 @@ server.registerTool(
       "Explicit operator action to clear drain immediately. Does not kill or restart anything — just removes the gate so new builds/deploys/execs/cron triggers/terminal upgrades succeed again.",
   },
   async () => {
-    const res = await apiPost("/api/server/drain/disable", {});
+    const res = await apiResponse.post("/api/server/drain/disable", {});
     if (!res.ok) throw new Error(`drain disable failed: ${res.status} ${await res.text()}`);
     const s = (await res.json()) as DrainStateResponse;
     return { content: [{ type: "text", text: renderDrainState(s.state).join("\n") }] };
@@ -830,7 +674,7 @@ server.registerTool(
       "Take a SQLite snapshot of moor.db via VACUUM INTO. The file lands next to the main DB as moor.db.backup-<epoch-ms>. Retention is enforced after each snapshot (keeps the 7 most recent by default; older ones are pruned). After this returns, moor_update_status' db_backup.age_seconds will read close to 0. Use before a manual `docker compose pull moor && up -d` if you don't have MOOR_DB_BACKUP_INTERVAL_HOURS scheduled.",
   },
   async () => {
-    const res = await apiPost("/api/server/backup", {});
+    const res = await apiResponse.post("/api/server/backup", {});
     if (!res.ok) throw new Error(`db backup failed: ${res.status} ${await res.text()}`);
     const r = (await res.json()) as { path: string; sizeBytes: number; durationMs: number };
     const mb = (r.sizeBytes / (1024 * 1024)).toFixed(2);
@@ -883,7 +727,7 @@ server.registerTool(
     }),
   },
   async (input) => {
-    const res = await apiPost("/api/server/update/apply", input ?? {});
+    const res = await apiResponse.post("/api/server/update/apply", input ?? {});
     if (res.status === 202) {
       const { audit_id } = (await res.json()) as { audit_id: number };
       return {
@@ -956,7 +800,7 @@ server.registerTool(
     const path = qs.toString()
       ? `/api/server/update/audit?${qs.toString()}`
       : "/api/server/update/audit";
-    const res = await apiGet(path);
+    const res = await apiResponse.get(path);
     if (!res.ok) throw new Error(`update audit failed: ${res.status} ${await res.text()}`);
     const { rows } = (await res.json()) as { rows: UpdateAuditApiRow[] };
     return {
@@ -979,7 +823,7 @@ server.registerTool(
     }),
   },
   async ({ scope }) => {
-    const res = await apiPost("/api/server/cleanup/plan", { scope });
+    const res = await apiResponse.post("/api/server/cleanup/plan", { scope });
     if (!res.ok) throw new Error(`plan failed: ${res.status} ${await res.text()}`);
     const data = (await res.json()) as {
       candidates: Array<
@@ -1044,7 +888,7 @@ server.registerTool(
     }),
   },
   async ({ candidates }) => {
-    const res = await apiPost("/api/server/cleanup/execute", { candidates });
+    const res = await apiResponse.post("/api/server/cleanup/execute", { candidates });
     if (!res.ok) throw new Error(`execute failed: ${res.status} ${await res.text()}`);
     const data = (await res.json()) as {
       audit_id: number;
@@ -1089,7 +933,7 @@ server.registerTool(
   },
   async ({ project }) => {
     const p = await resolveProject(project);
-    const res = await apiGet(`/api/projects/${p.id}/container-stats`);
+    const res = await apiResponse.get(`/api/projects/${p.id}/container-stats`);
     if (!res.ok) throw new Error(`Failed: ${res.status} ${await res.text()}`);
     const s = (await res.json()) as {
       running: boolean;
@@ -1146,7 +990,7 @@ server.registerTool(
     const p = await resolveProject(project);
     const to = to_ms ?? Date.now();
     const from = from_ms ?? to - (hours ?? 24) * 3_600_000;
-    const res = await apiGet(`/api/projects/${p.id}/stats/history?from=${from}&to=${to}`);
+    const res = await apiResponse.get(`/api/projects/${p.id}/stats/history?from=${from}&to=${to}`);
     if (!res.ok) throw new Error(`Failed: ${res.status} ${await res.text()}`);
     const h = (await res.json()) as {
       from_ms: number;
@@ -1307,7 +1151,7 @@ server.registerTool(
     if (input.github_url) validateGithubUrl(input.github_url);
 
     const { volumes, ...createBody } = input;
-    const res = await apiPost("/api/projects", createBody);
+    const res = await apiResponse.post("/api/projects", createBody);
     if (!res.ok) throw new Error(`Failed to create project: ${await res.text()}`);
     const project = (await res.json()) as { id: number };
 
@@ -1317,7 +1161,7 @@ server.registerTool(
     const volumeCreated: string[] = [];
     if (volumes && volumes.length > 0) {
       for (const v of volumes) {
-        const vRes = await apiPost(`/api/projects/${project.id}/volumes`, v);
+        const vRes = await apiResponse.post(`/api/projects/${project.id}/volumes`, v);
         if (vRes.ok) volumeCreated.push(v.name);
         else volumeFailures.push({ name: v.name, error: await vRes.text() });
       }
@@ -1413,7 +1257,7 @@ server.registerTool(
     if (updates.github_url) validateGithubUrl(updates.github_url);
 
     const p = await resolveProject(project);
-    const res = await apiPut(`/api/projects/${p.id}`, updates);
+    const res = await apiResponse.put(`/api/projects/${p.id}`, updates);
     if (!res.ok) throw new Error(`Failed to update project: ${await res.text()}`);
     const updated = await res.json();
     return { content: [{ type: "text", text: JSON.stringify(updated, null, 2) }] };
@@ -1450,7 +1294,7 @@ server.registerTool(
       );
     }
     const qs = purge_volumes ? "?purge_volumes=true" : "";
-    const res = await apiDelete(`/api/projects/${p.id}${qs}`);
+    const res = await apiResponse.delete(`/api/projects/${p.id}${qs}`);
     if (!res.ok) {
       const text = await res.text();
       try {
@@ -1494,7 +1338,7 @@ server.registerTool(
     const err = validateCronSchedule(schedule);
     if (err) throw new Error(`Invalid schedule: ${err}`);
     const p = await resolveProject(project);
-    const res = await apiPost(`/api/projects/${p.id}/crons`, { name, schedule, command });
+    const res = await apiResponse.post(`/api/projects/${p.id}/crons`, { name, schedule, command });
     if (!res.ok) throw new Error(`Failed to create cron: ${await res.text()}`);
     const cron = await res.json();
     return { content: [{ type: "text", text: JSON.stringify(cron, null, 2) }] };
@@ -1527,7 +1371,7 @@ server.registerTool(
     if (Object.keys(body).length === 0) {
       throw new Error("Provide at least one field to update");
     }
-    const res = await apiPut(`/api/crons/${cron_id}`, body);
+    const res = await apiResponse.put(`/api/crons/${cron_id}`, body);
     if (!res.ok) throw new Error(`Failed to update cron: ${await res.text()}`);
     const cron = await res.json();
     return { content: [{ type: "text", text: JSON.stringify(cron, null, 2) }] };
@@ -1544,7 +1388,7 @@ server.registerTool(
     }),
   },
   async ({ cron_id }) => {
-    const res = await apiDelete(`/api/crons/${cron_id}`);
+    const res = await apiResponse.delete(`/api/crons/${cron_id}`);
     if (!res.ok) throw new Error(`Failed to delete cron: ${await res.text()}`);
     // API returns 204 whether or not the row existed; phrase the response so it
     // doesn't claim a row was removed when it might already have been gone.
@@ -1563,7 +1407,7 @@ server.registerTool(
     }),
   },
   async ({ cron_id }) => {
-    const res = await apiPost(`/api/crons/${cron_id}/run`);
+    const res = await apiResponse.post(`/api/crons/${cron_id}/run`);
     if (!res.ok) {
       const text = await res.text();
       let message = text;
@@ -1593,7 +1437,7 @@ server.registerTool(
   async ({ project, keys }) => {
     const p = await resolveProject(project);
 
-    const existingRes = await apiGet(`/api/projects/${p.id}/envs`);
+    const existingRes = await apiResponse.get(`/api/projects/${p.id}/envs`);
     if (!existingRes.ok) throw new Error(`Failed to get envs: ${existingRes.status}`);
     const existing = (await existingRes.json()) as { key: string; value: string }[];
     const existingKeys = new Set(existing.map((v) => v.key));
@@ -1614,7 +1458,7 @@ server.registerTool(
     }
 
     for (const key of toDelete) {
-      const res = await apiDelete(`/api/projects/${p.id}/envs/${encodeURIComponent(key)}`);
+      const res = await apiResponse.delete(`/api/projects/${p.id}/envs/${encodeURIComponent(key)}`);
       if (!res.ok) throw new Error(`Failed to delete ${key}: ${await res.text()}`);
     }
 
@@ -1622,8 +1466,8 @@ server.registerTool(
     if (missing.length > 0) text += ` (Not present: ${missing.join(", ")}.)`;
 
     if (p.status === "running") {
-      await apiPost(`/api/projects/${p.id}/stop`);
-      const startRes = await apiPost(`/api/projects/${p.id}/start`);
+      await apiResponse.post(`/api/projects/${p.id}/stop`);
+      const startRes = await apiResponse.post(`/api/projects/${p.id}/start`);
       if (!startRes.ok) {
         throw new Error(`Deleted vars but failed to restart: ${await startRes.text()}`);
       }
@@ -1645,7 +1489,7 @@ server.registerTool(
     }),
   },
   async ({ domain }) => {
-    const res = await apiPost("/api/dns-check", { domain });
+    const res = await apiResponse.post("/api/dns-check", { domain });
     if (!res.ok) throw new Error(`Failed: ${await res.text()}`);
     const data = (await res.json()) as {
       resolves: boolean;
@@ -1679,7 +1523,7 @@ server.registerTool(
   },
   async ({ project }) => {
     const p = await resolveProject(project);
-    const res = await apiGet(`/api/projects/${p.id}/volumes`);
+    const res = await apiResponse.get(`/api/projects/${p.id}/volumes`);
     if (!res.ok) throw new Error(`Failed: ${await res.text()}`);
     const rows = (await res.json()) as Array<{
       id: number;
@@ -1717,7 +1561,7 @@ server.registerTool(
   },
   async ({ project, name, target }) => {
     const p = await resolveProject(project);
-    const res = await apiPost(`/api/projects/${p.id}/volumes`, { name, target });
+    const res = await apiResponse.post(`/api/projects/${p.id}/volumes`, { name, target });
     if (!res.ok) throw new Error(`Failed: ${await res.text()}`);
     const created = (await res.json()) as {
       id: number;
@@ -1749,7 +1593,7 @@ server.registerTool(
   },
   async ({ project, volume_id }) => {
     const p = await resolveProject(project);
-    const res = await apiDelete(`/api/projects/${p.id}/volumes/${volume_id}`);
+    const res = await apiResponse.delete(`/api/projects/${p.id}/volumes/${volume_id}`);
     if (res.status === 404) throw new Error(`Volume ${volume_id} not found on project ${p.name}`);
     if (!res.ok) throw new Error(`Failed: ${await res.text()}`);
     const body = (await res.json()) as { docker_name: string; message: string };
@@ -1795,7 +1639,7 @@ server.registerTool(
     if (content !== undefined) body.content = content;
     if (env_ref !== undefined) body.env_ref = env_ref;
     if (mode !== undefined) body.mode = mode;
-    const res = await apiPost(`/api/projects/${p.id}/files`, body);
+    const res = await apiResponse.post(`/api/projects/${p.id}/files`, body);
     if (!res.ok) throw new Error(`Failed: ${await res.text()}`);
     const saved = (await res.json()) as {
       id: number;
@@ -1828,7 +1672,7 @@ server.registerTool(
   },
   async ({ project }) => {
     const p = await resolveProject(project);
-    const res = await apiGet(`/api/projects/${p.id}/files`);
+    const res = await apiResponse.get(`/api/projects/${p.id}/files`);
     if (!res.ok) throw new Error(`Failed: ${await res.text()}`);
     const rows = (await res.json()) as Array<{
       id: number;
@@ -1861,7 +1705,7 @@ server.registerTool(
   },
   async ({ project, file_id }) => {
     const p = await resolveProject(project);
-    const res = await apiDelete(`/api/projects/${p.id}/files/${file_id}`);
+    const res = await apiResponse.delete(`/api/projects/${p.id}/files/${file_id}`);
     if (res.status === 404) throw new Error(`File ${file_id} not found on project ${p.name}`);
     if (!res.ok) throw new Error(`Failed: ${await res.text()}`);
     return {
@@ -1924,7 +1768,9 @@ server.registerTool(
   },
   async ({ project, page }) => {
     const p = await resolveProject(project);
-    const res = await apiGet(`/api/projects/${p.id}/runs?include_output=false&page=${page}`);
+    const res = await apiResponse.get(
+      `/api/projects/${p.id}/runs?include_output=false&page=${page}`,
+    );
     if (!res.ok) throw new Error(`Failed: ${await res.text()}`);
     const data = (await res.json()) as {
       runs: Array<{
@@ -1993,7 +1839,7 @@ server.registerTool(
   },
   async ({ run_id, tail_bytes }) => {
     const cap = tail_bytes ?? 8192;
-    const res = await apiGet(`/api/runs/${run_id}`);
+    const res = await apiResponse.get(`/api/runs/${run_id}`);
     if (res.status === 404) throw new Error(`run_id ${run_id} not found`);
     if (!res.ok) throw new Error(`Failed: ${await res.text()}`);
     const r = (await res.json()) as {
@@ -2045,7 +1891,7 @@ server.registerTool(
     }),
   },
   async ({ run_id }) => {
-    const res = await apiPost(`/api/runs/${run_id}/stop`);
+    const res = await apiResponse.post(`/api/runs/${run_id}/stop`);
     // The /stop route returns 200 for cancelled/cancelled_cron and 4xx
     // for the rest of the known result categories (with a result field
     // either way). All of those are expected outcomes — render them as
@@ -2223,7 +2069,7 @@ server.registerTool(
     // Skipped when run: false because the no-run mode is metadata-only —
     // no container work, so drain doesn't apply.
     if (input.run !== false) {
-      const drainRes = await apiGet("/api/server/drain");
+      const drainRes = await apiResponse.get("/api/server/drain");
       if (drainRes.ok) {
         const { state } = (await drainRes.json()) as {
           state: { enabled: boolean; reason: string | null; expires_at: string | null };
@@ -2241,7 +2087,7 @@ server.registerTool(
     }
 
     // Resolve existence and check domain conflicts from a single project list.
-    const listRes = await apiGet("/api/projects");
+    const listRes = await apiResponse.get("/api/projects");
     if (!listRes.ok) throw new Error(`Failed to list projects: ${listRes.status}`);
     const projects = (await listRes.json()) as Project[];
     const existing = projects.find((p) => p.name === input.name);
@@ -2296,7 +2142,7 @@ server.registerTool(
         command: input.command,
         entrypoint: input.entrypoint,
       };
-      const res = await apiPost("/api/projects", createBody);
+      const res = await apiResponse.post("/api/projects", createBody);
       if (!res.ok) throw new Error(`[create] ${await res.text()}`);
       const created = (await res.json()) as Project;
       projectId = created.id;
@@ -2320,7 +2166,7 @@ server.registerTool(
       if (input.entrypoint !== undefined) updateBody.entrypoint = input.entrypoint;
 
       if (Object.keys(updateBody).length > 0) {
-        const res = await apiPut(`/api/projects/${existing.id}`, updateBody);
+        const res = await apiResponse.put(`/api/projects/${existing.id}`, updateBody);
         if (!res.ok) throw new Error(`[update] ${await res.text()}`);
       }
       projectId = existing.id;
@@ -2335,7 +2181,7 @@ server.registerTool(
       // per conflict. Only fetched if a 409 actually occurs.
       let existingVolumes: Array<{ name: string; target: string }> | null = null;
       for (const v of input.volumes) {
-        const vRes = await apiPost(`/api/projects/${projectId}/volumes`, v);
+        const vRes = await apiResponse.post(`/api/projects/${projectId}/volumes`, v);
         if (vRes.ok) continue;
         const text = await vRes.text();
         if (vRes.status !== 409) {
@@ -2346,7 +2192,7 @@ server.registerTool(
         // means the operator changed the desired mount and we'd silently
         // ignore the change — fail loudly instead.
         if (existingVolumes === null) {
-          const listRes = await apiGet(`/api/projects/${projectId}/volumes`);
+          const listRes = await apiResponse.get(`/api/projects/${projectId}/volumes`);
           if (!listRes.ok) {
             throw new Error(
               `[volumes] could not resolve 409 on ${v.name}: failed to list existing volumes: ${await listRes.text()}`,
@@ -2378,7 +2224,7 @@ server.registerTool(
     // the container right before start on the recreate the run step triggers.
     if (input.files && input.files.length > 0) {
       for (const f of input.files) {
-        const fRes = await apiPost(`/api/projects/${projectId}/files`, f);
+        const fRes = await apiResponse.post(`/api/projects/${projectId}/files`, f);
         if (!fRes.ok) {
           throw new Error(`[files] failed to set ${f.path}: ${await fRes.text()}`);
         }
@@ -2389,7 +2235,7 @@ server.registerTool(
     const envEntries = input.env ? Object.entries(input.env) : [];
     const envProvided = envEntries.length > 0;
     if (envProvided) {
-      const existingRes = await apiGet(`/api/projects/${projectId}/envs`);
+      const existingRes = await apiResponse.get(`/api/projects/${projectId}/envs`);
       if (!existingRes.ok) {
         throw new Error(`[set_env] Failed to read envs: ${existingRes.status}`);
       }
@@ -2397,7 +2243,7 @@ server.registerTool(
       const merged = new Map(existingEnvs.map((v) => [v.key, v.value]));
       for (const [k, v] of envEntries) merged.set(k, v);
       const allVars = Array.from(merged, ([key, value]) => ({ key, value }));
-      const putRes = await apiPut(`/api/projects/${projectId}/envs`, allVars);
+      const putRes = await apiResponse.put(`/api/projects/${projectId}/envs`, allVars);
       if (!putRes.ok) throw new Error(`[set_env] ${await putRes.text()}`);
     }
 
@@ -2405,7 +2251,7 @@ server.registerTool(
     let runLogs = "";
     let runStructuredError: { code: string; message: string } | undefined;
     if (input.run) {
-      const runRes = await apiPost(`/api/projects/${projectId}/run`);
+      const runRes = await apiResponse.post(`/api/projects/${projectId}/run`);
       if (!runRes.ok) throw new Error(`[run] ${await runRes.text()}`);
       const { logs, error, structuredError } = await readSSE(runRes);
       runLogs = logs;
@@ -2485,7 +2331,7 @@ server.registerTool(
     const p = await resolveProject(project);
     const body: Record<string, unknown> = { command };
     if (timeout_ms !== undefined) body.timeout_ms = timeout_ms;
-    const res = await apiPost(`/api/projects/${p.id}/exec/async`, body);
+    const res = await apiResponse.post(`/api/projects/${p.id}/exec/async`, body);
     if (!res.ok) throw new Error(`Failed: ${await res.text()}`);
     const data = (await res.json()) as { run_id: number };
     return {
@@ -2520,7 +2366,7 @@ server.registerTool(
   },
   async ({ run_id, tail_bytes }) => {
     const cap = tail_bytes ?? 8192;
-    const res = await apiGet(`/api/exec/${run_id}`);
+    const res = await apiResponse.get(`/api/exec/${run_id}`);
     if (res.status === 404) throw new Error(`run_id ${run_id} not found`);
     if (!res.ok) throw new Error(`Failed: ${await res.text()}`);
     const data = (await res.json()) as {
@@ -2593,7 +2439,7 @@ server.registerTool(
     }),
   },
   async ({ run_id }) => {
-    const res = await apiPost(`/api/exec/${run_id}/stop`);
+    const res = await apiResponse.post(`/api/exec/${run_id}/stop`);
     if (res.status === 404) throw new Error(`run_id ${run_id} not found`);
     const data = (await res.json()) as {
       ok: boolean;
@@ -2644,7 +2490,7 @@ server.registerTool(
       "List all stored Docker registry credentials. Returns metadata only - the raw secret value is never returned by any read path. Each row carries `secret: { configured: true, kind }` where kind is derived from known token prefixes (github_classic_pat, github_fine_grained_pat) or 'unknown'.",
   },
   async () => {
-    const res = await apiGet("/api/server/registry-credentials");
+    const res = await apiResponse.get("/api/server/registry-credentials");
     if (!res.ok) throw new Error(`Failed: ${res.status} ${await res.text()}`);
     const data = (await res.json()) as { rows: RegistryCredentialMetadata[] };
     const text =
@@ -2673,7 +2519,7 @@ server.registerTool(
     }),
   },
   async ({ id }) => {
-    const res = await apiGet(`/api/server/registry-credentials/${id}`);
+    const res = await apiResponse.get(`/api/server/registry-credentials/${id}`);
     if (res.status === 404) throw new Error(`credential id=${id} not found`);
     if (!res.ok) throw new Error(`Failed: ${res.status} ${await res.text()}`);
     const row = (await res.json()) as RegistryCredentialMetadata;
@@ -2707,7 +2553,11 @@ server.registerTool(
     }),
   },
   async ({ hostname, username, secret }) => {
-    const res = await apiPost("/api/server/registry-credentials", { hostname, username, secret });
+    const res = await apiResponse.post("/api/server/registry-credentials", {
+      hostname,
+      username,
+      secret,
+    });
     if (!res.ok) throw new Error(`Failed: ${res.status} ${await res.text()}`);
     const row = (await res.json()) as RegistryCredentialMetadata;
     return {
@@ -2744,7 +2594,7 @@ server.registerTool(
     const patch: Record<string, string> = {};
     if (username !== undefined) patch.username = username;
     if (secret !== undefined) patch.secret = secret;
-    const res = await apiPut(`/api/server/registry-credentials/${id}`, patch);
+    const res = await apiResponse.put(`/api/server/registry-credentials/${id}`, patch);
     if (res.status === 404) throw new Error(`credential id=${id} not found`);
     if (!res.ok) throw new Error(`Failed: ${res.status} ${await res.text()}`);
     const row = (await res.json()) as RegistryCredentialMetadata;
@@ -2779,7 +2629,7 @@ server.registerTool(
     }),
   },
   async ({ id, confirm_hostname }) => {
-    const getRes = await apiGet(`/api/server/registry-credentials/${id}`);
+    const getRes = await apiResponse.get(`/api/server/registry-credentials/${id}`);
     if (getRes.status === 404) throw new Error(`credential id=${id} not found`);
     if (!getRes.ok)
       throw new Error(`Failed to fetch credential: ${getRes.status} ${await getRes.text()}`);
@@ -2789,7 +2639,7 @@ server.registerTool(
         `confirm_hostname "${confirm_hostname}" does not match resolved hostname "${row.hostname}". Refusing to delete.`,
       );
     }
-    const delRes = await apiDelete(`/api/server/registry-credentials/${id}`);
+    const delRes = await apiResponse.delete(`/api/server/registry-credentials/${id}`);
     if (!delRes.ok) throw new Error(`Failed to delete: ${delRes.status} ${await delRes.text()}`);
     return {
       content: [{ type: "text", text: `Deleted credential for ${row.hostname} (id=${id}).` }],
@@ -2837,7 +2687,7 @@ server.registerTool(
       "List all stored Git source credentials (HTTPS PATs). Returns metadata only - the raw secret value is never returned by any read path. Multiple credentials can share a hostname (e.g. two github.com rows for different orgs); use label to disambiguate.",
   },
   async () => {
-    const res = await apiGet("/api/server/source-credentials");
+    const res = await apiResponse.get("/api/server/source-credentials");
     if (!res.ok) throw new Error(`Failed: ${res.status} ${await res.text()}`);
     const data = (await res.json()) as { rows: SourceCredentialMetadata[] };
     const text =
@@ -2862,7 +2712,7 @@ server.registerTool(
     }),
   },
   async ({ id }) => {
-    const res = await apiGet(`/api/server/source-credentials/${id}`);
+    const res = await apiResponse.get(`/api/server/source-credentials/${id}`);
     if (res.status === 404) throw new Error(`source credential id=${id} not found`);
     if (!res.ok) throw new Error(`Failed: ${res.status} ${await res.text()}`);
     const row = (await res.json()) as SourceCredentialMetadata;
@@ -2910,7 +2760,7 @@ server.registerTool(
   async ({ hostname, label, username, secret, expires_at }) => {
     const body: Record<string, unknown> = { hostname, label, username, secret };
     if (expires_at !== undefined) body.expires_at = expires_at;
-    const res = await apiPost("/api/server/source-credentials", body);
+    const res = await apiResponse.post("/api/server/source-credentials", body);
     if (!res.ok) throw new Error(`Failed: ${res.status} ${await res.text()}`);
     const row = (await res.json()) as SourceCredentialMetadata;
     return {
@@ -2956,7 +2806,7 @@ server.registerTool(
     if (secret !== undefined) patch.secret = secret;
     if (label !== undefined) patch.label = label;
     if (expires_at !== undefined) patch.expires_at = expires_at;
-    const res = await apiPut(`/api/server/source-credentials/${id}`, patch);
+    const res = await apiResponse.put(`/api/server/source-credentials/${id}`, patch);
     if (res.status === 404) throw new Error(`source credential id=${id} not found`);
     if (!res.ok) throw new Error(`Failed: ${res.status} ${await res.text()}`);
     const row = (await res.json()) as SourceCredentialMetadata;
@@ -2993,7 +2843,7 @@ server.registerTool(
     }),
   },
   async ({ id, confirm_label }) => {
-    const getRes = await apiGet(`/api/server/source-credentials/${id}`);
+    const getRes = await apiResponse.get(`/api/server/source-credentials/${id}`);
     if (getRes.status === 404) throw new Error(`source credential id=${id} not found`);
     if (!getRes.ok)
       throw new Error(`Failed to fetch credential: ${getRes.status} ${await getRes.text()}`);
@@ -3003,7 +2853,7 @@ server.registerTool(
         `confirm_label "${confirm_label}" does not match resolved label "${row.label}". Refusing to delete.`,
       );
     }
-    const delRes = await apiDelete(
+    const delRes = await apiResponse.delete(
       `/api/server/source-credentials/${id}?confirm_label=${encodeURIComponent(row.label)}`,
     );
     if (delRes.status === 409) {
@@ -3053,7 +2903,7 @@ server.registerTool(
     const body: Record<string, unknown> = { github_url };
     if (branch !== undefined) body.branch = branch;
     if (source_credential_id !== undefined) body.source_credential_id = source_credential_id;
-    const res = await apiPost("/api/server/source-credentials/check", body);
+    const res = await apiResponse.post("/api/server/source-credentials/check", body);
     const json = (await res.json()) as Record<string, unknown>;
     if (res.ok) {
       const def = json.default_branch ? ` default_branch=${json.default_branch}` : "";
