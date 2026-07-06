@@ -6,6 +6,7 @@ on:
     branches: [main]
     paths:
       - "packages/mcp/**"
+      - "packages/contract/**"
 
 jobs:
   check:
@@ -16,6 +17,11 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bunx biome check packages/mcp
       - run: cd packages/mcp && bunx tsc --noEmit
+      - name: MCP pack smoke test
+        run: |
+          cd packages/mcp && npm pack --pack-destination /tmp
+          tar -xzOf /tmp/moor-sh-mcp-*.tgz package/package.json | (! grep -q "workspace:")
+          tar -tzf /tmp/moor-sh-mcp-*.tgz | grep -q "package/dist/index.js"
 
   release:
     needs: check

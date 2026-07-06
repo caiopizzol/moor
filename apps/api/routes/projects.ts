@@ -2,6 +2,7 @@ import { syncCaddyRoutes } from "../caddy";
 import { parseStringArray, serializeStringArray, validateStringArray } from "../container-config";
 import db from "../db";
 import { removeContainer, removeVolume, stopContainer } from "../docker";
+import { errorResponse, responseErrorMessage } from "../http";
 import { reconcileGithubUrl, redactCredentials, serializeProject } from "../redact";
 import { validateCpus, validateMemoryLimitMb } from "../resource-limits";
 import { collectProjectVolumeDockerNames } from "./volumes";
@@ -47,10 +48,10 @@ async function applyCaddySync(action: string): Promise<Response | null> {
     return null;
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    return new Response(
+    return errorResponse(
       `${action} saved, but Caddy route apply failed: ${msg}\n` +
         "Manual recovery: docker compose exec caddy caddy reload --config /app/data/Caddyfile --adapter caddyfile",
-      { status: 500 },
+      500,
     );
   }
 }
@@ -74,7 +75,7 @@ export async function handleProjects(req: Request, url: URL): Promise<Response |
     const row = db.query("SELECT * FROM projects WHERE id = ?").get(id) as {
       github_url: string | null;
     } | null;
-    if (!row) return new Response("Not found", { status: 404 });
+    if (!row) return errorResponse("Not found", 404);
     return Response.json(presentProject(row));
   }
 
@@ -137,7 +138,7 @@ export async function handleProjects(req: Request, url: URL): Promise<Response |
     if (caddyFailure || purgeFailures.length > 0) {
       const messages: string[] = [];
       if (caddyFailure) {
-        messages.push(`Caddy reload failed (${await caddyFailure.text()})`);
+        messages.push(`Caddy reload failed (${await responseErrorMessage(caddyFailure)})`);
       }
       if (purgeFailures.length > 0) {
         messages.push(
@@ -189,33 +190,31 @@ async function handleCreate(req: Request): Promise<Response> {
   console.log(
     `[projects] create: name=${name} github_url=${redactCredentials(github_url) ?? ""} docker_image=${docker_image} branch=${branch || "main"} dockerfile=${dockerfile || "Dockerfile"} domain=${domain || ""} domain_port=${domain_port || ""} memory_limit_mb=${memory_limit_mb ?? ""} cpus=${cpus ?? ""} source_credential_id=${source_credential_id ?? ""}`,
   );
-  if (!name) return new Response("name is required", { status: 400 });
+  if (!name) return errorResponse("name is required", 400);
   if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/.test(name)) {
-    return new Response("name must be alphanumeric (hyphens and underscores allowed)", {
-      status: 400,
-    });
+    return errorResponse("name must be alphanumeric (hyphens and underscores allowed)", 400);
   }
 
   const memErr = validateMemoryLimitMb(memory_limit_mb);
-  if (memErr) return new Response(memErr, { status: 400 });
+  if (memErr) return errorResponse(memErr, 400);
   const cpuErr = validateCpus(cpus);
-  if (cpuErr) return new Response(cpuErr, { status: 400 });
+  if (cpuErr) return errorResponse(cpuErr, 400);
   const cmdErr = validateStringArray(command, "command");
-  if (cmdErr) return new Response(cmdErr, { status: 400 });
+  if (cmdErr) return errorResponse(cmdErr, 400);
   const epErr = validateStringArray(entrypoint, "entrypoint");
-  if (epErr) return new Response(epErr, { status: 400 });
+  if (epErr) return errorResponse(epErr, 400);
   // docker_image projects cannot pin a source credential; the id is
   // about to be force-nulled regardless of input. Skip validation so
   // a caller mixing docker_image + a stale id doesn't get a 400 for
   // a field that's being ignored anyway.
   if (!docker_image) {
     const credErr = validateSourceCredentialId(source_credential_id);
-    if (credErr) return new Response(credErr, { status: 400 });
+    if (credErr) return errorResponse(credErr, 400);
   }
 
   const existing = db.query("SELECT id FROM projects WHERE name = ?").get(name);
   if (existing) {
-    return new Response("A project with this name already exists", { status: 409 });
+    return errorResponse("A project with this name already exists", 409);
   }
 
   const validPolicies = ["no", "on-failure", "always", "unless-stopped"];
@@ -265,19 +264,19 @@ async function handleUpdate(req: Request, id: number): Promise<Response> {
 
   if ("memory_limit_mb" in body) {
     const err = validateMemoryLimitMb(body.memory_limit_mb);
-    if (err) return new Response(err, { status: 400 });
+    if (err) return errorResponse(err, 400);
   }
   if ("cpus" in body) {
     const err = validateCpus(body.cpus);
-    if (err) return new Response(err, { status: 400 });
+    if (err) return errorResponse(err, 400);
   }
   if ("command" in body) {
     const err = validateStringArray(body.command, "command");
-    if (err) return new Response(err, { status: 400 });
+    if (err) return errorResponse(err, 400);
   }
   if ("entrypoint" in body) {
     const err = validateStringArray(body.entrypoint, "entrypoint");
-    if (err) return new Response(err, { status: 400 });
+    if (err) return errorResponse(err, 400);
   }
   // Skip credential validation when the update switches to docker_image:
   // source_credential_id is about to be force-cleared on this row, so a
@@ -285,7 +284,7 @@ async function handleUpdate(req: Request, id: number): Promise<Response> {
   const switchingToDockerImage = "docker_image" in body && !!body.docker_image;
   if ("source_credential_id" in body && !switchingToDockerImage) {
     const err = validateSourceCredentialId(body.source_credential_id);
-    if (err) return new Response(err, { status: 400 });
+    if (err) return errorResponse(err, 400);
   }
 
   // Reconciliation: if the incoming github_url matches the redacted form of the
@@ -373,10 +372,10 @@ async function handleUpdate(req: Request, id: number): Promise<Response> {
       const current = db.query("SELECT * FROM projects WHERE id = ?").get(id) as {
         github_url: string | null;
       } | null;
-      if (!current) return new Response("Not found", { status: 404 });
+      if (!current) return errorResponse("Not found", 404);
       return Response.json(presentProject(current));
     }
-    return new Response("No fields to update", { status: 400 });
+    return errorResponse("No fields to update", 400);
   }
 
   if ("name" in body && body.name) {
@@ -384,7 +383,7 @@ async function handleUpdate(req: Request, id: number): Promise<Response> {
       .query("SELECT id FROM projects WHERE name = ? AND id != ?")
       .get(body.name, id);
     if (existing) {
-      return new Response("A project with this name already exists", { status: 409 });
+      return errorResponse("A project with this name already exists", 409);
     }
   }
 
@@ -393,7 +392,7 @@ async function handleUpdate(req: Request, id: number): Promise<Response> {
     .query(`UPDATE projects SET ${fields.join(", ")} WHERE id = ? RETURNING *`)
     .get(...values);
 
-  if (!row) return new Response("Not found", { status: 404 });
+  if (!row) return errorResponse("Not found", 404);
 
   // Sync Caddy if domain-related fields changed
   if ("domain" in body || "domain_port" in body) {

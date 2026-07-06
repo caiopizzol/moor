@@ -10,6 +10,7 @@
 // `ghcr.io/owner/img`) and no whitespace. Without this, an operator
 // could store a credential that the pull-path lookup would never find.
 
+import { errorResponse, readJsonObject } from "../http";
 import {
   type CredentialMetadata,
   createCredential,
@@ -30,13 +31,13 @@ export async function handleRegistryCredentials(req: Request, url: URL): Promise
     if (req.method === "GET") return handleGet(id);
     if (req.method === "PUT") return handleUpdate(req, id);
     if (req.method === "DELETE") return handleDelete(id);
-    return new Response("Method Not Allowed", { status: 405 });
+    return errorResponse("Method Not Allowed", 405);
   }
 
   if (COLLECTION.test(url.pathname)) {
     if (req.method === "GET") return handleList();
     if (req.method === "POST") return handleCreate(req);
-    return new Response("Method Not Allowed", { status: 405 });
+    return errorResponse("Method Not Allowed", 405);
   }
 
   return null;
@@ -88,28 +89,6 @@ function handleDelete(id: number): Response {
   const ok = deleteCredential(id);
   if (!ok) return Response.json({ error: "not found" }, { status: 404 });
   return new Response(null, { status: 204 });
-}
-
-type JsonObjectOk = { ok: true; value: Record<string, unknown> };
-type JsonObjectErr = { ok: false; response: Response };
-
-async function readJsonObject(req: Request): Promise<JsonObjectOk | JsonObjectErr> {
-  let raw: unknown;
-  try {
-    raw = await req.json();
-  } catch {
-    return {
-      ok: false,
-      response: Response.json({ error: "invalid JSON body" }, { status: 400 }),
-    };
-  }
-  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
-    return {
-      ok: false,
-      response: Response.json({ error: "request body must be a JSON object" }, { status: 400 }),
-    };
-  }
-  return { ok: true, value: raw as Record<string, unknown> };
 }
 
 type CreateOk = {

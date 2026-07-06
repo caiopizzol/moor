@@ -8,6 +8,7 @@ import {
   validateFilePath,
 } from "../container-config";
 import db from "../db";
+import { errorResponse } from "../http";
 
 type Project = { id: number; name: string };
 
@@ -43,7 +44,7 @@ export async function handleFiles(req: Request, url: URL): Promise<Response | nu
     const project = db
       .query("SELECT id, name FROM projects WHERE id = ?")
       .get(projectId) as Project | null;
-    if (!project) return new Response("Project not found", { status: 404 });
+    if (!project) return errorResponse("Project not found", 404);
 
     if (req.method === "GET") {
       const rows = db
@@ -63,11 +64,11 @@ export async function handleFiles(req: Request, url: URL): Promise<Response | nu
       };
 
       const pathErr = validateFilePath(body.path);
-      if (pathErr) return new Response(pathErr, { status: 400 });
+      if (pathErr) return errorResponse(pathErr, 400);
       const contentErr = validateFileContent(body.content, body.env_ref);
-      if (contentErr) return new Response(contentErr, { status: 400 });
+      if (contentErr) return errorResponse(contentErr, 400);
       const modeErr = validateFileMode(body.mode);
-      if (modeErr) return new Response(modeErr, { status: 400 });
+      if (modeErr) return errorResponse(modeErr, 400);
 
       const filePath = body.path as string;
       const mode = body.mode ?? DEFAULT_FILE_MODE;
@@ -107,7 +108,7 @@ export async function handleFiles(req: Request, url: URL): Promise<Response | nu
     const row = db
       .query("SELECT id FROM project_files WHERE id = ? AND project_id = ?")
       .get(fileId, projectId) as { id: number } | null;
-    if (!row) return new Response("File not found", { status: 404 });
+    if (!row) return errorResponse("File not found", 404);
     db.query("DELETE FROM project_files WHERE id = ?").run(row.id);
     return Response.json({ ok: true });
   }

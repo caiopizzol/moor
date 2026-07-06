@@ -20,6 +20,7 @@ import { maybeAutoClearForBoot } from "./drain";
 import { interruptActiveExecRuns } from "./exec-async";
 import { startHistoryRetention, stopHistoryRetention } from "./history-retention";
 import { hostTerminalHandlers, isHostTerminal, upgradeHostTerminal } from "./host-terminal";
+import { errorResponse } from "./http";
 import { type HostSample, startMetricsSampler, stopMetricsSampler } from "./metrics-sampler";
 import { handleAuth } from "./routes/auth";
 import { handleCaddy } from "./routes/caddy";
@@ -168,7 +169,7 @@ const server = Bun.serve({
           const origin = req.headers.get("origin");
           const host = req.headers.get("host");
           if (origin && host && !origin.includes(host)) {
-            return new Response("Origin mismatch", { status: 403 });
+            return errorResponse("Origin mismatch", 403);
           }
 
           if (url.pathname === "/api/terminal") {
@@ -204,12 +205,9 @@ const server = Bun.serve({
       } catch (e) {
         console.error("[api error]", e);
         const message = e instanceof Error ? e.message : "Internal server error";
-        return new Response(JSON.stringify({ error: message }), {
-          status: 500,
-          headers: { "Content-Type": "application/json" },
-        });
+        return errorResponse(message, 500);
       }
-      return new Response("Not found", { status: 404 });
+      return errorResponse("Not found", 404);
     }
 
     // Serve built client (production)

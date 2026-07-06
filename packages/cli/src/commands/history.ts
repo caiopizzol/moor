@@ -1,4 +1,4 @@
-import { apiGet, resolveProject } from "../client";
+import { apiGet, readErrorMessage, resolveProject } from "../client";
 
 type HistoryResponse = {
   from_ms: number;
@@ -77,7 +77,7 @@ export async function historyCommand(args: string[]) {
   const from = to - parsed.hours * 3_600_000;
   const res = await apiGet(`/api/projects/${project.id}/stats/history?from=${from}&to=${to}`);
   if (!res.ok) {
-    console.error(`Failed to get history: ${res.status} ${await res.text()}`);
+    console.error(`Failed to get history: ${res.status} ${await readErrorMessage(res)}`);
     process.exit(1);
   }
 

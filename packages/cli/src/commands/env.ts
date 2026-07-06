@@ -1,4 +1,4 @@
-import { apiGet, apiPost, apiPut, resolveProject } from "../client";
+import { apiGet, apiPost, apiPut, readErrorMessage, resolveProject } from "../client";
 
 type EnvVar = { key: string; value: string };
 
@@ -22,7 +22,7 @@ async function envList(args: string[]) {
   const project = await resolveProject(projectName);
   const res = await apiGet(`/api/projects/${project.id}/envs`);
   if (!res.ok) {
-    console.error(`Failed: ${await res.text()}`);
+    console.error(`Failed: ${await readErrorMessage(res)}`);
     process.exit(1);
   }
 
@@ -61,7 +61,7 @@ async function envSet(args: string[]) {
   // Fetch existing env vars and merge
   const existingRes = await apiGet(`/api/projects/${project.id}/envs`);
   if (!existingRes.ok) {
-    console.error(`Failed to get env vars: ${await existingRes.text()}`);
+    console.error(`Failed to get env vars: ${await readErrorMessage(existingRes)}`);
     process.exit(1);
   }
   const existing = (await existingRes.json()) as EnvVar[];
@@ -75,7 +75,7 @@ async function envSet(args: string[]) {
 
   const setRes = await apiPut(`/api/projects/${project.id}/envs`, allVars);
   if (!setRes.ok) {
-    console.error(`Failed to set env vars: ${await setRes.text()}`);
+    console.error(`Failed to set env vars: ${await readErrorMessage(setRes)}`);
     process.exit(1);
   }
 
@@ -89,7 +89,7 @@ async function envSet(args: string[]) {
     await apiPost(`/api/projects/${project.id}/stop`);
     const startRes = await apiPost(`/api/projects/${project.id}/start`);
     if (!startRes.ok) {
-      console.error(`Warning: failed to restart: ${await startRes.text()}`);
+      console.error(`Warning: failed to restart: ${await readErrorMessage(startRes)}`);
       process.exit(1);
     }
     console.log(`${project.name} restarted.`);

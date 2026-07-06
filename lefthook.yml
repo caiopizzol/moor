@@ -9,3 +9,12 @@ pre-commit:
     typecheck-web:
       glob: "apps/web/**/*.{ts,tsx}"
       run: cd apps/web && bunx tsc -b
+    typecheck-contract:
+      glob: "packages/contract/**/*.ts"
+      run: bunx tsc --noEmit -p packages/contract/tsconfig.json
+    typecheck-cli:
+      glob: "packages/cli/**/*.ts"
+      run: bunx tsc --noEmit -p packages/cli/tsconfig.json
+    typecheck-mcp:
+      glob: "packages/mcp/**/*.ts"
+      run: bunx tsc --noEmit -p packages/mcp/tsconfig.json

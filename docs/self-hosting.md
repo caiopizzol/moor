@@ -4,6 +4,8 @@ Operating moor on your own server: first-boot password, admin access, API key li
 
 The [root README](../README.md) covers the basic install. This doc covers everything else.
 
+Some of what follows is not in the web UI. The admin UI covers projects, builds, logs, the terminal, env vars, cron, ports, and domains. Project volumes, file injection, command/entrypoint overrides, registry and source credentials, drain mode, self-update, DB backups, and image cleanup are API and MCP only. Use `curl` with `MOOR_API_KEY` or the matching MCP tool for those.
+
 ## First boot
 
 The installer generates a random `MOOR_INITIAL_PASSWORD` into `.env` and prints it once. Moor uses that value on first start to create the admin user.
@@ -272,6 +274,106 @@ The v1 surface is intentionally narrow:
 - **Moor-controlled clone.** The Docker daemon clones via `remote=` so moor never touches the source tarball.
 - **Private base images inside the Dockerfile.** Same as the registry section above: `X-Registry-Config` on `/build` is not wired.
 - **Submodules, Git LFS, GitHub App tokens.** PATs only.
+
+## Project volumes
+
+A project volume is a named Docker volume mounted into a project's container at a fixed path. Use it for data that must survive a rebuild: a database directory, an upload store, a cache. Moor stores the mount config (a logical name, the in-container target, and a generated Docker volume name of the form `moor-<project>-<name>`) and hands the binding to Docker on container create. The Docker volume itself is created lazily on first container start.
+
+Mounts apply on the next container recreate (`moor_rebuild` / `moor_restart` / `moor_deploy` / a `moor_project` run). An already-running container keeps its existing mounts until it is recreated.
+
+Volumes are API and MCP only. The HTTP API requires `MOOR_API_KEY` (see [API keys](#api-keys) above) and takes a numeric project id; the MCP tools accept a project name or id.
+
+### List, add, remove
+
+```bash
+KEY=$(grep '^MOOR_API_KEY=' .env | cut -d= -f2-)
+
+# List volumes on project id=1
+curl -fsS -H "Authorization: Bearer $KEY" \
+  http://127.0.0.1:3000/api/projects/1/volumes
+
+# Attach a volume: logical name + absolute in-container target
+curl -fsS -X POST http://127.0.0.1:3000/api/projects/1/volumes \
+  -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
+  -d '{"name":"pgdata","target":"/var/lib/postgresql/data"}'
+
+# Remove the mount config for volume id=3 (the Docker volume and its data are preserved)
+curl -fsS -X DELETE http://127.0.0.1:3000/api/projects/1/volumes/3 \
+  -H "Authorization: Bearer $KEY"
+```
+
+The logical `name` is unique per project (alphanumeric, `_`, `-`). The `target` must be an absolute path and cannot mount over `/`, `/proc`, `/sys`, or `/dev`.
+
+Removing a mount detaches it from the project config only. The underlying Docker volume and its data are kept on purpose, so a recreated project can remount them. To actually delete the data, use `moor_project_delete` with `purge_volumes: true`, or run `docker volume rm <docker_name>` on the host.
+
+MCP equivalents: `moor_volume_list`, `moor_volume_add`, `moor_volume_remove`.
+
+## File injection
+
+A project can declare files to write into its container without a Dockerfile or SSH access. Moor writes each file through a tar archive `PUT` right before the container starts, on every recreate, honoring an octal mode. This is the path for a config file or a TLS cert that a stock image expects on disk.
+
+Each file is identified by its destination path. Setting the same path again updates its content or mode rather than adding a duplicate. Provide exactly one of `content` (inline) or `env_ref` (the name of a project env var to source the content from at create time, so a secret stays in the env store instead of plaintext in the file config). Inline content is capped at 1 MiB.
+
+Files apply on the next container recreate. File injection is API and MCP only; the HTTP API requires `MOOR_API_KEY` and a numeric project id.
+
+### List, set, remove
+
+```bash
+KEY=$(grep '^MOOR_API_KEY=' .env | cut -d= -f2-)
+
+# List files on project id=1 (raw inline content is never returned)
+curl -fsS -H "Authorization: Bearer $KEY" \
+  http://127.0.0.1:3000/api/projects/1/files
+
+# Inline file with an explicit mode
+curl -fsS -X POST http://127.0.0.1:3000/api/projects/1/files \
+  -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
+  -d '{"path":"/etc/app/config.yaml","content":"log_level: info\n","mode":"0644"}'
+
+# File sourced from an env var (keeps the secret in the env store)
+curl -fsS -X POST http://127.0.0.1:3000/api/projects/1/files \
+  -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
+  -d '{"path":"/etc/ssl/cert.pem","env_ref":"TLS_CERT","mode":"0600"}'
+
+# Remove file spec id=2
+curl -fsS -X DELETE http://127.0.0.1:3000/api/projects/1/files/2 \
+  -H "Authorization: Bearer $KEY"
+```
+
+`path` must be absolute, printable ASCII with no whitespace, and cannot target `/`, `/proc`, `/sys`, or `/dev`. `mode` is an octal string like `0644`, `600`, or `0600`; it defaults to `0644` when omitted. An `env_ref` that names a var not set on the project fails the container create, so set the env var first.
+
+MCP equivalents: `moor_file_set`, `moor_file_list`, `moor_file_remove`.
+
+## Command and entrypoint overrides
+
+A project can override the image's default command (Docker `Cmd`) and entrypoint (Docker `Entrypoint`), each as an argv array of strings. This lets a stock image run a custom command with no throwaway Dockerfile. The motivating case is running `cloudflare/cloudflared` with command `["tunnel","run"]`, a `TUNNEL_TOKEN` env var, and an injected credentials file, all declaratively.
+
+Both are set on the project record. Omit a field to keep the image default; pass `[]` or `null` to clear a previously-set override and return to the image default. Overrides apply on the next container recreate.
+
+Command and entrypoint are set through the same project create/update calls, not a dedicated endpoint. They are API and MCP only; the web UI does not surface them.
+
+```bash
+KEY=$(grep '^MOOR_API_KEY=' .env | cut -d= -f2-)
+
+# On create: POST /api/projects with command/entrypoint arrays
+curl -fsS -X POST http://127.0.0.1:3000/api/projects \
+  -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
+  -d '{"name":"tunnel","docker_image":"cloudflare/cloudflared","command":["tunnel","run"]}'
+
+# On an existing project: PUT /api/projects/:id
+curl -fsS -X PUT http://127.0.0.1:3000/api/projects/1 \
+  -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
+  -d '{"command":["tunnel","run"],"entrypoint":["cloudflared"]}'
+
+# Clear an override, back to the image default
+curl -fsS -X PUT http://127.0.0.1:3000/api/projects/1 \
+  -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
+  -d '{"command":null}'
+```
+
+A project read returns `command` and `entrypoint` as arrays (or `null` when unset).
+
+MCP equivalents: `command` and `entrypoint` are fields on `moor_project_create`, `moor_project_update`, and `moor_deploy`.
 
 ## Scheduled dangling-image cleanup
 

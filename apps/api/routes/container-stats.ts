@@ -14,6 +14,7 @@ import {
 } from "../container-stats";
 import db from "../db";
 import { SOCKET as SOCKET_PATH } from "../docker";
+import { errorResponse } from "../http";
 
 export async function handleContainerStats(req: Request, url: URL): Promise<Response | null> {
   const match = url.pathname.match(/^\/api\/projects\/(\d+)\/container-stats$/);
@@ -23,7 +24,7 @@ export async function handleContainerStats(req: Request, url: URL): Promise<Resp
   const project = db.query("SELECT container_id FROM projects WHERE id = ?").get(projectId) as {
     container_id: string | null;
   } | null;
-  if (!project) return new Response("Project not found", { status: 404 });
+  if (!project) return errorResponse("Project not found", 404);
 
   // No container means the project was never started (or was deleted from
   // Docker). Return 200 with running=false so a batch caller doesn't have to

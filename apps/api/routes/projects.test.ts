@@ -24,6 +24,10 @@ async function call(method: string, path: string, body?: unknown): Promise<Respo
   return res;
 }
 
+async function errorMessage(res: Response): Promise<string> {
+  return ((await res.json()) as { error: string }).error;
+}
+
 function insertProject(name: string, github_url: string | null): { id: number } {
   return db
     .query(
@@ -148,7 +152,7 @@ describe("#30 project URL credential redaction", () => {
       memory_limit_mb: 4,
     });
     expect(res.status).toBe(400);
-    expect(await res.text()).toContain("memory_limit_mb must be >=");
+    expect(await errorMessage(res)).toContain("memory_limit_mb must be >=");
   });
 
   test("POST rejects cpus <= 0 (null is the clear signal)", async () => {
@@ -158,7 +162,7 @@ describe("#30 project URL credential redaction", () => {
       cpus: 0,
     });
     expect(res.status).toBe(400);
-    expect(await res.text()).toContain("cpus must be > 0");
+    expect(await errorMessage(res)).toContain("cpus must be > 0");
   });
 
   test("POST accepts and persists valid memory_limit_mb and cpus", async () => {
@@ -524,7 +528,7 @@ describe("command/entrypoint override on projects", () => {
       command: "tunnel run",
     });
     expect(res.status).toBe(400);
-    expect(await res.text()).toContain("command must be an array");
+    expect(await errorMessage(res)).toContain("command must be an array");
   });
 
   test("PUT sets command, and [] or null clears it back to the image default", async () => {

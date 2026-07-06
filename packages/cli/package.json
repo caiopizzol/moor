@@ -10,17 +10,26 @@
   },
   "homepage": "https://github.com/caiopizzol/moor/tree/main/packages/cli",
   "bugs": "https://github.com/caiopizzol/moor/issues",
-  "keywords": ["moor", "cli", "docker"],
+  "keywords": [
+    "moor",
+    "cli",
+    "docker"
+  ],
   "type": "module",
   "bin": {
-    "moor": "src/index.ts"
+    "moor": "bin/moor.js"
   },
-  "files": ["src/"],
+  "files": [
+    "bin/",
+    "dist/"
+  ],
   "publishConfig": {
     "access": "public"
   },
   "scripts": {
     "dev": "bun run src/index.ts",
-    "build": "bun build src/index.ts --compile --outfile moor"
+    "build": "bun build src/index.ts --compile --outfile moor",
+    "build:package": "bun build src/index.ts --target bun --outfile dist/index.js",
+    "prepack": "bun run build:package"
   }
 }

@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite";
 import { join } from "node:path";
+import { runMigrations } from "./db-migrations";
 
 // Tests set MOOR_DB_PATH=":memory:" to run against a transient SQLite DB without
 // touching the dev/prod file. Default path is unchanged for normal startup.
@@ -274,149 +275,11 @@ db.exec(`
   WHERE state = 'running'
 `);
 
-// Migrations — add columns that may not exist in older databases
-try {
-  db.exec("ALTER TABLE projects ADD COLUMN docker_image TEXT");
-} catch {
-  // Column already exists
-}
-
-try {
-  db.exec("ALTER TABLE projects ADD COLUMN domain TEXT");
-} catch {
-  // Column already exists
-}
-
-try {
-  db.exec("ALTER TABLE projects ADD COLUMN domain_port INTEGER");
-} catch {
-  // Column already exists
-}
-
-try {
-  db.exec("ALTER TABLE projects ADD COLUMN restart_policy TEXT DEFAULT 'unless-stopped'");
-} catch {
-  // Column already exists
-}
-
-// #45: millisecond timestamps for exec_runs. New rows write Date.now() from
-// JS in exec-async.ts. Old rows are backfilled best-effort from the text
-// columns, which are SQLite second-precision so the backfilled values are
-// snapped to the start of their wall-clock second (good enough for runs that
-// pre-date this migration). New rows get true millisecond precision.
-try {
-  db.exec("ALTER TABLE exec_runs ADD COLUMN started_at_ms INTEGER");
-  db.exec(
-    "UPDATE exec_runs SET started_at_ms = CAST(strftime('%s', started_at) AS INTEGER) * 1000 WHERE started_at_ms IS NULL AND started_at IS NOT NULL",
-  );
-} catch {
-  // Column already exists
-}
-
-try {
-  db.exec("ALTER TABLE exec_runs ADD COLUMN finished_at_ms INTEGER");
-  db.exec(
-    "UPDATE exec_runs SET finished_at_ms = CAST(strftime('%s', finished_at) AS INTEGER) * 1000 WHERE finished_at_ms IS NULL AND finished_at IS NOT NULL",
-  );
-} catch {
-  // Column already exists
-}
-
-// #36: per-project memory and CPU limits. NULL = unbounded (current behavior,
-// no Docker HostConfig fields set). When set: memory_limit_mb maps to Memory
-// (and equal MemorySwap so the container can't burn through host swap) and
-// cpus maps to NanoCpus (cpus * 1e9). Limits take effect on container
-// recreate — handleStart/handleRun all call createAndStartContainer which
-// force-removes the existing container by name and creates fresh.
-try {
-  db.exec("ALTER TABLE projects ADD COLUMN memory_limit_mb INTEGER");
-} catch {
-  // Column already exists
-}
-
-try {
-  db.exec("ALTER TABLE projects ADD COLUMN cpus REAL");
-} catch {
-  // Column already exists
-}
-
-// #71: dual-field model for runtime truth. projects.status stays moor's
-// *recorded* state (changes only on explicit moor actions: start/stop/
-// build/cancel). The live_* fields are written by the status reconciler
-// background loop and reflect Docker's view at last successful inspect.
-// Both directions matter — DB can drift from Docker (missed exit) and
-// Docker can drift from DB (recorded as error but container still up).
-// live_error is non-null only when the most recent inspect failed
-// (socket unreachable, 5xx, parse failure); the loop preserves the last
-// successful live_status / live_exit_code in that case so a transient
-// daemon glitch doesn't rewrite truth.
-try {
-  db.exec("ALTER TABLE projects ADD COLUMN live_status TEXT");
-} catch {
-  // Column already exists
-}
-
-try {
-  db.exec("ALTER TABLE projects ADD COLUMN live_exit_code INTEGER");
-} catch {
-  // Column already exists
-}
-
-try {
-  db.exec("ALTER TABLE projects ADD COLUMN live_checked_at TEXT");
-} catch {
-  // Column already exists
-}
-
-try {
-  db.exec("ALTER TABLE projects ADD COLUMN live_error TEXT");
-} catch {
-  // Column already exists
-}
-
-// #65: live build observability. runs now represents the full deploy run
-// (build/pull + container start) and is INSERTed at start with finished_at
-// NULL, then UPDATEd as output streams in. Status uses the existing
-// finished_at IS NULL convention (no new state column — that would force
-// a coordinated web/MCP rollout). The new *_total_bytes columns capture
-// the truth Docker emitted, since stdout/stderr now store at most a
-// 64 KiB tail (TAIL_CAP_BYTES) for builds. Backfill: existing rows store
-// full output, so total_bytes == length(stored).
-try {
-  db.exec("ALTER TABLE runs ADD COLUMN started_at_ms INTEGER");
-  db.exec(
-    "UPDATE runs SET started_at_ms = CAST(strftime('%s', started_at) AS INTEGER) * 1000 WHERE started_at_ms IS NULL AND started_at IS NOT NULL",
-  );
-} catch {
-  // Column already exists
-}
-
-try {
-  db.exec("ALTER TABLE runs ADD COLUMN finished_at_ms INTEGER");
-  db.exec(
-    "UPDATE runs SET finished_at_ms = CAST(strftime('%s', finished_at) AS INTEGER) * 1000 WHERE finished_at_ms IS NULL AND finished_at IS NOT NULL",
-  );
-} catch {
-  // Column already exists
-}
-
-try {
-  db.exec("ALTER TABLE runs ADD COLUMN stdout_total_bytes INTEGER");
-  db.exec(
-    "UPDATE runs SET stdout_total_bytes = length(CAST(stdout AS BLOB)) WHERE stdout_total_bytes IS NULL AND stdout IS NOT NULL",
-  );
-} catch {
-  // Column already exists
-}
-
-try {
-  db.exec("ALTER TABLE runs ADD COLUMN stderr_total_bytes INTEGER");
-  db.exec(
-    "UPDATE runs SET stderr_total_bytes = length(CAST(stderr AS BLOB)) WHERE stderr_total_bytes IS NULL AND stderr IS NOT NULL",
-  );
-} catch {
-  // Column already exists
-}
+// Schema migrations are versioned from the old pre-runner state. Existing
+// pre-versioning DBs report user_version=0 even when the former blind ALTER
+// blocks already added every column; each migration checks PRAGMA table_info
+// before ADD COLUMN, skips existing columns, and still records its version.
+runMigrations(db);
 
 // #65 orphan sweep for build/manual runs. cron_id IS NULL && finished_at
 // IS NULL means a build was in flight when moor crashed/restarted — the
@@ -448,38 +311,6 @@ db.exec(`
         AS BLOB))
   WHERE finished_at IS NULL AND cron_id IS NULL
 `);
-
-// #111: projects opt into a stored source credential. NULL = today's path
-// (anonymous public clone, or legacy URL-embedded credentials in
-// github_url). When set, the build path resolves the credential and
-// uses it for Docker's daemon-side `remote=` build (#112 wires the
-// in-memory URL synthesis). FK uses ON DELETE RESTRICT semantics via
-// the route layer (deleteCredential refuses when projects reference
-// it); SQLite's RESTRICT is the default for REFERENCES.
-try {
-  db.exec(
-    "ALTER TABLE projects ADD COLUMN source_credential_id INTEGER REFERENCES source_credentials(id)",
-  );
-} catch {
-  // Column already exists
-}
-
-// Declarative container command/entrypoint override. NULL = today's behavior
-// (run the image's own default CMD/ENTRYPOINT). When set, stored as a JSON
-// string array and threaded into the Docker create body as Cmd / Entrypoint on
-// the next container recreate. Lets a stock image (e.g. cloudflare/cloudflared)
-// run a custom command without a throwaway Dockerfile.
-try {
-  db.exec("ALTER TABLE projects ADD COLUMN command TEXT");
-} catch {
-  // Column already exists
-}
-
-try {
-  db.exec("ALTER TABLE projects ADD COLUMN entrypoint TEXT");
-} catch {
-  // Column already exists
-}
 
 // Project observability history. Three additive tables, all keyed on the
 // project so "what happened to this project around this case?" can be answered

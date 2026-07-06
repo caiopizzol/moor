@@ -6,6 +6,7 @@ on:
     branches: [main]
     paths:
       - "packages/cli/**"
+      - "packages/contract/**"
 
 jobs:
   check:
@@ -16,6 +17,11 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bunx biome check packages/cli
       - run: cd packages/cli && bunx tsc --noEmit
+      - name: CLI pack smoke test
+        run: |
+          cd packages/cli && npm pack --pack-destination /tmp
+          tar -xzOf /tmp/moor-sh-cli-*.tgz package/package.json | (! grep -q "workspace:")
+          tar -tzf /tmp/moor-sh-cli-*.tgz | grep -q "package/dist/index.js"
 
   release:
     needs: check

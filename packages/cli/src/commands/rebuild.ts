@@ -1,4 +1,4 @@
-import { apiPost, resolveProject, streamSSE } from "../client";
+import { apiPost, readErrorMessage, resolveProject, streamSSE } from "../client";
 
 export async function rebuildCommand(args: string[]) {
   let noCache = false;
@@ -21,7 +21,7 @@ export async function rebuildCommand(args: string[]) {
   const res = await apiPost(`/api/projects/${project.id}/run${query}`);
 
   if (!res.ok && res.headers.get("content-type")?.includes("text/event-stream") === false) {
-    const body = await res.text();
+    const body = await readErrorMessage(res);
     console.error(`Failed: ${body}`);
     process.exit(1);
   }

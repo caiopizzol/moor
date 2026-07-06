@@ -19,17 +19,21 @@
   ],
   "type": "module",
   "bin": {
-    "moor-mcp": "src/index.ts"
+    "moor-mcp": "bin/moor-mcp.js"
   },
   "files": [
-    "src/"
+    "bin/",
+    "dist/"
   ],
   "publishConfig": {
     "access": "public"
   },
   "scripts": {
     "dev": "bun run src/index.ts",
-    "build": "bun build src/index.ts --compile --outfile moor-mcp"
+    "docs": "bun run scripts/generate-tool-docs.ts",
+    "build": "bun build src/index.ts --compile --outfile moor-mcp",
+    "build:package": "bun build src/index.ts --target bun --outfile dist/index.js --external @cfworker/json-schema --external @modelcontextprotocol/server --external zod",
+    "prepack": "bun run build:package"
   },
   "dependencies": {
     "@cfworker/json-schema": "^4.1.1",

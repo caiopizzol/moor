@@ -1,3 +1,11 @@
+import {
+  createMoorApiClient,
+  type FetchLike,
+  type MoorApiClient,
+  type Project,
+  parseErrorMessage,
+} from "../../contract/src/index";
+
 function getConfig(): { baseUrl: string; apiKey: string } {
   const baseUrl = process.env.MOOR_URL;
   const apiKey = process.env.MOOR_API_KEY;
@@ -12,45 +20,40 @@ function getConfig(): { baseUrl: string; apiKey: string } {
   return { baseUrl: baseUrl.replace(/\/$/, ""), apiKey };
 }
 
-function headers(apiKey: string, json = false): Record<string, string> {
-  const h: Record<string, string> = { Authorization: `Bearer ${apiKey}` };
-  if (json) h["Content-Type"] = "application/json";
-  return h;
+async function rawResponseRequest(
+  callClient: (client: MoorApiClient) => Promise<unknown>,
+): Promise<Response> {
+  let rawResponse: Response | undefined;
+  const fetchRawResponse: FetchLike = async (input, init) => {
+    rawResponse = await globalThis.fetch(input, init);
+    return new Response(null, { status: 204 });
+  };
+  const client = createMoorApiClient({
+    ...getConfig(),
+    fetch: fetchRawResponse,
+  });
+
+  await callClient(client);
+  if (!rawResponse) throw new Error("No response received");
+  return rawResponse;
 }
 
 export async function apiGet(path: string): Promise<Response> {
-  const { baseUrl, apiKey } = getConfig();
-  return fetch(`${baseUrl}${path}`, { headers: headers(apiKey) });
+  return rawResponseRequest((client) => client.get(path));
 }
 
 export async function apiPost(path: string, body?: unknown): Promise<Response> {
-  const { baseUrl, apiKey } = getConfig();
-  return fetch(`${baseUrl}${path}`, {
-    method: "POST",
-    headers: headers(apiKey, body !== undefined),
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  });
+  return rawResponseRequest((client) => client.post(path, body));
 }
 
 export async function apiPut(path: string, body: unknown): Promise<Response> {
-  const { baseUrl, apiKey } = getConfig();
-  return fetch(`${baseUrl}${path}`, {
-    method: "PUT",
-    headers: headers(apiKey, true),
-    body: JSON.stringify(body),
-  });
+  return rawResponseRequest((client) => client.put(path, body));
 }
 
-type Project = {
-  id: number;
-  name: string;
-  status: string;
-  container_id: string | null;
-  image_tag: string | null;
-  domain: string | null;
-  docker_image: string | null;
-  github_url: string | null;
-};
+export async function readErrorMessage(res: Response): Promise<string> {
+  const text = await res.text();
+  return parseErrorMessage(text, res.status);
+}
 
 export async function resolveProject(nameOrId: string): Promise<Project> {
   const res = await apiGet("/api/projects");
@@ -94,7 +97,7 @@ export async function streamSSE(
       if (line.startsWith("event: ")) {
         currentEvent = line.slice(7).trim();
       } else if (line.startsWith("data: ")) {
-        const data = JSON.parse(line.slice(6));
+        const data = JSON.parse(line.slice(6)) as string;
         if (currentEvent === "log") handlers.onLog?.(data);
         else if (currentEvent === "error") handlers.onError?.(data);
         else if (currentEvent === "done") handlers.onDone?.(data);

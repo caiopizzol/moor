@@ -24,7 +24,9 @@
       "apps/respawner/**/*.ts",
       "apps/web/src/**/*.{ts,tsx,css}",
       "apps/web/vite.config.ts",
-      "packages/**/*.{ts,tsx}"
+      "packages/**/*.{ts,tsx}",
+      "packages/mcp/scripts/**/*.ts",
+      "scripts/**/*.js"
     ]
   }
 }
