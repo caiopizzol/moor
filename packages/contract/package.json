@@ -23,9 +23,6 @@
   "files": [
     "src/"
   ],
-  "publishConfig": {
-    "access": "public"
-  },
   "scripts": {
     "typecheck": "bunx tsc --noEmit -p tsconfig.json",
     "test": "bun test src"
