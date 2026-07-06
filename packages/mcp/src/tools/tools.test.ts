@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { McpServer } from "@modelcontextprotocol/server";
-import type { Project } from "@moor-sh/contract";
+import type { Project } from "../../../contract/src/index";
 import { registerCleanupTools } from "./cleanup";
 import type { SseReadResult, ToolContext } from "./context";
 import { registerCredentialTools } from "./credentials";

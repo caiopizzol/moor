@@ -1,6 +1,10 @@
 import type { McpServer } from "@modelcontextprotocol/server";
-import { type Project, validateGithubRepoUrl, validateGithubUrl } from "@moor-sh/contract";
 import { z } from "zod";
+import {
+  type Project,
+  validateGithubRepoUrl,
+  validateGithubUrl,
+} from "../../../contract/src/index";
 import { isJsonObject } from "../format";
 import type { ToolContext } from "./context";
 export function registerProjectTools(server: McpServer, client: ToolContext): void {

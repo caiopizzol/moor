@@ -1,4 +1,4 @@
-import type { Project } from "@moor-sh/contract";
+import type { Project } from "../../../contract/src/index";
 
 export type ApiResponseClient = {
   get(path: string): Promise<Response>;

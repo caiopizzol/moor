@@ -5,7 +5,7 @@ import {
   type FetchLike,
   type MoorApiClient,
   type Project,
-} from "@moor-sh/contract";
+} from "../../contract/src/index";
 import { isJsonObject } from "./format";
 import { registerCleanupTools } from "./tools/cleanup";
 import { registerCredentialTools } from "./tools/credentials";

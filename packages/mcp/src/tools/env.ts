@@ -1,6 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/server";
-import { validateCronSchedule } from "@moor-sh/contract";
 import { z } from "zod";
+import { validateCronSchedule } from "../../../contract/src/index";
 import { isJsonObject } from "../format";
 import type { ToolContext } from "./context";
 export function registerEnvTools(server: McpServer, client: ToolContext): void {

@@ -51,9 +51,6 @@
       "bin": {
         "moor": "src/index.ts",
       },
-      "dependencies": {
-        "@moor-sh/contract": "workspace:*",
-      },
     },
     "packages/contract": {
       "name": "@moor-sh/contract",
@@ -63,12 +60,11 @@
       "name": "@moor-sh/mcp",
       "version": "0.0.0-development",
       "bin": {
-        "moor-mcp": "src/index.ts",
+        "moor-mcp": "bin/moor-mcp.js",
       },
       "dependencies": {
         "@cfworker/json-schema": "^4.1.1",
         "@modelcontextprotocol/server": "2.0.0-alpha.2",
-        "@moor-sh/contract": "workspace:*",
         "zod": "^4.3.6",
       },
     },
