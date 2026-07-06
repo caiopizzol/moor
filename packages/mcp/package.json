@@ -29,6 +29,7 @@
   },
   "scripts": {
     "dev": "bun run src/index.ts",
+    "docs": "bun run scripts/generate-tool-docs.ts",
     "build": "bun build src/index.ts --compile --outfile moor-mcp"
   },
   "dependencies": {

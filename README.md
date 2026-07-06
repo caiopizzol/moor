@@ -8,13 +8,17 @@ Self-hosted Docker control panel for a single server. Build, deploy, and manage 
 
 ## What it does
 
-- Build Docker images from GitHub repos
+- Build Docker images from GitHub repos, public or private
+- Deploy from private registries (GHCR, Docker Hub, self-hosted)
 - Start, stop, restart, and rebuild containers
 - Stream build output and container logs in real time
 - Web terminal into running containers
 - Schedule cron jobs inside containers
-- Manage environment variables per project
+- Manage environment variables, persistent volumes, and injected files per project
+- Override a container's command and entrypoint without a Dockerfile
 - Route custom domains to containers with HTTPS
+- Container stats and stored run history for after-the-fact debugging
+- Drain mode, self-update, DB backups, and image cleanup for host upkeep
 - CLI and MCP server for AI agent integration
 
 ## Prerequisites
