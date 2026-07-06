@@ -10,7 +10,7 @@ export function registerExecTools(server: McpServer, client: ToolContext): void 
     {
       title: "Execute Command",
       description:
-        "Run a shell command inside a project's running container. Bounded by a per-call timeout (default 10 min, max 1 h). For jobs that may exceed an hour, wait for the async exec tools to ship.",
+        "Run a shell command inside a project's running container. Bounded by a per-call timeout (default 10 min, max 1 h). For jobs that may exceed an hour, use moor_exec_async.",
       inputSchema: z.object({
         project: z.string().describe("Project name or ID"),
         command: z.string().describe("Shell command to execute"),

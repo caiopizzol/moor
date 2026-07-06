@@ -56,7 +56,7 @@ export function registerProjectTools(server: McpServer, client: ToolContext): vo
     {
       title: "Create Project",
       description:
-        "Creates a new project. Provide exactly one of github_url or docker_image. Does not build or start; call moor_rebuild (or moor_deploy in a future release) to bring it up.",
+        "Creates a new project. Provide exactly one of github_url or docker_image. Does not build or start; call moor_rebuild to bring it up, or use moor_deploy to create and start in one step.",
       inputSchema: z.object({
         name: z
           .string()
