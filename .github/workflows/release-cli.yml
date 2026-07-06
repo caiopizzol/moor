@@ -6,6 +6,7 @@ on:
     branches: [main]
     paths:
       - "packages/cli/**"
+      - "packages/contract/**"
 
 jobs:
   check:

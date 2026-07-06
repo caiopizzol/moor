@@ -6,6 +6,7 @@ on:
     branches: [main]
     paths:
       - "packages/mcp/**"
+      - "packages/contract/**"
 
 jobs:
   check:

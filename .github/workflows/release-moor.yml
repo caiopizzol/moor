@@ -8,6 +8,7 @@ on:
       - "apps/api/**"
       - "apps/web/**"
       - "apps/respawner/**"
+      - "packages/contract/**"
       - "Dockerfile"
       - "docker-compose.yml"
       - "package.json"
