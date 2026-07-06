@@ -1,5 +1,5 @@
 {
-  "extends": "semantic-release-monorepo",
+  "extends": "../../scripts/release/monorepo-shared.js",
   "branches": ["main"],
   "tagFormat": "mcp-v${version}",
   "plugins": [
