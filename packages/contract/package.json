@@ -1,7 +1,8 @@
 {
   "name": "@moor-sh/contract",
   "version": "0.0.0-development",
-  "description": "Shared HTTP API contract for moor clients.",
+  "private": true,
+  "description": "Shared HTTP API contract for moor clients. Internal workspace package, never published: consumers bundle its source at publish time (see the prepack scripts in packages/cli and packages/mcp).",
   "license": "MIT",
   "repository": {
     "type": "git",
