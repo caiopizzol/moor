@@ -23,6 +23,10 @@ async function call(method: string, path: string, body?: unknown): Promise<Respo
   return res;
 }
 
+async function errorMessage(res: Response): Promise<string> {
+  return ((await res.json()) as { error: string }).error;
+}
+
 function insertProject(name: string): { id: number } {
   return db
     .query(
@@ -43,7 +47,7 @@ describe("#34 POST /exec timeout_ms validation", () => {
       timeout_ms: 500,
     });
     expect(res.status).toBe(400);
-    expect(await res.text()).toContain("timeout_ms must be an integer between");
+    expect(await errorMessage(res)).toContain("timeout_ms must be an integer between");
   });
 
   test("rejects timeout_ms above the maximum", async () => {
@@ -53,7 +57,7 @@ describe("#34 POST /exec timeout_ms validation", () => {
       timeout_ms: 3_600_001,
     });
     expect(res.status).toBe(400);
-    expect(await res.text()).toContain("timeout_ms must be an integer between");
+    expect(await errorMessage(res)).toContain("timeout_ms must be an integer between");
   });
 
   test("rejects non-integer timeout_ms", async () => {
@@ -63,6 +67,7 @@ describe("#34 POST /exec timeout_ms validation", () => {
       timeout_ms: 5000.5,
     });
     expect(res.status).toBe(400);
+    expect(await errorMessage(res)).toContain("timeout_ms must be an integer between");
   });
 
   test("rejects negative timeout_ms", async () => {
@@ -72,6 +77,7 @@ describe("#34 POST /exec timeout_ms validation", () => {
       timeout_ms: -1,
     });
     expect(res.status).toBe(400);
+    expect(await errorMessage(res)).toContain("timeout_ms must be an integer between");
   });
 
   test("accepts a valid timeout_ms and reaches the Docker layer", async () => {
@@ -97,7 +103,7 @@ describe("#34 POST /exec timeout_ms validation", () => {
     const p = insertProject("g");
     const res = await call("POST", `/api/projects/${p.id}/exec`, { timeout_ms: 30_000 });
     expect(res.status).toBe(400);
-    expect(await res.text()).toBe("Missing command");
+    expect(await errorMessage(res)).toBe("Missing command");
   });
 
   test("returns 400 when the project's container is not running, regardless of timeout_ms", async () => {
@@ -116,9 +122,7 @@ describe("#34 POST /exec timeout_ms validation", () => {
     // for both no-container and not-running cases; #73 distinguishes
     // them (no_container=400, not_running=409 with live_status).
     expect(res.status).toBe(400);
-    expect(((await res.json()) as { error: string }).error).toBe(
-      "Project has no container; build/start it first",
-    );
+    expect(await errorMessage(res)).toBe("Project has no container; build/start it first");
   });
 });
 
@@ -285,12 +289,16 @@ describe("#112 build path credential resolution", () => {
     return row.id;
   }
 
-  function makeGithubProject(name: string, source_credential_id: number | null = null): number {
+  function makeGithubProject(
+    name: string,
+    source_credential_id: number | null = null,
+    githubUrl = "https://github.com/owner/repo",
+  ): number {
     const row = db
       .query(
-        "INSERT INTO projects (name, github_url, branch, dockerfile, restart_policy, status, source_credential_id) VALUES (?, 'https://github.com/owner/repo', 'main', 'Dockerfile', 'unless-stopped', 'stopped', ?) RETURNING id",
+        "INSERT INTO projects (name, github_url, branch, dockerfile, restart_policy, status, source_credential_id) VALUES (?, ?, 'main', 'Dockerfile', 'unless-stopped', 'stopped', ?) RETURNING id",
       )
-      .get(name, source_credential_id) as { id: number };
+      .get(name, githubUrl, source_credential_id) as { id: number };
     return row.id;
   }
 
@@ -337,6 +345,58 @@ describe("#112 build path credential resolution", () => {
     expect(statusOf(pId)).toBe("stopped");
   });
 
+  test("github.com and www.github.com URLs pass route URL validation", async () => {
+    const wrongHost = makeCred("gitlab.com", "validation-wrong-host");
+    const cases = [
+      ["github", "https://github.com/owner/repo", "github.com"],
+      ["www-github", "https://www.github.com/owner/repo", "www.github.com"],
+    ] as const;
+
+    for (const [name, githubUrl, requestHostname] of cases) {
+      const pId = makeGithubProject(`p-${name}`, wrongHost, githubUrl);
+      const res = await call("POST", `/api/projects/${pId}/build`);
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { code: string; request_hostname: string };
+      expect(body.code).toBe("credential_host_mismatch");
+      expect(body.request_hostname).toBe(requestHostname);
+      expect(statusOf(pId)).toBe("stopped");
+    }
+  });
+
+  test("lookalike hosts, insecure protocol, and GitHub subdomains are rejected", async () => {
+    const cases = [
+      ["evil", "https://evilgithub.com/owner/repo"],
+      ["http", "http://github.com/owner/repo"],
+      ["gist", "https://gist.github.com/x"],
+    ] as const;
+
+    for (const [name, githubUrl] of cases) {
+      const pId = makeGithubProject(`p-${name}`, null, githubUrl);
+      const res = await call("POST", `/api/projects/${pId}/build`);
+      expect(res.status).toBe(400);
+      expect(await errorMessage(res)).toBe("Only GitHub URLs are supported");
+      expect(statusOf(pId)).toBe("stopped");
+    }
+  });
+
+  test("build and start action validation errors use the JSON error envelope", async () => {
+    const noGithubId = (
+      db
+        .query(
+          "INSERT INTO projects (name, branch, dockerfile, restart_policy, status) VALUES ('p-no-github', 'main', 'Dockerfile', 'unless-stopped', 'stopped') RETURNING id",
+        )
+        .get() as { id: number }
+    ).id;
+    const buildRes = await call("POST", `/api/projects/${noGithubId}/build`);
+    expect(buildRes.status).toBe(400);
+    expect(await errorMessage(buildRes)).toBe("No GitHub URL configured");
+
+    const noImageId = makeGithubProject("p-no-image");
+    const startRes = await call("POST", `/api/projects/${noImageId}/start`);
+    expect(startRes.status).toBe(400);
+    expect(await errorMessage(startRes)).toBe("No image built yet");
+  });
+
   test("invalid github_url (legacy migration edge) returns 400 BEFORE side effects", async () => {
     // Project with a non-conformant URL slipping past earlier validation.
     db.query(
@@ -345,12 +405,12 @@ describe("#112 build path credential resolution", () => {
     const pId = (db.query("SELECT id FROM projects WHERE name = 'p5'").get() as { id: number }).id;
     const res = await call("POST", `/api/projects/${pId}/build`);
     // ?branch=main makes parseRepoUrl reject (query string disallowed).
-    // The legacy validateGithubUrl accepts it, so we DO flip status. But
-    // the resolver catches it. With v1 we accept the flip; document the
-    // edge. The point is: build doesn't proceed.
+    // The route URL validator only checks protocol and host; the resolver
+    // catches the repo-shape error before the build starts.
     expect(res.status).toBe(400);
     const body = (await res.json()) as { code: string };
     expect(body.code).toBe("invalid_url");
+    expect(statusOf(pId)).toBe("stopped");
   });
 });
 
@@ -366,14 +426,12 @@ describe("#119 build-failure classification (pure helpers)", () => {
       expect(body.message).toBe(msg);
     });
 
-    test("unclassified error → 500 with the redacted message as text", async () => {
+    test("unclassified error → 500 with JSON {error}", async () => {
       const msg = "Docker build failed: 500 some unrelated error";
       const res = buildErrorResponse(msg);
       expect(res.status).toBe(500);
-      expect(await res.text()).toBe(msg);
-      // Specifically should NOT be JSON — preserves the legacy contract
-      // for UI clients that may not handle JSON 500s.
-      expect(res.headers.get("content-type") || "").not.toContain("application/json");
+      expect(res.headers.get("content-type") || "").toContain("application/json");
+      expect(await res.json()).toEqual({ error: msg });
     });
 
     test("repository-not-found stays unclassified (different remediation)", async () => {

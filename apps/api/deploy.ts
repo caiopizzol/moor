@@ -11,6 +11,8 @@ import {
   stopContainer,
 } from "./docker";
 import { requireNotDraining } from "./drain";
+import { validateGithubUrl } from "./github-url";
+import { errorResponse } from "./http";
 import { autoDetectPorts, getProjectPorts } from "./ports";
 import { redactCredentials, redactCredentialsInText } from "./redact";
 import { getResolvedProjectFiles } from "./routes/files";
@@ -61,7 +63,6 @@ type ContainerStartConfig = {
 
 export type ProjectActionResult =
   | { kind: "response"; response: Response }
-  | { kind: "text"; body: string; status: number }
   | { kind: "json"; body: unknown; status?: number }
   | { kind: "stream"; stream: ReadableStream<Uint8Array> };
 
@@ -130,16 +131,20 @@ function resolverFailureResult(failure: ResolveFailure): ProjectActionResult {
   return { kind: "json", body: failure, status: 400 };
 }
 
+function errorResult(message: string, status: number): ProjectActionResult {
+  return { kind: "response", response: errorResponse(message, status) };
+}
+
 /** Build the /build catch-path response from an already-redacted error
  *  message. Classified auth failures (#119) become 401 JSON with a
- *  structured code so agents can branch; unclassified errors keep the
- *  legacy 500/text contract so existing UI clients are unaffected. */
+ *  structured code so agents can branch; unclassified errors use the
+ *  standard JSON error envelope. */
 export function buildErrorResponse(message: string): Response {
   const code = classifyBuildError(message);
   if (code !== "unknown") {
     return Response.json({ code, message }, { status: 401 });
   }
-  return new Response(message, { status: 500 });
+  return errorResponse(message, 500);
 }
 
 /** SSE events to emit on a /run catch-path failure from an already-
@@ -167,17 +172,7 @@ function buildErrorResult(message: string): ProjectActionResult {
   if (code !== "unknown") {
     return { kind: "json", body: { code, message }, status: 401 };
   }
-  return { kind: "text", body: message, status: 500 };
-}
-
-function validateGithubUrl(url: string): string | null {
-  try {
-    const parsed = new URL(url);
-    if (!parsed.hostname.endsWith("github.com")) return "Only GitHub URLs are supported";
-  } catch {
-    return "Invalid GitHub URL";
-  }
-  return null;
+  return errorResult(message, 500);
 }
 
 function buildContainerStartConfig(
@@ -252,12 +247,12 @@ export async function deployProject(
       return startProject(project, deps);
     }
     console.log("[run] no source or image_tag — nothing to do");
-    return { kind: "text", body: "No GitHub URL or Docker image configured", status: 400 };
+    return errorResult("No GitHub URL or Docker image configured", 400);
   }
 
   if (project.github_url) {
     const urlError = validateGithubUrl(project.github_url);
-    if (urlError) return { kind: "text", body: urlError, status: 400 };
+    if (urlError) return errorResult(urlError, 400);
   }
 
   // Resolve source credential BEFORE any side effects (status flip,
@@ -458,10 +453,10 @@ export async function buildProject(
   );
   if (!project.github_url) {
     console.log("[build] rejected — no github_url");
-    return { kind: "text", body: "No GitHub URL configured", status: 400 };
+    return errorResult("No GitHub URL configured", 400);
   }
   const urlError = validateGithubUrl(project.github_url);
-  if (urlError) return { kind: "text", body: urlError, status: 400 };
+  if (urlError) return errorResult(urlError, 400);
 
   // Resolve source credential BEFORE any side effects (status flip,
   // BuildRun row). Same contract as /run.
@@ -517,7 +512,7 @@ export async function buildProject(
     // actual container state - the cancel didn't touch a running container.
     if (run.abort.signal.aborted) {
       await deps.reconcileProjectStatusAfterInterrupt(project.id, project.container_id);
-      return { kind: "text", body: "cancelled by user", status: 499 };
+      return errorResult("cancelled by user", 499);
     }
     deps.setProjectRecordedStatus(project.id, "error", project.container_id);
     const rawMessage = e instanceof Error ? e.message : "Unknown error";
@@ -544,7 +539,7 @@ export async function startProject(
   console.log(`[start] project=${project.name} image=${project.image_tag}`);
   if (!project.image_tag) {
     console.log("[start] rejected — no image built");
-    return { kind: "text", body: "No image built yet", status: 400 };
+    return errorResult("No image built yet", 400);
   }
 
   const envs = deps.listEnvVars(project.id);
@@ -579,7 +574,7 @@ export async function startProject(
     deps.setProjectRecordedStatus(project.id, "error", project.container_id);
     const message = e instanceof Error ? e.message : "Unknown error";
     console.error(`[start] FAILED: ${message}`);
-    return { kind: "text", body: message, status: 500 };
+    return errorResult(message, 500);
   }
 }
 

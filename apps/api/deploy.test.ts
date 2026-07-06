@@ -1,9 +1,9 @@
 process.env.MOOR_DB_PATH = ":memory:";
 
 import { describe, expect, test } from "bun:test";
-import type { BuildRunLike, DeployDeps, Project } from "./deploy";
+import type { BuildRunLike, DeployDeps, Project, ProjectActionResult } from "./deploy";
 
-const { deployProject } = await import("./deploy");
+const { buildProject, deployProject, startProject } = await import("./deploy");
 
 function makeProject(overrides: Partial<Project> = {}): Project {
   return {
@@ -149,6 +149,18 @@ async function readStream(stream: ReadableStream<Uint8Array>): Promise<string> {
   return text;
 }
 
+async function expectErrorResult(
+  result: ProjectActionResult,
+  status: number,
+  error: string,
+): Promise<void> {
+  expect(result.kind).toBe("response");
+  if (result.kind !== "response") return;
+  expect(result.response.status).toBe(status);
+  expect(result.response.headers.get("content-type") || "").toContain("application/json");
+  expect(await result.response.json()).toEqual({ error });
+}
+
 describe("deployProject orchestration", () => {
   test("builds, records, detects ports, starts container, syncs routes, and finalizes success", async () => {
     const ops: string[] = [];
@@ -233,5 +245,67 @@ describe("deployProject orchestration", () => {
     expect(result.response.status).toBe(503);
     expect(await result.response.json()).toEqual({ error: "moor is draining" });
     expect(ops).toEqual(["drain"]);
+  });
+
+  test("no source configured returns a JSON error response", async () => {
+    const ops: string[] = [];
+    const result = await deployProject(
+      makeProject({ github_url: null, docker_image: null, image_tag: null }),
+      { noCache: false },
+      makeDeps(ops),
+    );
+
+    await expectErrorResult(result, 400, "No GitHub URL or Docker image configured");
+    expect(ops).toEqual(["drain"]);
+  });
+
+  test("strict GitHub URL validation rejects unsupported hosts before side effects", async () => {
+    const ops: string[] = [];
+    const result = await deployProject(
+      makeProject({ github_url: "https://gist.github.com/owner/repo" }),
+      { noCache: false },
+      makeDeps(ops),
+    );
+
+    await expectErrorResult(result, 400, "Only GitHub URLs are supported");
+    expect(ops).toEqual(["drain"]);
+  });
+
+  test("build validation errors use the JSON error envelope", async () => {
+    const ops: string[] = [];
+    const result = await buildProject(makeProject({ github_url: null }), makeDeps(ops));
+
+    await expectErrorResult(result, 400, "No GitHub URL configured");
+    expect(ops).toEqual(["drain"]);
+  });
+
+  test("start validation errors use the JSON error envelope", async () => {
+    const ops: string[] = [];
+    const result = await startProject(makeProject({ image_tag: null }), makeDeps(ops));
+
+    await expectErrorResult(result, 400, "No image built yet");
+    expect(ops).toEqual(["drain"]);
+  });
+
+  test("container start failures use the JSON error envelope", async () => {
+    const ops: string[] = [];
+    const deps = makeDeps(ops, {
+      createAndStartContainer: async () => {
+        ops.push("create:throw");
+        throw new Error("container failed");
+      },
+    });
+    const result = await startProject(makeProject({ image_tag: "moor/app:latest" }), deps);
+
+    await expectErrorResult(result, 500, "container failed");
+    expect(ops).toEqual([
+      "drain",
+      "envs:1",
+      "ports:1",
+      "volumes:1",
+      "files:1:1",
+      "create:throw",
+      "status:error:null",
+    ]);
   });
 });

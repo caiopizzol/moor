@@ -15,6 +15,8 @@ import {
   getContainerLogs,
 } from "../docker";
 import { requireNotDraining } from "../drain";
+import { validateGithubUrl } from "../github-url";
+import { errorResponse } from "../http";
 import {
   liveRequireErrorResponse,
   requireLiveContainer,
@@ -34,7 +36,7 @@ export async function handleDocker(req: Request, url: URL): Promise<Response | n
   const project = db.query("SELECT * FROM projects WHERE id = ?").get(id) as Project | null;
   if (!project) {
     console.log(`[docker] project ${id} not found`);
-    return new Response("Not found", { status: 404 });
+    return errorResponse("Not found", 404);
   }
   console.log(
     `[docker] project: name=${project.name} status=${project.status} image=${project.image_tag} container=${project.container_id}`,
@@ -54,8 +56,6 @@ function projectActionResultToResponse(result: ProjectActionResult): Response {
   switch (result.kind) {
     case "response":
       return result.response;
-    case "text":
-      return new Response(result.body, { status: result.status });
     case "json":
       return result.status === undefined
         ? Response.json(result.body)
@@ -74,7 +74,16 @@ function projectActionResultToResponse(result: ProjectActionResult): Response {
 async function handleRun(req: Request, project: Project): Promise<Response> {
   const url = new URL(req.url);
   const noCache = url.searchParams.get("nocache") === "true";
+  const validationResponse = validateProjectGithubUrl(project);
+  if (validationResponse) return validationResponse;
   return projectActionResultToResponse(await deployProject(project, { noCache }));
+}
+
+function validateProjectGithubUrl(project: Project): Response | null {
+  if (!project.github_url) return null;
+  const urlError = validateGithubUrl(project.github_url);
+  if (!urlError) return null;
+  return errorResponse(urlError, 400);
 }
 
 /** #74 pure helper: shape the response body + status from a
@@ -153,7 +162,7 @@ async function handleExec(req: Request, project: Project): Promise<Response> {
   // rather than a 503 "Docker unreachable" they can't act on.
   const body = (await req.json()) as { command?: string; timeout_ms?: number };
   if (!body.command) {
-    return new Response("Missing command", { status: 400 });
+    return errorResponse("Missing command", 400);
   }
 
   let timeout_ms: number | undefined;
@@ -163,9 +172,9 @@ async function handleExec(req: Request, project: Project): Promise<Response> {
       body.timeout_ms < EXEC_TIMEOUT_MIN_MS ||
       body.timeout_ms > EXEC_TIMEOUT_MAX_MS
     ) {
-      return new Response(
+      return errorResponse(
         `timeout_ms must be an integer between ${EXEC_TIMEOUT_MIN_MS} and ${EXEC_TIMEOUT_MAX_MS}`,
-        { status: 400 },
+        400,
       );
     }
     timeout_ms = body.timeout_ms;
@@ -209,11 +218,13 @@ async function handleExec(req: Request, project: Project): Promise<Response> {
     }
     const message = e instanceof Error ? e.message : "Unknown error";
     console.error(`[exec] FAILED: ${message}`);
-    return new Response(message, { status: 500 });
+    return errorResponse(message, 500);
   }
 }
 
 async function handleBuild(project: Project): Promise<Response> {
+  const validationResponse = validateProjectGithubUrl(project);
+  if (validationResponse) return validationResponse;
   return projectActionResultToResponse(await buildProject(project));
 }
 

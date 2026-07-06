@@ -29,6 +29,7 @@ export async function responseErrorMessage(response: Response): Promise<string> 
   return parseErrorMessage(text, response.status);
 }
 
+// Mirrors packages/contract parseErrorMessage; the API stays dependency-free.
 function parseErrorMessage(body: string, status: number): string {
   if (!body) return `HTTP ${status}`;
 
