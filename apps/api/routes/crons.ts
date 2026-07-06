@@ -1,6 +1,7 @@
 import { runCron } from "../cron";
 import db from "../db";
 import { requireNotDraining } from "../drain";
+import { errorResponse } from "../http";
 import { liveRequireErrorResponse, requireLiveContainer } from "../status-reconciler";
 
 export async function handleCrons(req: Request, url: URL): Promise<Response | null> {
@@ -51,12 +52,12 @@ export async function handleCrons(req: Request, url: URL): Promise<Response | nu
       command: string;
       enabled: number;
     } | null;
-    if (!cron) return new Response("Cron not found", { status: 404 });
+    if (!cron) return errorResponse("Cron not found", 404);
 
     const project = db
       .query("SELECT id, container_id, status FROM projects WHERE id = ?")
       .get(cron.project_id) as { id: number; container_id: string | null; status: string } | null;
-    if (!project) return new Response("Project not found", { status: 404 });
+    if (!project) return errorResponse("Project not found", 404);
 
     // #73: fresh inspect, not cached project.status — a manual cron
     // trigger is about to exec into the container.
@@ -74,7 +75,7 @@ export async function handleCrons(req: Request, url: URL): Promise<Response | nu
 async function handleCreate(req: Request, projectId: number): Promise<Response> {
   const { name, schedule, command } = await req.json();
   if (!name || !schedule || !command) {
-    return new Response("name, schedule, and command are required", { status: 400 });
+    return errorResponse("name, schedule, and command are required", 400);
   }
 
   const row = db
@@ -98,13 +99,13 @@ async function handleUpdate(req: Request, id: number): Promise<Response> {
     }
   }
 
-  if (fields.length === 0) return new Response("No fields to update", { status: 400 });
+  if (fields.length === 0) return errorResponse("No fields to update", 400);
 
   values.push(id);
   const row = db
     .query(`UPDATE crons SET ${fields.join(", ")} WHERE id = ? RETURNING *`)
     .get(...values);
-  if (!row) return new Response("Not found", { status: 404 });
+  if (!row) return errorResponse("Not found", 404);
 
   return Response.json(row);
 }

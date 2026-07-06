@@ -83,6 +83,27 @@ const apiResponse = {
   delete: (path: string) => rawResponseRequest((client) => client.delete(path)),
 };
 
+async function readErrorMessage(res: Response): Promise<string> {
+  const text = await res.text();
+  if (!text) return `HTTP ${res.status}`;
+
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    if (isJsonObject(parsed) && "error" in parsed) {
+      const error = parsed.error;
+      return typeof error === "string" ? error : JSON.stringify(error);
+    }
+  } catch {
+    return text;
+  }
+
+  return text;
+}
+
+function isJsonObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 async function resolveProject(name: string): Promise<Project> {
   const res = await apiResponse.get("/api/projects");
   if (!res.ok) throw new Error(`Failed to list projects: ${res.status}`);
@@ -190,7 +211,7 @@ server.registerTool(
       const data = (await res.json().catch(() => ({}))) as { error?: string };
       throw new Error(`Docker error: ${data.error ?? "unknown"}`);
     }
-    if (!res.ok) throw new Error(`Failed: ${res.status} ${await res.text()}`);
+    if (!res.ok) throw new Error(`Failed: ${res.status} ${await readErrorMessage(res)}`);
     const data = (await res.json()) as { logs: string; state?: string };
     switch (data.state) {
       case "no_container":
@@ -245,7 +266,7 @@ server.registerTool(
     // event:/data: lines, returning empty everything. Without this guard
     // the tool would silently report "Rebuild complete." on a failed build.
     // Mirrors the existing moor_deploy guard at the /run call site.
-    if (!res.ok) throw new Error(`[run] ${await res.text()}`);
+    if (!res.ok) throw new Error(`[run] ${await readErrorMessage(res)}`);
     const { logs, error, structuredError } = await readSSE(res);
     // #119: a classified failure (today: source_credential_required) gets
     // returned as isError with a structured payload the agent can branch
@@ -280,9 +301,9 @@ server.registerTool(
   async ({ project }) => {
     const p = await resolveProject(project);
     const stopRes = await apiResponse.post(`/api/projects/${p.id}/stop`);
-    if (!stopRes.ok) throw new Error(`Failed to stop: ${await stopRes.text()}`);
+    if (!stopRes.ok) throw new Error(`Failed to stop: ${await readErrorMessage(stopRes)}`);
     const startRes = await apiResponse.post(`/api/projects/${p.id}/start`);
-    if (!startRes.ok) throw new Error(`Failed to start: ${await startRes.text()}`);
+    if (!startRes.ok) throw new Error(`Failed to start: ${await readErrorMessage(startRes)}`);
     return { content: [{ type: "text", text: `${p.name} restarted.` }] };
   },
 );
@@ -334,7 +355,7 @@ server.registerTool(
       }
       throw new Error(`Exec timed out after ${t.timeout_ms}ms. ${detail}`);
     }
-    if (!res.ok) throw new Error(`Failed: ${await res.text()}`);
+    if (!res.ok) throw new Error(`Failed: ${await readErrorMessage(res)}`);
     const result = (await res.json()) as {
       exitCode: number;
       stdout: string;
@@ -396,7 +417,7 @@ server.registerTool(
     const allVars = Array.from(merged, ([key, value]) => ({ key, value }));
 
     const setRes = await apiResponse.put(`/api/projects/${p.id}/envs`, allVars);
-    if (!setRes.ok) throw new Error(`Failed to set envs: ${await setRes.text()}`);
+    if (!setRes.ok) throw new Error(`Failed to set envs: ${await readErrorMessage(setRes)}`);
 
     const keys = Object.keys(vars).join(", ");
     let text = `Set ${keys} on ${p.name}.`;
@@ -405,7 +426,8 @@ server.registerTool(
     if (p.status === "running") {
       await apiResponse.post(`/api/projects/${p.id}/stop`);
       const startRes = await apiResponse.post(`/api/projects/${p.id}/start`);
-      if (!startRes.ok) throw new Error(`Set vars but failed to restart: ${await startRes.text()}`);
+      if (!startRes.ok)
+        throw new Error(`Set vars but failed to restart: ${await readErrorMessage(startRes)}`);
       text += " Container restarted.";
     }
 
@@ -486,7 +508,7 @@ server.registerTool(
   },
   async () => {
     const res = await apiResponse.get("/api/server/update-status");
-    if (!res.ok) throw new Error(`Failed: ${res.status} ${await res.text()}`);
+    if (!res.ok) throw new Error(`Failed: ${res.status} ${await readErrorMessage(res)}`);
     const s = (await res.json()) as {
       current: {
         version: string;
@@ -599,7 +621,8 @@ server.registerTool(
   },
   async () => {
     const res = await apiResponse.get("/api/server/drain");
-    if (!res.ok) throw new Error(`drain status failed: ${res.status} ${await res.text()}`);
+    if (!res.ok)
+      throw new Error(`drain status failed: ${res.status} ${await readErrorMessage(res)}`);
     const s = (await res.json()) as DrainStatusResponse;
     const lines = renderDrainState(s.state);
     lines.push(
@@ -640,7 +663,8 @@ server.registerTool(
       ttl_minutes,
       clear_after_version,
     });
-    if (!res.ok) throw new Error(`drain enable failed: ${res.status} ${await res.text()}`);
+    if (!res.ok)
+      throw new Error(`drain enable failed: ${res.status} ${await readErrorMessage(res)}`);
     const s = (await res.json()) as DrainStateResponse;
     return { content: [{ type: "text", text: renderDrainState(s.state).join("\n") }] };
   },
@@ -655,7 +679,8 @@ server.registerTool(
   },
   async () => {
     const res = await apiResponse.post("/api/server/drain/disable", {});
-    if (!res.ok) throw new Error(`drain disable failed: ${res.status} ${await res.text()}`);
+    if (!res.ok)
+      throw new Error(`drain disable failed: ${res.status} ${await readErrorMessage(res)}`);
     const s = (await res.json()) as DrainStateResponse;
     return { content: [{ type: "text", text: renderDrainState(s.state).join("\n") }] };
   },
@@ -675,7 +700,7 @@ server.registerTool(
   },
   async () => {
     const res = await apiResponse.post("/api/server/backup", {});
-    if (!res.ok) throw new Error(`db backup failed: ${res.status} ${await res.text()}`);
+    if (!res.ok) throw new Error(`db backup failed: ${res.status} ${await readErrorMessage(res)}`);
     const r = (await res.json()) as { path: string; sizeBytes: number; durationMs: number };
     const mb = (r.sizeBytes / (1024 * 1024)).toFixed(2);
     return {
@@ -801,7 +826,8 @@ server.registerTool(
       ? `/api/server/update/audit?${qs.toString()}`
       : "/api/server/update/audit";
     const res = await apiResponse.get(path);
-    if (!res.ok) throw new Error(`update audit failed: ${res.status} ${await res.text()}`);
+    if (!res.ok)
+      throw new Error(`update audit failed: ${res.status} ${await readErrorMessage(res)}`);
     const { rows } = (await res.json()) as { rows: UpdateAuditApiRow[] };
     return {
       content: [{ type: "text", text: renderAuditList(rows, { tail_bytes }) }],
@@ -824,7 +850,7 @@ server.registerTool(
   },
   async ({ scope }) => {
     const res = await apiResponse.post("/api/server/cleanup/plan", { scope });
-    if (!res.ok) throw new Error(`plan failed: ${res.status} ${await res.text()}`);
+    if (!res.ok) throw new Error(`plan failed: ${res.status} ${await readErrorMessage(res)}`);
     const data = (await res.json()) as {
       candidates: Array<
         | { category: "build_cache"; reclaimable_bytes: number; label: string }
@@ -889,7 +915,7 @@ server.registerTool(
   },
   async ({ candidates }) => {
     const res = await apiResponse.post("/api/server/cleanup/execute", { candidates });
-    if (!res.ok) throw new Error(`execute failed: ${res.status} ${await res.text()}`);
+    if (!res.ok) throw new Error(`execute failed: ${res.status} ${await readErrorMessage(res)}`);
     const data = (await res.json()) as {
       audit_id: number;
       total_reclaimed_bytes: number;
@@ -934,7 +960,7 @@ server.registerTool(
   async ({ project }) => {
     const p = await resolveProject(project);
     const res = await apiResponse.get(`/api/projects/${p.id}/container-stats`);
-    if (!res.ok) throw new Error(`Failed: ${res.status} ${await res.text()}`);
+    if (!res.ok) throw new Error(`Failed: ${res.status} ${await readErrorMessage(res)}`);
     const s = (await res.json()) as {
       running: boolean;
       cpu_percent: number;
@@ -991,7 +1017,7 @@ server.registerTool(
     const to = to_ms ?? Date.now();
     const from = from_ms ?? to - (hours ?? 24) * 3_600_000;
     const res = await apiResponse.get(`/api/projects/${p.id}/stats/history?from=${from}&to=${to}`);
-    if (!res.ok) throw new Error(`Failed: ${res.status} ${await res.text()}`);
+    if (!res.ok) throw new Error(`Failed: ${res.status} ${await readErrorMessage(res)}`);
     const h = (await res.json()) as {
       from_ms: number;
       to_ms: number;
@@ -1152,7 +1178,7 @@ server.registerTool(
 
     const { volumes, ...createBody } = input;
     const res = await apiResponse.post("/api/projects", createBody);
-    if (!res.ok) throw new Error(`Failed to create project: ${await res.text()}`);
+    if (!res.ok) throw new Error(`Failed to create project: ${await readErrorMessage(res)}`);
     const project = (await res.json()) as { id: number };
 
     // Volumes are a separate endpoint so the API stays single-concern. Loop
@@ -1163,7 +1189,7 @@ server.registerTool(
       for (const v of volumes) {
         const vRes = await apiResponse.post(`/api/projects/${project.id}/volumes`, v);
         if (vRes.ok) volumeCreated.push(v.name);
-        else volumeFailures.push({ name: v.name, error: await vRes.text() });
+        else volumeFailures.push({ name: v.name, error: await readErrorMessage(vRes) });
       }
     }
 
@@ -1258,7 +1284,7 @@ server.registerTool(
 
     const p = await resolveProject(project);
     const res = await apiResponse.put(`/api/projects/${p.id}`, updates);
-    if (!res.ok) throw new Error(`Failed to update project: ${await res.text()}`);
+    if (!res.ok) throw new Error(`Failed to update project: ${await readErrorMessage(res)}`);
     const updated = await res.json();
     return { content: [{ type: "text", text: JSON.stringify(updated, null, 2) }] };
   },
@@ -1296,14 +1322,17 @@ server.registerTool(
     const qs = purge_volumes ? "?purge_volumes=true" : "";
     const res = await apiResponse.delete(`/api/projects/${p.id}${qs}`);
     if (!res.ok) {
-      const text = await res.text();
+      const text = await readErrorMessage(res);
+      let message = text;
       try {
-        const parsed = JSON.parse(text);
-        if (parsed?.message) throw new Error(parsed.message);
+        const parsed = JSON.parse(text) as unknown;
+        if (isJsonObject(parsed) && typeof parsed.message === "string") {
+          message = parsed.message;
+        }
       } catch {
         // not json
       }
-      throw new Error(`Failed to delete project: ${text}`);
+      throw new Error(`Failed to delete project: ${message}`);
     }
     // 204 No Content (no purge or no volumes) vs 200 JSON (purge with results)
     if (res.status === 204) {
@@ -1339,7 +1368,7 @@ server.registerTool(
     if (err) throw new Error(`Invalid schedule: ${err}`);
     const p = await resolveProject(project);
     const res = await apiResponse.post(`/api/projects/${p.id}/crons`, { name, schedule, command });
-    if (!res.ok) throw new Error(`Failed to create cron: ${await res.text()}`);
+    if (!res.ok) throw new Error(`Failed to create cron: ${await readErrorMessage(res)}`);
     const cron = await res.json();
     return { content: [{ type: "text", text: JSON.stringify(cron, null, 2) }] };
   },
@@ -1372,7 +1401,7 @@ server.registerTool(
       throw new Error("Provide at least one field to update");
     }
     const res = await apiResponse.put(`/api/crons/${cron_id}`, body);
-    if (!res.ok) throw new Error(`Failed to update cron: ${await res.text()}`);
+    if (!res.ok) throw new Error(`Failed to update cron: ${await readErrorMessage(res)}`);
     const cron = await res.json();
     return { content: [{ type: "text", text: JSON.stringify(cron, null, 2) }] };
   },
@@ -1389,7 +1418,7 @@ server.registerTool(
   },
   async ({ cron_id }) => {
     const res = await apiResponse.delete(`/api/crons/${cron_id}`);
-    if (!res.ok) throw new Error(`Failed to delete cron: ${await res.text()}`);
+    if (!res.ok) throw new Error(`Failed to delete cron: ${await readErrorMessage(res)}`);
     // API returns 204 whether or not the row existed; phrase the response so it
     // doesn't claim a row was removed when it might already have been gone.
     return { content: [{ type: "text", text: `Deletion requested for cron ${cron_id}.` }] };
@@ -1409,11 +1438,11 @@ server.registerTool(
   async ({ cron_id }) => {
     const res = await apiResponse.post(`/api/crons/${cron_id}/run`);
     if (!res.ok) {
-      const text = await res.text();
+      const text = await readErrorMessage(res);
       let message = text;
       try {
-        const parsed = JSON.parse(text);
-        if (parsed?.error) message = parsed.error;
+        const parsed = JSON.parse(text) as unknown;
+        if (isJsonObject(parsed) && typeof parsed.error === "string") message = parsed.error;
       } catch {
         // Not JSON; use raw text
       }
@@ -1459,7 +1488,7 @@ server.registerTool(
 
     for (const key of toDelete) {
       const res = await apiResponse.delete(`/api/projects/${p.id}/envs/${encodeURIComponent(key)}`);
-      if (!res.ok) throw new Error(`Failed to delete ${key}: ${await res.text()}`);
+      if (!res.ok) throw new Error(`Failed to delete ${key}: ${await readErrorMessage(res)}`);
     }
 
     let text = `Deleted ${toDelete.join(", ")} from ${p.name}.`;
@@ -1469,7 +1498,7 @@ server.registerTool(
       await apiResponse.post(`/api/projects/${p.id}/stop`);
       const startRes = await apiResponse.post(`/api/projects/${p.id}/start`);
       if (!startRes.ok) {
-        throw new Error(`Deleted vars but failed to restart: ${await startRes.text()}`);
+        throw new Error(`Deleted vars but failed to restart: ${await readErrorMessage(startRes)}`);
       }
       text += " Container restarted.";
     }
@@ -1490,7 +1519,7 @@ server.registerTool(
   },
   async ({ domain }) => {
     const res = await apiResponse.post("/api/dns-check", { domain });
-    if (!res.ok) throw new Error(`Failed: ${await res.text()}`);
+    if (!res.ok) throw new Error(`Failed: ${await readErrorMessage(res)}`);
     const data = (await res.json()) as {
       resolves: boolean;
       ip: string | null;
@@ -1524,7 +1553,7 @@ server.registerTool(
   async ({ project }) => {
     const p = await resolveProject(project);
     const res = await apiResponse.get(`/api/projects/${p.id}/volumes`);
-    if (!res.ok) throw new Error(`Failed: ${await res.text()}`);
+    if (!res.ok) throw new Error(`Failed: ${await readErrorMessage(res)}`);
     const rows = (await res.json()) as Array<{
       id: number;
       name: string;
@@ -1562,7 +1591,7 @@ server.registerTool(
   async ({ project, name, target }) => {
     const p = await resolveProject(project);
     const res = await apiResponse.post(`/api/projects/${p.id}/volumes`, { name, target });
-    if (!res.ok) throw new Error(`Failed: ${await res.text()}`);
+    if (!res.ok) throw new Error(`Failed: ${await readErrorMessage(res)}`);
     const created = (await res.json()) as {
       id: number;
       name: string;
@@ -1595,7 +1624,7 @@ server.registerTool(
     const p = await resolveProject(project);
     const res = await apiResponse.delete(`/api/projects/${p.id}/volumes/${volume_id}`);
     if (res.status === 404) throw new Error(`Volume ${volume_id} not found on project ${p.name}`);
-    if (!res.ok) throw new Error(`Failed: ${await res.text()}`);
+    if (!res.ok) throw new Error(`Failed: ${await readErrorMessage(res)}`);
     const body = (await res.json()) as { docker_name: string; message: string };
     return { content: [{ type: "text", text: body.message }] };
   },
@@ -1640,7 +1669,7 @@ server.registerTool(
     if (env_ref !== undefined) body.env_ref = env_ref;
     if (mode !== undefined) body.mode = mode;
     const res = await apiResponse.post(`/api/projects/${p.id}/files`, body);
-    if (!res.ok) throw new Error(`Failed: ${await res.text()}`);
+    if (!res.ok) throw new Error(`Failed: ${await readErrorMessage(res)}`);
     const saved = (await res.json()) as {
       id: number;
       path: string;
@@ -1673,7 +1702,7 @@ server.registerTool(
   async ({ project }) => {
     const p = await resolveProject(project);
     const res = await apiResponse.get(`/api/projects/${p.id}/files`);
-    if (!res.ok) throw new Error(`Failed: ${await res.text()}`);
+    if (!res.ok) throw new Error(`Failed: ${await readErrorMessage(res)}`);
     const rows = (await res.json()) as Array<{
       id: number;
       path: string;
@@ -1707,7 +1736,7 @@ server.registerTool(
     const p = await resolveProject(project);
     const res = await apiResponse.delete(`/api/projects/${p.id}/files/${file_id}`);
     if (res.status === 404) throw new Error(`File ${file_id} not found on project ${p.name}`);
-    if (!res.ok) throw new Error(`Failed: ${await res.text()}`);
+    if (!res.ok) throw new Error(`Failed: ${await readErrorMessage(res)}`);
     return {
       content: [
         {
@@ -1771,7 +1800,7 @@ server.registerTool(
     const res = await apiResponse.get(
       `/api/projects/${p.id}/runs?include_output=false&page=${page}`,
     );
-    if (!res.ok) throw new Error(`Failed: ${await res.text()}`);
+    if (!res.ok) throw new Error(`Failed: ${await readErrorMessage(res)}`);
     const data = (await res.json()) as {
       runs: Array<{
         id: number;
@@ -1841,7 +1870,7 @@ server.registerTool(
     const cap = tail_bytes ?? 8192;
     const res = await apiResponse.get(`/api/runs/${run_id}`);
     if (res.status === 404) throw new Error(`run_id ${run_id} not found`);
-    if (!res.ok) throw new Error(`Failed: ${await res.text()}`);
+    if (!res.ok) throw new Error(`Failed: ${await readErrorMessage(res)}`);
     const r = (await res.json()) as {
       id: number;
       cron_id: number | null;
@@ -2143,7 +2172,7 @@ server.registerTool(
         entrypoint: input.entrypoint,
       };
       const res = await apiResponse.post("/api/projects", createBody);
-      if (!res.ok) throw new Error(`[create] ${await res.text()}`);
+      if (!res.ok) throw new Error(`[create] ${await readErrorMessage(res)}`);
       const created = (await res.json()) as Project;
       projectId = created.id;
       projectName = created.name;
@@ -2167,7 +2196,7 @@ server.registerTool(
 
       if (Object.keys(updateBody).length > 0) {
         const res = await apiResponse.put(`/api/projects/${existing.id}`, updateBody);
-        if (!res.ok) throw new Error(`[update] ${await res.text()}`);
+        if (!res.ok) throw new Error(`[update] ${await readErrorMessage(res)}`);
       }
       projectId = existing.id;
       projectName = existing.name;
@@ -2183,7 +2212,7 @@ server.registerTool(
       for (const v of input.volumes) {
         const vRes = await apiResponse.post(`/api/projects/${projectId}/volumes`, v);
         if (vRes.ok) continue;
-        const text = await vRes.text();
+        const text = await readErrorMessage(vRes);
         if (vRes.status !== 409) {
           throw new Error(`[volumes] failed to add ${v.name}: ${text}`);
         }
@@ -2195,7 +2224,7 @@ server.registerTool(
           const listRes = await apiResponse.get(`/api/projects/${projectId}/volumes`);
           if (!listRes.ok) {
             throw new Error(
-              `[volumes] could not resolve 409 on ${v.name}: failed to list existing volumes: ${await listRes.text()}`,
+              `[volumes] could not resolve 409 on ${v.name}: failed to list existing volumes: ${await readErrorMessage(listRes)}`,
             );
           }
           existingVolumes = (await listRes.json()) as Array<{ name: string; target: string }>;
@@ -2226,7 +2255,7 @@ server.registerTool(
       for (const f of input.files) {
         const fRes = await apiResponse.post(`/api/projects/${projectId}/files`, f);
         if (!fRes.ok) {
-          throw new Error(`[files] failed to set ${f.path}: ${await fRes.text()}`);
+          throw new Error(`[files] failed to set ${f.path}: ${await readErrorMessage(fRes)}`);
         }
       }
     }
@@ -2244,7 +2273,7 @@ server.registerTool(
       for (const [k, v] of envEntries) merged.set(k, v);
       const allVars = Array.from(merged, ([key, value]) => ({ key, value }));
       const putRes = await apiResponse.put(`/api/projects/${projectId}/envs`, allVars);
-      if (!putRes.ok) throw new Error(`[set_env] ${await putRes.text()}`);
+      if (!putRes.ok) throw new Error(`[set_env] ${await readErrorMessage(putRes)}`);
     }
 
     // Step 3: run, default true. Wait for the full SSE stream like moor_rebuild.
@@ -2252,7 +2281,7 @@ server.registerTool(
     let runStructuredError: { code: string; message: string } | undefined;
     if (input.run) {
       const runRes = await apiResponse.post(`/api/projects/${projectId}/run`);
-      if (!runRes.ok) throw new Error(`[run] ${await runRes.text()}`);
+      if (!runRes.ok) throw new Error(`[run] ${await readErrorMessage(runRes)}`);
       const { logs, error, structuredError } = await readSSE(runRes);
       runLogs = logs;
       // #119: classified failure (today: source_credential_required) is
@@ -2332,7 +2361,7 @@ server.registerTool(
     const body: Record<string, unknown> = { command };
     if (timeout_ms !== undefined) body.timeout_ms = timeout_ms;
     const res = await apiResponse.post(`/api/projects/${p.id}/exec/async`, body);
-    if (!res.ok) throw new Error(`Failed: ${await res.text()}`);
+    if (!res.ok) throw new Error(`Failed: ${await readErrorMessage(res)}`);
     const data = (await res.json()) as { run_id: number };
     return {
       content: [
@@ -2368,7 +2397,7 @@ server.registerTool(
     const cap = tail_bytes ?? 8192;
     const res = await apiResponse.get(`/api/exec/${run_id}`);
     if (res.status === 404) throw new Error(`run_id ${run_id} not found`);
-    if (!res.ok) throw new Error(`Failed: ${await res.text()}`);
+    if (!res.ok) throw new Error(`Failed: ${await readErrorMessage(res)}`);
     const data = (await res.json()) as {
       id: number;
       state: string;
@@ -2491,7 +2520,7 @@ server.registerTool(
   },
   async () => {
     const res = await apiResponse.get("/api/server/registry-credentials");
-    if (!res.ok) throw new Error(`Failed: ${res.status} ${await res.text()}`);
+    if (!res.ok) throw new Error(`Failed: ${res.status} ${await readErrorMessage(res)}`);
     const data = (await res.json()) as { rows: RegistryCredentialMetadata[] };
     const text =
       data.rows.length === 0
@@ -2521,7 +2550,7 @@ server.registerTool(
   async ({ id }) => {
     const res = await apiResponse.get(`/api/server/registry-credentials/${id}`);
     if (res.status === 404) throw new Error(`credential id=${id} not found`);
-    if (!res.ok) throw new Error(`Failed: ${res.status} ${await res.text()}`);
+    if (!res.ok) throw new Error(`Failed: ${res.status} ${await readErrorMessage(res)}`);
     const row = (await res.json()) as RegistryCredentialMetadata;
     return {
       content: [{ type: "text", text: renderCredentialLine(row) }],
@@ -2558,7 +2587,7 @@ server.registerTool(
       username,
       secret,
     });
-    if (!res.ok) throw new Error(`Failed: ${res.status} ${await res.text()}`);
+    if (!res.ok) throw new Error(`Failed: ${res.status} ${await readErrorMessage(res)}`);
     const row = (await res.json()) as RegistryCredentialMetadata;
     return {
       content: [
@@ -2596,7 +2625,7 @@ server.registerTool(
     if (secret !== undefined) patch.secret = secret;
     const res = await apiResponse.put(`/api/server/registry-credentials/${id}`, patch);
     if (res.status === 404) throw new Error(`credential id=${id} not found`);
-    if (!res.ok) throw new Error(`Failed: ${res.status} ${await res.text()}`);
+    if (!res.ok) throw new Error(`Failed: ${res.status} ${await readErrorMessage(res)}`);
     const row = (await res.json()) as RegistryCredentialMetadata;
     const rotated: string[] = [];
     if (username !== undefined) rotated.push("username");
@@ -2632,7 +2661,9 @@ server.registerTool(
     const getRes = await apiResponse.get(`/api/server/registry-credentials/${id}`);
     if (getRes.status === 404) throw new Error(`credential id=${id} not found`);
     if (!getRes.ok)
-      throw new Error(`Failed to fetch credential: ${getRes.status} ${await getRes.text()}`);
+      throw new Error(
+        `Failed to fetch credential: ${getRes.status} ${await readErrorMessage(getRes)}`,
+      );
     const row = (await getRes.json()) as RegistryCredentialMetadata;
     if (confirm_hostname !== row.hostname) {
       throw new Error(
@@ -2640,7 +2671,8 @@ server.registerTool(
       );
     }
     const delRes = await apiResponse.delete(`/api/server/registry-credentials/${id}`);
-    if (!delRes.ok) throw new Error(`Failed to delete: ${delRes.status} ${await delRes.text()}`);
+    if (!delRes.ok)
+      throw new Error(`Failed to delete: ${delRes.status} ${await readErrorMessage(delRes)}`);
     return {
       content: [{ type: "text", text: `Deleted credential for ${row.hostname} (id=${id}).` }],
       structuredContent: { deleted: { id, hostname: row.hostname } },
@@ -2688,7 +2720,7 @@ server.registerTool(
   },
   async () => {
     const res = await apiResponse.get("/api/server/source-credentials");
-    if (!res.ok) throw new Error(`Failed: ${res.status} ${await res.text()}`);
+    if (!res.ok) throw new Error(`Failed: ${res.status} ${await readErrorMessage(res)}`);
     const data = (await res.json()) as { rows: SourceCredentialMetadata[] };
     const text =
       data.rows.length === 0
@@ -2714,7 +2746,7 @@ server.registerTool(
   async ({ id }) => {
     const res = await apiResponse.get(`/api/server/source-credentials/${id}`);
     if (res.status === 404) throw new Error(`source credential id=${id} not found`);
-    if (!res.ok) throw new Error(`Failed: ${res.status} ${await res.text()}`);
+    if (!res.ok) throw new Error(`Failed: ${res.status} ${await readErrorMessage(res)}`);
     const row = (await res.json()) as SourceCredentialMetadata;
     return {
       content: [{ type: "text", text: renderSourceCredentialLine(row) }],
@@ -2761,7 +2793,7 @@ server.registerTool(
     const body: Record<string, unknown> = { hostname, label, username, secret };
     if (expires_at !== undefined) body.expires_at = expires_at;
     const res = await apiResponse.post("/api/server/source-credentials", body);
-    if (!res.ok) throw new Error(`Failed: ${res.status} ${await res.text()}`);
+    if (!res.ok) throw new Error(`Failed: ${res.status} ${await readErrorMessage(res)}`);
     const row = (await res.json()) as SourceCredentialMetadata;
     return {
       content: [
@@ -2808,7 +2840,7 @@ server.registerTool(
     if (expires_at !== undefined) patch.expires_at = expires_at;
     const res = await apiResponse.put(`/api/server/source-credentials/${id}`, patch);
     if (res.status === 404) throw new Error(`source credential id=${id} not found`);
-    if (!res.ok) throw new Error(`Failed: ${res.status} ${await res.text()}`);
+    if (!res.ok) throw new Error(`Failed: ${res.status} ${await readErrorMessage(res)}`);
     const row = (await res.json()) as SourceCredentialMetadata;
     const fields: string[] = [];
     if (username !== undefined) fields.push("username");
@@ -2846,7 +2878,9 @@ server.registerTool(
     const getRes = await apiResponse.get(`/api/server/source-credentials/${id}`);
     if (getRes.status === 404) throw new Error(`source credential id=${id} not found`);
     if (!getRes.ok)
-      throw new Error(`Failed to fetch credential: ${getRes.status} ${await getRes.text()}`);
+      throw new Error(
+        `Failed to fetch credential: ${getRes.status} ${await readErrorMessage(getRes)}`,
+      );
     const row = (await getRes.json()) as SourceCredentialMetadata;
     if (confirm_label !== row.label) {
       throw new Error(
@@ -2862,7 +2896,8 @@ server.registerTool(
         `credential_in_use: ${body.projects.length} project(s) still reference id=${id}: ${body.projects.join(", ")}`,
       );
     }
-    if (!delRes.ok) throw new Error(`Failed to delete: ${delRes.status} ${await delRes.text()}`);
+    if (!delRes.ok)
+      throw new Error(`Failed to delete: ${delRes.status} ${await readErrorMessage(delRes)}`);
     return {
       content: [
         {

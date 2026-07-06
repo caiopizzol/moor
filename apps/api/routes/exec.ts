@@ -8,6 +8,7 @@ import {
   startAsyncExec,
   stopAsyncExec,
 } from "../exec-async";
+import { errorResponse } from "../http";
 import { liveRequireErrorResponse, requireLiveContainer } from "../status-reconciler";
 
 type Project = { id: number; container_id: string | null; status: string };
@@ -25,12 +26,12 @@ export async function handleExec(req: Request, url: URL): Promise<Response | nul
     const project = db
       .query("SELECT id, container_id, status FROM projects WHERE id = ?")
       .get(projectId) as Project | null;
-    if (!project) return new Response("Project not found", { status: 404 });
+    if (!project) return errorResponse("Project not found", 404);
 
     // Validate cheap inputs first (no I/O); fresh live check after so
     // an operator with bad timeout_ms gets a useful 400, not a 503.
     const body = (await req.json()) as { command?: string; timeout_ms?: number };
-    if (!body.command) return new Response("Missing command", { status: 400 });
+    if (!body.command) return errorResponse("Missing command", 400);
 
     let timeoutMs = EXEC_ASYNC_TIMEOUT_DEFAULT_MS;
     if (body.timeout_ms !== undefined) {
@@ -39,9 +40,9 @@ export async function handleExec(req: Request, url: URL): Promise<Response | nul
         body.timeout_ms < EXEC_ASYNC_TIMEOUT_MIN_MS ||
         body.timeout_ms > EXEC_ASYNC_TIMEOUT_MAX_MS
       ) {
-        return new Response(
+        return errorResponse(
           `timeout_ms must be an integer between ${EXEC_ASYNC_TIMEOUT_MIN_MS} and ${EXEC_ASYNC_TIMEOUT_MAX_MS}`,
-          { status: 400 },
+          400,
         );
       }
       timeoutMs = body.timeout_ms;
@@ -71,7 +72,7 @@ export async function handleExec(req: Request, url: URL): Promise<Response | nul
   if (statusMatch && req.method === "GET") {
     const runId = Number(statusMatch[1]);
     const status = getRunStatus(runId);
-    if (!status) return new Response("Run not found", { status: 404 });
+    if (!status) return errorResponse("Run not found", 404);
     return Response.json(status);
   }
 

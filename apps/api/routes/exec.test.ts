@@ -14,6 +14,10 @@ import { beforeEach, describe, expect, test } from "bun:test";
 const { default: db } = await import("../db");
 const { handleExec } = await import("./exec");
 
+async function errorMessage(res: Response): Promise<string> {
+  return ((await res.json()) as { error: string }).error;
+}
+
 async function call(method: string, path: string, body?: unknown): Promise<Response> {
   const req = new Request(`http://localhost${path}`, {
     method,
@@ -42,7 +46,7 @@ describe("#73 POST /api/projects/:id/exec/async live-check wiring", () => {
       command: "echo hi",
     });
     expect(res.status).toBe(400);
-    expect(await res.text()).toBe("Project has no container; build/start it first");
+    expect(await errorMessage(res)).toBe("Project has no container; build/start it first");
   });
 
   test("input validation (bad timeout_ms) still fires before the live check", async () => {
@@ -59,6 +63,6 @@ describe("#73 POST /api/projects/:id/exec/async live-check wiring", () => {
       timeout_ms: 500, // below the min
     });
     expect(res.status).toBe(400);
-    expect(await res.text()).toContain("timeout_ms must be an integer between");
+    expect(await errorMessage(res)).toContain("timeout_ms must be an integer between");
   });
 });

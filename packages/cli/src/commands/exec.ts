@@ -1,4 +1,4 @@
-import { apiPost, resolveProject } from "../client";
+import { apiPost, readErrorMessage, resolveProject } from "../client";
 
 export async function execCommand(args: string[]) {
   const projectName = args[0];
@@ -13,7 +13,7 @@ export async function execCommand(args: string[]) {
   const res = await apiPost(`/api/projects/${project.id}/exec`, { command });
 
   if (!res.ok) {
-    console.error(`Failed: ${await res.text()}`);
+    console.error(`Failed: ${await readErrorMessage(res)}`);
     process.exit(1);
   }
 

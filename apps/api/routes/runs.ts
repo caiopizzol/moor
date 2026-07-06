@@ -1,6 +1,7 @@
 import { activeBuildRuns } from "../build-runs";
 import { stopCronRun } from "../cron";
 import db from "../db";
+import { errorResponse } from "../http";
 
 const PAGE_SIZE = 20;
 
@@ -85,7 +86,7 @@ export async function handleRuns(req: Request, url: URL): Promise<Response | nul
       )
       .get(id);
 
-    if (!row) return new Response("Not found", { status: 404 });
+    if (!row) return errorResponse("Not found", 404);
     return Response.json(row);
   }
 

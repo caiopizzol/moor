@@ -23,6 +23,10 @@ async function call(method: string, path: string, body?: unknown): Promise<Respo
   return res;
 }
 
+async function errorMessage(res: Response): Promise<string> {
+  return ((await res.json()) as { error: string }).error;
+}
+
 function makeProject(name: string): number {
   const row = db.query("INSERT INTO projects (name) VALUES (?) RETURNING id").get(name) as {
     id: number;
@@ -76,7 +80,7 @@ describe("#35 volume routes", () => {
       target: "/proc/1",
     });
     expect(badTarget.status).toBe(400);
-    expect(await badTarget.text()).toContain("/proc/");
+    expect(await errorMessage(badTarget)).toContain("/proc/");
   });
 
   test("POST 409 on duplicate name within a project", async () => {
@@ -84,7 +88,7 @@ describe("#35 volume routes", () => {
     await call("POST", `/api/projects/${pid}/volumes`, { name: "data", target: "/x" });
     const res = await call("POST", `/api/projects/${pid}/volumes`, { name: "data", target: "/y" });
     expect(res.status).toBe(409);
-    expect(await res.text()).toContain("already has a volume named");
+    expect(await errorMessage(res)).toContain("already has a volume named");
   });
 
   test("POST 409 on duplicate target within a project", async () => {
@@ -92,7 +96,7 @@ describe("#35 volume routes", () => {
     await call("POST", `/api/projects/${pid}/volumes`, { name: "a", target: "/data" });
     const res = await call("POST", `/api/projects/${pid}/volumes`, { name: "b", target: "/data" });
     expect(res.status).toBe(409);
-    expect(await res.text()).toContain("already has a volume mounted at");
+    expect(await errorMessage(res)).toContain("already has a volume mounted at");
   });
 
   test("two different projects can have the same logical name (different docker_name)", async () => {

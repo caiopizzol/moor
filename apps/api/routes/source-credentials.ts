@@ -17,6 +17,7 @@
 //     label exactly. credential_in_use returns 409 with the project list.
 //   - All reads return metadata only; raw secret never crosses the API.
 
+import { errorResponse, readJsonObject } from "../http";
 import { normalizeHostname } from "../source-auth";
 import { type CheckRequest, type LsRemoteRunner, performCheck } from "../source-check";
 import {
@@ -42,7 +43,7 @@ export async function handleSourceCredentials(req: Request, url: URL): Promise<R
   // /check must be matched before the /:id pattern.
   if (CHECK.test(url.pathname)) {
     if (req.method === "POST") return handleCheck(req);
-    return new Response("Method Not Allowed", { status: 405 });
+    return errorResponse("Method Not Allowed", 405);
   }
 
   const itemMatch = url.pathname.match(ITEM);
@@ -51,13 +52,13 @@ export async function handleSourceCredentials(req: Request, url: URL): Promise<R
     if (req.method === "GET") return handleGet(id);
     if (req.method === "PUT") return handleUpdate(req, id);
     if (req.method === "DELETE") return handleDelete(url, id);
-    return new Response("Method Not Allowed", { status: 405 });
+    return errorResponse("Method Not Allowed", 405);
   }
 
   if (COLLECTION.test(url.pathname)) {
     if (req.method === "GET") return handleList();
     if (req.method === "POST") return handleCreate(req);
-    return new Response("Method Not Allowed", { status: 405 });
+    return errorResponse("Method Not Allowed", 405);
   }
 
   return null;
@@ -196,30 +197,6 @@ function handleDelete(url: URL, id: number): Response {
     },
     { status: 409 },
   );
-}
-
-// --- body parsing ---
-
-type JsonObjectOk = { ok: true; value: Record<string, unknown> };
-type JsonObjectErr = { ok: false; response: Response };
-
-async function readJsonObject(req: Request): Promise<JsonObjectOk | JsonObjectErr> {
-  let raw: unknown;
-  try {
-    raw = await req.json();
-  } catch {
-    return {
-      ok: false,
-      response: Response.json({ error: "invalid JSON body" }, { status: 400 }),
-    };
-  }
-  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
-    return {
-      ok: false,
-      response: Response.json({ error: "request body must be a JSON object" }, { status: 400 }),
-    };
-  }
-  return { ok: true, value: raw as Record<string, unknown> };
 }
 
 type CreateOk = {

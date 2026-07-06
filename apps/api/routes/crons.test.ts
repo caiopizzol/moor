@@ -10,6 +10,10 @@ import { beforeEach, describe, expect, test } from "bun:test";
 const { default: db } = await import("../db");
 const { handleCrons } = await import("./crons");
 
+async function errorMessage(res: Response): Promise<string> {
+  return ((await res.json()) as { error: string }).error;
+}
+
 async function call(method: string, path: string): Promise<Response> {
   const req = new Request(`http://localhost${path}`, { method });
   const res = await handleCrons(req, new URL(req.url));
@@ -37,7 +41,7 @@ describe("#73 POST /api/crons/:id/run live-check wiring", () => {
 
     const res = await call("POST", `/api/crons/${cron.id}/run`);
     expect(res.status).toBe(400);
-    expect(await res.text()).toBe("Project has no container; build/start it first");
+    expect(await errorMessage(res)).toBe("Project has no container; build/start it first");
     // Manual trigger should NOT have created a run row when the live
     // check rejected — the run row gets created inside runCron, which
     // we never reach.

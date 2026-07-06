@@ -14,6 +14,7 @@
 
 import db from "./db";
 import { SOCKET as SOCKET_PATH } from "./docker";
+import { errorResponse } from "./http";
 import { appendProjectEvent } from "./project-events";
 
 const INTERVAL_MS = 30_000;
@@ -257,7 +258,7 @@ export function liveRequireErrorResponse(result: LiveRequireResult): Response | 
   if (result.ok) return null;
   switch (result.reason) {
     case "no_container":
-      return new Response("Project has no container; build/start it first", { status: 400 });
+      return errorResponse("Project has no container; build/start it first", 400);
     case "missing":
       return Response.json(
         { error: "Container record is stale (Docker has no such container)", reason: "missing" },

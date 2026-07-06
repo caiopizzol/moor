@@ -1,4 +1,5 @@
 import db from "../db";
+import { errorResponse } from "../http";
 import {
   buildDockerName,
   validateDockerName,
@@ -25,7 +26,7 @@ export async function handleVolumes(req: Request, url: URL): Promise<Response | 
     const project = db
       .query("SELECT id, name FROM projects WHERE id = ?")
       .get(projectId) as Project | null;
-    if (!project) return new Response("Project not found", { status: 404 });
+    if (!project) return errorResponse("Project not found", 404);
 
     if (req.method === "GET") {
       const rows = db
@@ -40,9 +41,9 @@ export async function handleVolumes(req: Request, url: URL): Promise<Response | 
       const body = (await req.json()) as { name?: string; target?: string };
 
       const nameErr = validateVolumeName(body.name);
-      if (nameErr) return new Response(nameErr, { status: 400 });
+      if (nameErr) return errorResponse(nameErr, 400);
       const targetErr = validateVolumeTarget(body.target);
-      if (targetErr) return new Response(targetErr, { status: 400 });
+      if (targetErr) return errorResponse(targetErr, 400);
       // Validation above narrowed these, but TS still sees them as
       // string|undefined; the asserts make the SQL bindings type-check.
       const volName = body.name as string;
@@ -50,7 +51,7 @@ export async function handleVolumes(req: Request, url: URL): Promise<Response | 
 
       const dockerName = buildDockerName(project.name, volName);
       const dockerErr = validateDockerName(dockerName);
-      if (dockerErr) return new Response(dockerErr, { status: 400 });
+      if (dockerErr) return errorResponse(dockerErr, 400);
 
       try {
         const inserted = db
@@ -63,22 +64,21 @@ export async function handleVolumes(req: Request, url: URL): Promise<Response | 
         const msg = e instanceof Error ? e.message : String(e);
         if (msg.includes("UNIQUE")) {
           if (msg.includes("project_volumes.docker_name")) {
-            return new Response(
+            return errorResponse(
               `A Docker volume named "${dockerName}" already exists for another project. Use a different volume name.`,
-              { status: 409 },
+              409,
             );
           }
           if (msg.includes("project_volumes.name") || msg.includes("project_id, name")) {
-            return new Response(`This project already has a volume named "${body.name}"`, {
-              status: 409,
-            });
+            return errorResponse(`This project already has a volume named "${body.name}"`, 409);
           }
           if (msg.includes("project_volumes.target") || msg.includes("project_id, target")) {
-            return new Response(`This project already has a volume mounted at "${body.target}"`, {
-              status: 409,
-            });
+            return errorResponse(
+              `This project already has a volume mounted at "${body.target}"`,
+              409,
+            );
           }
-          return new Response(`Volume conflict: ${msg}`, { status: 409 });
+          return errorResponse(`Volume conflict: ${msg}`, 409);
         }
         throw e;
       }
@@ -97,7 +97,7 @@ export async function handleVolumes(req: Request, url: URL): Promise<Response | 
     const row = db
       .query("SELECT id, docker_name FROM project_volumes WHERE id = ? AND project_id = ?")
       .get(volumeId, projectId) as { id: number; docker_name: string } | null;
-    if (!row) return new Response("Volume not found", { status: 404 });
+    if (!row) return errorResponse("Volume not found", 404);
 
     db.query("DELETE FROM project_volumes WHERE id = ?").run(row.id);
     return Response.json({

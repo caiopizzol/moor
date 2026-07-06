@@ -40,8 +40,7 @@ async function request<T>(path: string, opts?: RequestInit): Promise<T> {
     throw new Error("Unauthorized");
   }
   if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`${res.status}: ${body}`);
+    throw new Error(`${res.status}: ${await readErrorMessage(res)}`);
   }
   if (res.status === 204) return undefined as T;
   return res.json();
@@ -102,7 +101,7 @@ export const api = {
         return;
       }
       if (!res.ok || !res.body) {
-        onError(await res.text());
+        onError(await readErrorMessage(res));
         return;
       }
       const reader = res.body.getReader();
@@ -184,3 +183,24 @@ export const api = {
       request<{ ok: boolean }>(`/api/terminal-sessions/${execId}/kill`, { method: "POST" }),
   },
 };
+
+async function readErrorMessage(res: Response): Promise<string> {
+  const text = await res.text();
+  if (!text) return `HTTP ${res.status}`;
+
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    if (isJsonObject(parsed) && "error" in parsed) {
+      const error = parsed.error;
+      return typeof error === "string" ? error : JSON.stringify(error);
+    }
+  } catch {
+    return text;
+  }
+
+  return text;
+}
+
+function isJsonObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}

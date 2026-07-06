@@ -116,7 +116,9 @@ describe("#34 POST /exec timeout_ms validation", () => {
     // for both no-container and not-running cases; #73 distinguishes
     // them (no_container=400, not_running=409 with live_status).
     expect(res.status).toBe(400);
-    expect(await res.text()).toBe("Project has no container; build/start it first");
+    expect(((await res.json()) as { error: string }).error).toBe(
+      "Project has no container; build/start it first",
+    );
   });
 });
 

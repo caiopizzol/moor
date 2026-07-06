@@ -4,6 +4,7 @@
 // /container-stats, which is a single live snapshot. from/to are epoch ms;
 // default window is the last 24h.
 
+import { errorResponse } from "../http";
 import { getProjectHistory } from "../project-history";
 
 const DEFAULT_WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -28,6 +29,6 @@ export async function handleProjectHistory(req: Request, url: URL): Promise<Resp
   }
 
   const history = getProjectHistory(projectId, fromMs, toMs);
-  if (!history) return new Response("Project not found", { status: 404 });
+  if (!history) return errorResponse("Project not found", 404);
   return Response.json({ from_ms: fromMs, to_ms: toMs, ...history });
 }
