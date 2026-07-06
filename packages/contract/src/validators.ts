@@ -1,12 +1,19 @@
+// Must stay in lockstep with the API's check (apps/api/github-url.ts): https only,
+// hostname exactly github.com or www.github.com. Anything looser passes client
+// validation but is rejected by the API at build time.
 export function validateGithubUrl(url: string): void {
-  let host: string;
+  let parsed: URL;
   try {
-    host = new URL(url).hostname;
+    parsed = new URL(url);
   } catch {
     throw new Error(`github_url is not a valid URL: ${url}`);
   }
-  if (host !== "github.com" && !host.endsWith(".github.com")) {
-    throw new Error(`github_url must be a github.com URL (got hostname "${host}")`);
+  if (parsed.protocol !== "https:") {
+    throw new Error(`github_url must use https (got protocol "${parsed.protocol}")`);
+  }
+  const host = parsed.hostname;
+  if (host !== "github.com" && host !== "www.github.com") {
+    throw new Error(`github_url must use github.com or www.github.com (got "${host}")`);
   }
 }
 
@@ -17,8 +24,8 @@ export function validateGithubRepoUrl(url: string): void {
   } catch {
     throw new Error(`github_url is not a valid URL: ${url}`);
   }
-  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
-    throw new Error(`github_url must use http or https (got protocol "${parsed.protocol}")`);
+  if (parsed.protocol !== "https:") {
+    throw new Error(`github_url must use https (got protocol "${parsed.protocol}")`);
   }
   if (parsed.search) {
     throw new Error(`github_url must not contain query parameters (got "${parsed.search}")`);

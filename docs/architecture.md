@@ -38,7 +38,7 @@ There is a real tension here, recorded on purpose. `brand.md` scopes moor as "on
 - `site`: the static marketing/install site (`moor.sh`), including the install script.
 
 **packages**
-- `contract`: shared TypeScript types, a thin `fetch`-based API client, and request validators. The typed contract between the API and its clients; consumed by `web` and `mcp`.
+- `contract`: shared TypeScript types, a thin `fetch`-based API client, and request validators. The typed contract between the API and its clients; consumed by `web`, `mcp`, and `cli`.
 - `mcp`: the MCP server. The complete agent/operator surface, one tool module per lane under `src/tools/` (projects, env, exec, runs, cleanup, credentials, server, update, context).
 - `cli`: the small CLI utility. One file per command under `src/commands/`.
 
@@ -46,7 +46,7 @@ There is a real tension here, recorded on purpose. `brand.md` scopes moor as "on
 
 Start in the API; everything else follows from it.
 
-1. **Add the capability to `apps/api`.** New route handler in `apps/api/routes/`, domain logic in a sibling module, migrations/state in `db.ts`. This is non-optional: if it is not in the API, it does not exist.
+1. **Add the capability to `apps/api`.** New route handler in `apps/api/routes/`, domain logic in a sibling module, schema migrations in `db-migrations.ts`. This is non-optional: if it is not in the API, it does not exist.
 2. **Add types, client changes, and validators to `packages/contract`** so clients share one definition.
 3. **Add the matching MCP tool** in the lane's module under `packages/mcp/src/tools/`. MCP mirrors the full API, so this is expected for every capability, not just user-facing ones.
 4. **Add web UI only if it belongs to the happy path** (deploy/observe basics). Operate-lane and advanced deploy features stay API/MCP-only by design; do not add UI for them without a reason.
