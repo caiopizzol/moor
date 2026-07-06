@@ -18,6 +18,7 @@ import type {
   UpdateCronRequest,
   UpdateProjectRequest,
 } from "@moor-sh/contract";
+import { parseErrorMessage } from "@moor-sh/contract";
 
 export type {
   ContainerStats,
@@ -186,21 +187,5 @@ export const api = {
 
 async function readErrorMessage(res: Response): Promise<string> {
   const text = await res.text();
-  if (!text) return `HTTP ${res.status}`;
-
-  try {
-    const parsed = JSON.parse(text) as unknown;
-    if (isJsonObject(parsed) && "error" in parsed) {
-      const error = parsed.error;
-      return typeof error === "string" ? error : JSON.stringify(error);
-    }
-  } catch {
-    return text;
-  }
-
-  return text;
-}
-
-function isJsonObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  return parseErrorMessage(text, res.status);
 }

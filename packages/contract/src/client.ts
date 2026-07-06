@@ -74,7 +74,7 @@ function joinUrl(baseUrl: string, path: string): string {
   return `${baseUrl}/${path}`;
 }
 
-function parseErrorMessage(body: string, status: number): string {
+export function parseErrorMessage(body: string, status: number): string {
   if (body) {
     try {
       const parsed = JSON.parse(body) as unknown;
@@ -91,6 +91,6 @@ function parseErrorMessage(body: string, status: number): string {
   return `HTTP ${status}`;
 }
 
-function isJsonObject(value: unknown): value is Record<string, unknown> {
+export function isJsonObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }

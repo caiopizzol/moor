@@ -5,8 +5,8 @@ import {
   type FetchLike,
   type MoorApiClient,
   type Project,
+  parseErrorMessage,
 } from "../../contract/src/index";
-import { isJsonObject } from "./format";
 import { registerCleanupTools } from "./tools/cleanup";
 import { registerCredentialTools } from "./tools/credentials";
 import { registerEnvTools } from "./tools/env";
@@ -89,19 +89,7 @@ const apiResponse = {
 
 async function readErrorMessage(res: Response): Promise<string> {
   const text = await res.text();
-  if (!text) return `HTTP ${res.status}`;
-
-  try {
-    const parsed = JSON.parse(text) as unknown;
-    if (isJsonObject(parsed) && "error" in parsed) {
-      const error = parsed.error;
-      return typeof error === "string" ? error : JSON.stringify(error);
-    }
-  } catch {
-    return text;
-  }
-
-  return text;
+  return parseErrorMessage(text, res.status);
 }
 
 async function resolveProject(name: string): Promise<Project> {

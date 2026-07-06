@@ -1,11 +1,11 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import {
+  isJsonObject,
   type Project,
   validateGithubRepoUrl,
   validateGithubUrl,
 } from "../../../contract/src/index";
-import { isJsonObject } from "../format";
 import type { ToolContext } from "./context";
 export function registerProjectTools(server: McpServer, client: ToolContext): void {
   const { apiResponse, resolveProject, readErrorMessage, readSSE } = client;
