@@ -22,5 +22,8 @@
   "scripts": {
     "dev": "bun run src/index.ts",
     "build": "bun build src/index.ts --compile --outfile moor"
+  },
+  "dependencies": {
+    "@moor-sh/contract": "workspace:*"
   }
 }

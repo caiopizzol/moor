@@ -1,0 +1,18 @@
+{
+  "extends": "semantic-release-monorepo",
+  "branches": ["main"],
+  "tagFormat": "contract-v${version}",
+  "plugins": [
+    "@semantic-release/commit-analyzer",
+    "@semantic-release/release-notes-generator",
+    [
+      "@semantic-release/exec",
+      {
+        "verifyConditionsCmd": "test -n \"$NODE_AUTH_TOKEN\" || { echo 'NODE_AUTH_TOKEN is required to publish @moor-sh/contract' >&2; exit 1; }",
+        "prepareCmd": "node -e 'const fs=require(\"fs\"); const p=JSON.parse(fs.readFileSync(\"package.json\",\"utf8\")); p.version=\"${nextRelease.version}\"; fs.writeFileSync(\"package.json\", JSON.stringify(p,null,2)+\"\\n\")'",
+        "publishCmd": "npm publish --access public --provenance"
+      }
+    ],
+    ["@semantic-release/github", { "successComment": false, "releasedLabels": false }]
+  ]
+}

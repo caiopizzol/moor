@@ -14,7 +14,7 @@
     "start": "bun run apps/api/index.ts",
     "test": "bun test",
     "lint": "bunx biome check .",
-    "typecheck": "bunx tsc --noEmit -p apps/api/tsconfig.json && (cd apps/web && bunx tsc -b) && bunx tsc --noEmit -p packages/cli/tsconfig.json && bunx tsc --noEmit -p packages/mcp/tsconfig.json",
+    "typecheck": "bunx tsc --noEmit -p apps/api/tsconfig.json && (cd apps/web && bunx tsc -b) && bunx tsc --noEmit -p packages/contract/tsconfig.json && bunx tsc --noEmit -p packages/cli/tsconfig.json && bunx tsc --noEmit -p packages/mcp/tsconfig.json",
     "check": "bun run lint && bun run typecheck && bun run test",
     "lint:fix": "bunx biome check --write .",
     "format": "bunx biome format --write .",

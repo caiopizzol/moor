@@ -16,6 +16,7 @@ jobs:
       - run: bunx biome check .
       - run: bunx tsc --noEmit -p apps/api/tsconfig.json
       - run: cd apps/web && bunx tsc -b
+      - run: bunx tsc --noEmit -p packages/contract/tsconfig.json
       - run: bunx tsc --noEmit -p packages/cli/tsconfig.json
       - run: bunx tsc --noEmit -p packages/mcp/tsconfig.json
       - run: bun test

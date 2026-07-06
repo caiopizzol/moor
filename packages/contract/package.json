@@ -1,0 +1,32 @@
+{
+  "name": "@moor-sh/contract",
+  "version": "0.0.0-development",
+  "description": "Shared HTTP API contract for moor clients.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/caiopizzol/moor.git",
+    "directory": "packages/contract"
+  },
+  "homepage": "https://github.com/caiopizzol/moor/tree/main/packages/contract",
+  "bugs": "https://github.com/caiopizzol/moor/issues",
+  "keywords": [
+    "moor",
+    "contract",
+    "api",
+    "types"
+  ],
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "files": [
+    "src/"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "typecheck": "bunx tsc --noEmit -p tsconfig.json",
+    "test": "bun test src"
+  }
+}

@@ -50,6 +50,13 @@
       "bin": {
         "moor": "src/index.ts",
       },
+      "dependencies": {
+        "@moor-sh/contract": "workspace:*",
+      },
+    },
+    "packages/contract": {
+      "name": "@moor-sh/contract",
+      "version": "0.0.0-development",
     },
     "packages/mcp": {
       "name": "@moor-sh/mcp",
@@ -60,6 +67,7 @@
       "dependencies": {
         "@cfworker/json-schema": "^4.1.1",
         "@modelcontextprotocol/server": "2.0.0-alpha.2",
+        "@moor-sh/contract": "workspace:*",
         "zod": "^4.3.6",
       },
     },
@@ -232,6 +240,8 @@
     "@modelcontextprotocol/server": ["@modelcontextprotocol/server@2.0.0-alpha.2", "", { "dependencies": { "zod": "^4.0" }, "peerDependencies": { "@cfworker/json-schema": "^4.1.1" }, "optionalPeers": ["@cfworker/json-schema"] }, "sha512-gmLgdHzlYM8L7Aw/+VE0kxjT25WKamtUSLNhdOgrJq5CrESvqVSoAfWSJJeNPUXNTluQ+dYDGFbKVitdsJtbPA=="],
 
     "@moor-sh/cli": ["@moor-sh/cli@workspace:packages/cli"],
+
+    "@moor-sh/contract": ["@moor-sh/contract@workspace:packages/contract"],
 
     "@moor-sh/mcp": ["@moor-sh/mcp@workspace:packages/mcp"],
 
