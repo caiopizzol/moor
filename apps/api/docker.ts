@@ -76,11 +76,11 @@ async function dockerFetch(
 /** Resolve the compose project name by inspecting moor's own container labels.
  *  Docker sets HOSTNAME to the container short ID by default. Cached lazily. */
 let cachedProject: string | null = null;
-export async function getComposeProject(): Promise<string> {
-  if (cachedProject) return cachedProject;
+export async function getComposeProject(fetchImpl: DockerFetch = dockerFetch): Promise<string> {
+  if (fetchImpl === dockerFetch && cachedProject) return cachedProject;
   const hostname = process.env.HOSTNAME;
   if (!hostname) throw new Error("HOSTNAME env var is empty - cannot self-inspect");
-  const res = await dockerFetch(`/v1.44/containers/${hostname}/json`);
+  const res = await fetchImpl(`/v1.44/containers/${hostname}/json`);
   if (!res.ok) {
     throw new Error(`Self-inspect failed (status ${res.status}); not running under compose?`);
   }
@@ -89,18 +89,18 @@ export async function getComposeProject(): Promise<string> {
   if (!project) {
     throw new Error("com.docker.compose.project label missing on self");
   }
-  cachedProject = project;
+  if (fetchImpl === dockerFetch) cachedProject = project;
   return project;
 }
 
 /** Find the Caddy container by compose labels for the current project.
  *  Returns the container ID. Throws if not found. */
-export async function findCaddyContainerId(): Promise<string> {
-  const project = await getComposeProject();
+export async function findCaddyContainerId(fetchImpl: DockerFetch = dockerFetch): Promise<string> {
+  const project = await getComposeProject(fetchImpl);
   const filters = JSON.stringify({
     label: [`com.docker.compose.project=${project}`, "com.docker.compose.service=caddy"],
   });
-  const res = await dockerFetch(`/v1.44/containers/json?filters=${encodeURIComponent(filters)}`);
+  const res = await fetchImpl(`/v1.44/containers/json?filters=${encodeURIComponent(filters)}`);
   if (!res.ok) throw new Error(`Container list failed: ${res.status}`);
   const containers = (await res.json()) as Array<{ Id: string }>;
   if (containers.length === 0) {
@@ -111,12 +111,14 @@ export async function findCaddyContainerId(): Promise<string> {
 
 /** Find the default compose network for the current project.
  *  Returns the network name (suitable for /networks/{name}/connect). */
-export async function findDefaultNetworkName(): Promise<string> {
-  const project = await getComposeProject();
+export async function findDefaultNetworkName(
+  fetchImpl: DockerFetch = dockerFetch,
+): Promise<string> {
+  const project = await getComposeProject(fetchImpl);
   const filters = JSON.stringify({
     label: [`com.docker.compose.project=${project}`, "com.docker.compose.network=default"],
   });
-  const res = await dockerFetch(`/v1.44/networks?filters=${encodeURIComponent(filters)}`);
+  const res = await fetchImpl(`/v1.44/networks?filters=${encodeURIComponent(filters)}`);
   if (!res.ok) throw new Error(`Network list failed: ${res.status}`);
   const networks = (await res.json()) as Array<{ Name: string }>;
   if (networks.length === 0) {
@@ -165,6 +167,7 @@ export async function buildImageStreaming(
   onLine: (text: string) => void,
   noCache = false,
   signal?: AbortSignal,
+  fetchImpl: DockerFetch = dockerFetch,
 ): Promise<void> {
   const gitUrl = cloneUrl.endsWith(".git") ? cloneUrl : `${cloneUrl}.git`;
   const remote = `${gitUrl}#${branch}`;
@@ -176,7 +179,7 @@ export async function buildImageStreaming(
   // #68: signal lets BuildRun.cancel() tear down the daemon-side build.
   // Live test confirmed closing the /v1.44/build connection aborts the
   // build immediately (classic builder; BuildKit untested).
-  const res = await dockerFetch(`/v1.44/build?${params}`, {
+  const res = await fetchImpl(`/v1.44/build?${params}`, {
     method: "POST",
     timeout: BUILD_TIMEOUT,
     signal,
@@ -249,6 +252,7 @@ export async function pullImageStreaming(
   imageRef: string,
   onLine: (text: string) => void,
   signal?: AbortSignal,
+  fetchImpl: DockerFetch = dockerFetch,
 ): Promise<void> {
   const parsed = parseImageRef(imageRef);
   const params = new URLSearchParams();
@@ -258,7 +262,7 @@ export async function pullImageStreaming(
   // Explicitly set platform to avoid manifest parsing failures on multi-arch images.
   // /version is called anonymously: no registry credential involved.
   try {
-    const versionRes = await dockerFetch("/v1.44/version");
+    const versionRes = await fetchImpl("/v1.44/version");
     if (versionRes.ok) {
       const version = (await versionRes.json()) as { Os: string; Arch: string };
       params.set("platform", `${version.Os}/${version.Arch}`);
@@ -276,7 +280,7 @@ export async function pullImageStreaming(
     `[pullImageStreaming] fromImage=${parsed.fromImage} tag=${parsed.tag ?? "(digest)"} platform=${params.get("platform") ?? "auto"} auth=${credential ? `host=${parsed.registryHost}` : "anonymous"}`,
   );
 
-  const res = await dockerFetch(`/v1.44/images/create?${params}`, {
+  const res = await fetchImpl(`/v1.44/images/create?${params}`, {
     method: "POST",
     headers: authHeaders,
     timeout: BUILD_TIMEOUT,
@@ -484,9 +488,7 @@ export async function createAndStartContainer(
   volumes: Array<{ docker_name: string; target: string }> = [],
   labels: Record<string, string> = {},
   extras: ContainerExtras = {},
-  // Injectable for tests; production uses the module dockerFetch. Note the
-  // compose-network resolution still goes through the module fetch — tests run
-  // outside compose (HOSTNAME unset), so that path short-circuits to skip.
+  // Injectable for tests; production uses the module dockerFetch.
   fetchImpl: DockerFetch = dockerFetch,
 ): Promise<string> {
   const files = extras.files ?? [];
@@ -535,7 +537,7 @@ export async function createAndStartContainer(
   // propagates - otherwise we'd be starting a container Caddy cannot reach.
   let underCompose = false;
   try {
-    await getComposeProject();
+    await getComposeProject(fetchImpl);
     underCompose = true;
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -547,43 +549,47 @@ export async function createAndStartContainer(
   // orphan here — otherwise it lingers in `Created` state and project delete
   // can't reap it (the row has container_id = NULL). Cleanup is best-effort and
   // never masks the original failure.
-  await startOrCleanup(Id, async () => {
-    if (underCompose) {
-      const networkName = await findDefaultNetworkName();
-      const connectRes = await fetchImpl(
-        `/v1.44/networks/${encodeURIComponent(networkName)}/connect`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ Container: Id }),
-        },
-      );
-      if (!connectRes.ok) {
-        const detail = await connectRes.text();
-        // Docker returns 403 with "endpoint with name X already exists" or
-        // "Container already attached" when the container is already on this
-        // network. Treat that case as success; everything else is a real error.
-        const alreadyConnected =
-          connectRes.status === 403 && /already|endpoint .* exists/i.test(detail);
-        if (!alreadyConnected) {
-          throw new Error(`Network connect failed (${connectRes.status}): ${detail}`);
+  await startOrCleanup(
+    Id,
+    async () => {
+      if (underCompose) {
+        const networkName = await findDefaultNetworkName(fetchImpl);
+        const connectRes = await fetchImpl(
+          `/v1.44/networks/${encodeURIComponent(networkName)}/connect`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ Container: Id }),
+          },
+        );
+        if (!connectRes.ok) {
+          const detail = await connectRes.text();
+          // Docker returns 403 with "endpoint with name X already exists" or
+          // "Container already attached" when the container is already on this
+          // network. Treat that case as success; everything else is a real error.
+          const alreadyConnected =
+            connectRes.status === 403 && /already|endpoint .* exists/i.test(detail);
+          if (!alreadyConnected) {
+            throw new Error(`Network connect failed (${connectRes.status}): ${detail}`);
+          }
         }
+        console.log(`[createContainer] connected ${name} to ${networkName}`);
       }
-      console.log(`[createContainer] connected ${name} to ${networkName}`);
-    }
 
-    // Inject declarative files BEFORE start so the process sees them on boot.
-    // Runs on every (re)create, same lifecycle point as env.
-    if (files.length > 0) {
-      await putContainerArchive(Id, files, fetchImpl);
-    }
+      // Inject declarative files BEFORE start so the process sees them on boot.
+      // Runs on every (re)create, same lifecycle point as env.
+      if (files.length > 0) {
+        await putContainerArchive(Id, files, fetchImpl);
+      }
 
-    const startRes = await fetchImpl(`/v1.44/containers/${Id}/start`, { method: "POST" });
-    if (!startRes.ok && startRes.status !== 304) {
-      const err = await startRes.text();
-      throw new Error(`Container start failed: ${err}`);
-    }
-  });
+      const startRes = await fetchImpl(`/v1.44/containers/${Id}/start`, { method: "POST" });
+      if (!startRes.ok && startRes.status !== 304) {
+        const err = await startRes.text();
+        throw new Error(`Container start failed: ${err}`);
+      }
+    },
+    async (containerId) => removeContainerWithFetch(containerId, fetchImpl),
+  );
 
   return Id;
 }
@@ -604,8 +610,15 @@ export async function stopContainer(containerId: string): Promise<void> {
 }
 
 export async function removeContainer(containerId: string): Promise<void> {
+  await removeContainerWithFetch(containerId, dockerFetch);
+}
+
+async function removeContainerWithFetch(
+  containerId: string,
+  fetchImpl: DockerFetch,
+): Promise<void> {
   console.log(`[removeContainer] removing ${containerId.slice(0, 12)}...`);
-  const res = await dockerFetch(`/v1.44/containers/${containerId}?force=true`, {
+  const res = await fetchImpl(`/v1.44/containers/${containerId}?force=true`, {
     method: "DELETE",
   });
   // 404 = already gone, which is success for a force-remove. Any other non-2xx
