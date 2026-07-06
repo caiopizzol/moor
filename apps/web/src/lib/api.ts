@@ -1,122 +1,34 @@
-export type Project = {
-  id: number;
-  name: string;
-  github_url: string | null;
-  docker_image: string | null;
-  branch: string;
-  dockerfile: string;
-  image_tag: string | null;
-  container_id: string | null;
-  status: string;
-  domain: string | null;
-  domain_port: number | null;
-  restart_policy: string;
-  created_at: string;
-};
+import type {
+  BuildOutputResponse,
+  ContainerStats,
+  CreateCronRequest,
+  CreateProjectRequest,
+  Cron,
+  EnvVar,
+  ExecResponse,
+  ListRunsResponse,
+  ListTerminalSessionsResponse,
+  LogsResponse,
+  PortMapping,
+  Project,
+  ProjectHistory,
+  Run,
+  ServerStats,
+  SetEnvVarsRequest,
+  UpdateCronRequest,
+  UpdateProjectRequest,
+} from "@moor-sh/contract";
 
-export type Cron = {
-  id: number;
-  project_id: number;
-  name: string;
-  schedule: string;
-  command: string;
-  enabled: number;
-  created_at: string;
-};
-
-export type EnvVar = {
-  id: number;
-  project_id: number;
-  key: string;
-  value: string;
-};
-
-export type PortMapping = {
-  id: number;
-  project_id: number;
-  host_port: number;
-  container_port: number;
-  protocol: string;
-};
-
-export type TerminalSession = {
-  execId: string;
-  projectId: number;
-  startedAt: string;
-  lastCommand: string;
-};
-
-export type Run = {
-  id: number;
-  cron_id: number | null;
-  project_id: number;
-  started_at: string;
-  finished_at: string | null;
-  exit_code: number | null;
-  stdout: string | null;
-  stderr: string | null;
-  duration_ms: number | null;
-  cron_name?: string;
-  cron_command?: string;
-};
-
-// #131 project observability history. Resource samples derived from raw
-// counters at query time (CPU averaged per interval; network/block as rates),
-// plus lifecycle events. Null metric fields mean the container wasn't running
-// at that sample (an honest gap, not a zero).
-export type HistorySample = {
-  sampled_at_ms: number;
-  status: string;
-  cpu_percent: number | null;
-  mem_bytes: number | null;
-  mem_percent: number | null;
-  net_rx_rate: number | null;
-  net_tx_rate: number | null;
-  blk_read_rate: number | null;
-  blk_write_rate: number | null;
-  pids: number | null;
-};
-
-export type HistoryEvent = {
-  occurred_at_ms: number;
-  source: string;
-  action: string;
-  container_id: string | null;
-  time_nano: number | null;
-};
-
-export type ProjectHistory = {
-  from_ms: number;
-  to_ms: number;
-  samples: HistorySample[];
-  events: HistoryEvent[];
-  summary: {
-    sample_count: number;
-    running_sample_count: number;
-    cpu_percent_avg: number | null;
-    cpu_percent_max: number | null;
-    mem_bytes_max: number | null;
-    net_rx_bytes_total: number;
-    net_tx_bytes_total: number;
-    event_counts: Record<string, number>;
-    has_gap: boolean;
-  };
-};
-
-// #138: live per-project container stats (single Docker snapshot). running=false
-// (stopped / never started) comes back with zeroed counters, not a 404.
-export type ContainerStats = {
-  running: boolean;
-  cpu_percent: number;
-  memory_bytes: number;
-  memory_limit_bytes: number;
-  memory_percent: number;
-  network_rx_bytes: number;
-  network_tx_bytes: number;
-  block_read_bytes: number;
-  block_write_bytes: number;
-  pids: number;
-};
+export type {
+  ContainerStats,
+  Cron,
+  EnvVar,
+  PortMapping,
+  Project,
+  ProjectHistory,
+  Run,
+  TerminalSession,
+} from "@moor-sh/contract";
 
 async function request<T>(path: string, opts?: RequestInit): Promise<T> {
   const res = await fetch(path, {
@@ -157,9 +69,9 @@ export const api = {
   projects: {
     list: () => request<Project[]>("/api/projects"),
     get: (id: number) => request<Project>(`/api/projects/${id}`),
-    create: (data: Partial<Project>) =>
+    create: (data: CreateProjectRequest) =>
       request<Project>("/api/projects", { method: "POST", body: JSON.stringify(data) }),
-    update: (id: number, data: Partial<Project>) =>
+    update: (id: number, data: UpdateProjectRequest) =>
       request<Project>(`/api/projects/${id}`, { method: "PUT", body: JSON.stringify(data) }),
     delete: (id: number) => request<void>(`/api/projects/${id}`, { method: "DELETE" }),
     build: (id: number) =>
@@ -214,25 +126,22 @@ export const api = {
       }
     },
     logs: (id: number, since?: number) =>
-      request<{ logs: string; lastTimestamp: number }>(
-        `/api/projects/${id}/logs${since ? `?since=${since}` : ""}`,
-      ),
+      request<LogsResponse>(`/api/projects/${id}/logs${since ? `?since=${since}` : ""}`),
     exec: (id: number, command: string) =>
-      request<{ exitCode: number; stdout: string; stderr: string }>(`/api/projects/${id}/exec`, {
+      request<ExecResponse>(`/api/projects/${id}/exec`, {
         method: "POST",
         body: JSON.stringify({ command }),
       }),
-    buildOutput: (id: number) =>
-      request<Run | { output: null }>(`/api/projects/${id}/build-output`),
+    buildOutput: (id: number) => request<BuildOutputResponse>(`/api/projects/${id}/build-output`),
   },
   crons: {
     list: (projectId: number) => request<Cron[]>(`/api/projects/${projectId}/crons`),
-    create: (projectId: number, data: Partial<Cron>) =>
+    create: (projectId: number, data: CreateCronRequest) =>
       request<Cron>(`/api/projects/${projectId}/crons`, {
         method: "POST",
         body: JSON.stringify(data),
       }),
-    update: (id: number, data: Partial<Cron>) =>
+    update: (id: number, data: UpdateCronRequest) =>
       request<Cron>(`/api/crons/${id}`, { method: "PUT", body: JSON.stringify(data) }),
     delete: (id: number) => request<void>(`/api/crons/${id}`, { method: "DELETE" }),
     run: (id: number) => request<{ ok: boolean }>(`/api/crons/${id}/run`, { method: "POST" }),
@@ -242,7 +151,7 @@ export const api = {
   },
   envs: {
     list: (projectId: number) => request<EnvVar[]>(`/api/projects/${projectId}/envs`),
-    set: (projectId: number, vars: { key: string; value: string }[]) =>
+    set: (projectId: number, vars: SetEnvVarsRequest) =>
       request<EnvVar[]>(`/api/projects/${projectId}/envs`, {
         method: "PUT",
         body: JSON.stringify(vars),
@@ -260,27 +169,17 @@ export const api = {
       }),
   },
   server: {
-    stats: () =>
-      request<{
-        hostname: string;
-        os: string;
-        uptime: string;
-        cpu: { percent: number; cores: number };
-        memory: { total: string; used: string; percent: number };
-        disk: { total: string; used: string; percent: number };
-        disks?: { mount: string; total: string; used: string; percent: number; label?: string }[];
-        containers: { running: number; total: number };
-      }>("/api/server/stats"),
+    stats: () => request<ServerStats>("/api/server/stats"),
   },
   runs: {
     list: (projectId: number, page = 1) =>
-      request<{ runs: Run[]; total: number }>(`/api/projects/${projectId}/runs?page=${page}`),
+      request<ListRunsResponse>(`/api/projects/${projectId}/runs?page=${page}`),
     get: (id: number) => request<Run>(`/api/runs/${id}`),
     stop: (id: number) => request<{ ok: boolean }>(`/api/runs/${id}/stop`, { method: "POST" }),
   },
   terminalSessions: {
     list: (projectId: number) =>
-      request<{ sessions: TerminalSession[] }>(`/api/projects/${projectId}/terminal-sessions`),
+      request<ListTerminalSessionsResponse>(`/api/projects/${projectId}/terminal-sessions`),
     kill: (execId: string) =>
       request<{ ok: boolean }>(`/api/terminal-sessions/${execId}/kill`, { method: "POST" }),
   },
