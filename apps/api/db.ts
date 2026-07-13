@@ -30,6 +30,7 @@ db.exec(`
     name TEXT NOT NULL,
     schedule TEXT NOT NULL,
     command TEXT NOT NULL,
+    timeout_ms INTEGER NOT NULL DEFAULT 600000,
     enabled INTEGER DEFAULT 1,
     created_at TEXT DEFAULT (datetime('now'))
   );

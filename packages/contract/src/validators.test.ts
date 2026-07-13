@@ -1,5 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { validateCronSchedule, validateGithubRepoUrl, validateGithubUrl } from "./validators";
+import {
+  CRON_TIMEOUT_DEFAULT_MS,
+  CRON_TIMEOUT_MAX_MS,
+  validateCronSchedule,
+  validateCronTimeoutMs,
+  validateGithubRepoUrl,
+  validateGithubUrl,
+} from "./validators";
 
 describe("GitHub URL validators", () => {
   test("validateGithubUrl accepts exactly github.com and www.github.com over https", () => {
@@ -64,5 +71,22 @@ describe("validateCronSchedule", () => {
     expect(validateCronSchedule("*/0 * * * *")).toBe(
       'minute: step must be a positive integer (got "0")',
     );
+  });
+});
+
+describe("validateCronTimeoutMs", () => {
+  test("accepts the default and multi-day cron timeouts", () => {
+    expect(validateCronTimeoutMs(CRON_TIMEOUT_DEFAULT_MS)).toBeNull();
+    expect(validateCronTimeoutMs(3 * 60 * 60 * 1000)).toBeNull();
+    expect(validateCronTimeoutMs(CRON_TIMEOUT_MAX_MS)).toBeNull();
+  });
+
+  test("rejects non-integers and values outside the supported range", () => {
+    expect(validateCronTimeoutMs(999)).toContain("timeout_ms must be an integer between");
+    expect(validateCronTimeoutMs(CRON_TIMEOUT_MAX_MS + 1)).toContain(
+      "timeout_ms must be an integer between",
+    );
+    expect(validateCronTimeoutMs(60_000.5)).toContain("timeout_ms must be an integer between");
+    expect(validateCronTimeoutMs("60000")).toContain("timeout_ms must be an integer between");
   });
 });

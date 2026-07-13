@@ -60,6 +60,22 @@ const CRON_PART_PATTERNS = [
   /^(\d+)-(\d+)\/(\d+)$/,
 ];
 
+export const CRON_TIMEOUT_DEFAULT_MS = 600_000;
+export const CRON_TIMEOUT_MIN_MS = 60_000;
+export const CRON_TIMEOUT_MAX_MS = 604_800_000;
+
+export function validateCronTimeoutMs(value: unknown): string | null {
+  if (
+    typeof value !== "number" ||
+    !Number.isInteger(value) ||
+    value < CRON_TIMEOUT_MIN_MS ||
+    value > CRON_TIMEOUT_MAX_MS
+  ) {
+    return `timeout_ms must be an integer between ${CRON_TIMEOUT_MIN_MS} and ${CRON_TIMEOUT_MAX_MS}`;
+  }
+  return null;
+}
+
 export function validateCronSchedule(schedule: string): string | null {
   const parts = schedule.trim().split(/\s+/);
   if (parts.length !== 5) {
