@@ -1,3 +1,9 @@
+import {
+  CRON_TIMEOUT_DEFAULT_MS,
+  isJsonObject,
+  validateCronSchedule,
+  validateCronTimeoutMs,
+} from "../../../packages/contract/src/index";
 import { runCron } from "../cron";
 import db from "../db";
 import { requireNotDraining } from "../drain";
@@ -50,6 +56,7 @@ export async function handleCrons(req: Request, url: URL): Promise<Response | nu
       name: string;
       schedule: string;
       command: string;
+      timeout_ms: number;
       enabled: number;
     } | null;
     if (!cron) return errorResponse("Cron not found", 404);
@@ -73,29 +80,62 @@ export async function handleCrons(req: Request, url: URL): Promise<Response | nu
 }
 
 async function handleCreate(req: Request, projectId: number): Promise<Response> {
-  const { name, schedule, command } = await req.json();
-  if (!name || !schedule || !command) {
+  const body: unknown = await req.json();
+  if (!isJsonObject(body)) return errorResponse("Request body must be an object", 400);
+
+  const { name, schedule, command } = body;
+  if (
+    typeof name !== "string" ||
+    typeof schedule !== "string" ||
+    typeof command !== "string" ||
+    !name.trim() ||
+    !schedule.trim() ||
+    !command.trim()
+  ) {
     return errorResponse("name, schedule, and command are required", 400);
   }
+  const scheduleError = validateCronSchedule(schedule);
+  if (scheduleError) return errorResponse(`Invalid schedule: ${scheduleError}`, 400);
+
+  const requestedTimeout = body.timeout_ms ?? CRON_TIMEOUT_DEFAULT_MS;
+  const timeoutError = validateCronTimeoutMs(requestedTimeout);
+  if (timeoutError) return errorResponse(timeoutError, 400);
+  const timeoutMs = requestedTimeout as number;
 
   const row = db
     .query(
-      "INSERT INTO crons (project_id, name, schedule, command) VALUES (?, ?, ?, ?) RETURNING *",
+      "INSERT INTO crons (project_id, name, schedule, command, timeout_ms) VALUES (?, ?, ?, ?, ?) RETURNING *",
     )
-    .get(projectId, name, schedule, command);
+    .get(projectId, name, schedule, command, timeoutMs);
 
   return Response.json(row, { status: 201 });
 }
 
 async function handleUpdate(req: Request, id: number): Promise<Response> {
-  const body = await req.json();
+  const body: unknown = await req.json();
+  if (!isJsonObject(body)) return errorResponse("Request body must be an object", 400);
+
+  if ("schedule" in body) {
+    if (typeof body.schedule !== "string") return errorResponse("schedule must be a string", 400);
+    const scheduleError = validateCronSchedule(body.schedule);
+    if (scheduleError) return errorResponse(`Invalid schedule: ${scheduleError}`, 400);
+  }
+  if ("timeout_ms" in body) {
+    const timeoutError = validateCronTimeoutMs(body.timeout_ms);
+    if (timeoutError) return errorResponse(timeoutError, 400);
+  }
+
   const fields: string[] = [];
   const values: (string | number)[] = [];
 
-  for (const key of ["name", "schedule", "command", "enabled"]) {
+  for (const key of ["name", "schedule", "command", "timeout_ms", "enabled"]) {
     if (key in body) {
       fields.push(`${key} = ?`);
-      values.push(body[key]);
+      const value = body[key];
+      if (typeof value !== "string" && typeof value !== "number" && typeof value !== "boolean") {
+        return errorResponse(`${key} has an invalid value`, 400);
+      }
+      values.push(typeof value === "boolean" ? Number(value) : value);
     }
   }
 

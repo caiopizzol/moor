@@ -62,6 +62,7 @@ export type Cron = {
   name: string;
   schedule: string;
   command: string;
+  timeout_ms: number;
   enabled: number;
   created_at: IsoDateString;
 };
@@ -70,6 +71,7 @@ export type CreateCronRequest = {
   name: string;
   schedule: string;
   command: string;
+  timeout_ms?: number;
 };
 
 export type UpdateCronRequest = Partial<CreateCronRequest> & {

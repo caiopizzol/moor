@@ -1047,6 +1047,13 @@ code,
   white-space: nowrap;
 }
 
+.cron-row-timeout {
+  width: 86px;
+  color: var(--text-dim);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
 /* Cron form */
 .cron-form-row {
   display: flex;
@@ -1083,6 +1090,15 @@ code,
 
 .cron-input-schedule {
   width: 120px;
+}
+
+.cron-input-timeout {
+  width: 82px;
+}
+
+.cron-timeout-unit {
+  color: var(--text-dim);
+  font-size: 11px;
 }
 
 .cron-builder-toggle {

@@ -15,6 +15,7 @@ type CronRow = {
   name: string;
   schedule: string;
   command: string;
+  timeout_ms: number;
   enabled: number;
 };
 
@@ -162,7 +163,11 @@ export async function tickInner() {
   }
 }
 
-export async function runCron(cron: CronRow, containerId: string) {
+export async function runCron(
+  cron: CronRow,
+  containerId: string,
+  execute: typeof execInContainer = execInContainer,
+) {
   // #73: set started_at_ms and finished_at_ms so moor_runs' ms-precision
   // ordering (COALESCE(started_at_ms,0) DESC, id DESC) sorts cron runs
   // alongside build runs correctly, and so duration_ms is precise.
@@ -190,8 +195,9 @@ export async function runCron(cron: CronRow, containerId: string) {
   };
 
   try {
-    const result = await execInContainer(containerId, cron.command, {
+    const result = await execute(containerId, cron.command, {
       signal: controller.signal,
+      timeout_ms: cron.timeout_ms,
       onExecId: (id) => {
         entry.execId = id;
       },

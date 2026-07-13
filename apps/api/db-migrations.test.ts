@@ -72,7 +72,7 @@ const BASELINE_SCHEMA_SQL = `
   );
 `;
 
-type MigrationTable = "projects" | "runs" | "exec_runs";
+type MigrationTable = "projects" | "crons" | "runs" | "exec_runs";
 
 function withBaselineDatabase(run: (db: Database) => void): void {
   const db = new Database(":memory:");
@@ -130,6 +130,7 @@ function addLegacyMigrationColumns(db: Database): void {
     ALTER TABLE projects ADD COLUMN source_credential_id INTEGER REFERENCES source_credentials(id);
     ALTER TABLE projects ADD COLUMN command TEXT;
     ALTER TABLE projects ADD COLUMN entrypoint TEXT;
+    ALTER TABLE crons ADD COLUMN timeout_ms INTEGER NOT NULL DEFAULT 600000;
   `);
 }
 
@@ -162,7 +163,18 @@ describe("schema migrations", () => {
         "stdout_total_bytes",
         "stderr_total_bytes",
       ]);
+      expectColumns(db, "crons", ["timeout_ms"]);
       expectColumns(db, "exec_runs", ["started_at_ms", "finished_at_ms"]);
+
+      const project = db
+        .query("INSERT INTO projects (name) VALUES ('cron-default') RETURNING id")
+        .get() as { id: number };
+      const cron = db
+        .query(
+          "INSERT INTO crons (project_id, name, schedule, command) VALUES (?, 'c', '* * * * *', 'echo') RETURNING timeout_ms",
+        )
+        .get(project.id) as { timeout_ms: number };
+      expect(cron.timeout_ms).toBe(600_000);
     });
   });
 

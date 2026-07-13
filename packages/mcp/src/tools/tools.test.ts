@@ -614,6 +614,39 @@ describe("env, cron, volume, and file tools", () => {
     expect(api.calls).toHaveLength(0);
   });
 
+  test("cron create forwards a multi-hour timeout", async () => {
+    const { api, server } = createHarness(registerEnvTools);
+    api.on("POST", "/api/projects/7/crons", () =>
+      json({
+        id: 4,
+        enabled: 1,
+        name: "pipeline",
+        schedule: "30 7 * * *",
+        command: "run-pipeline",
+        timeout_ms: 21_600_000,
+      }),
+    );
+
+    await server.call("moor_cron_create", {
+      project: "app",
+      name: "pipeline",
+      schedule: "30 7 * * *",
+      command: "run-pipeline",
+      timeout_ms: 21_600_000,
+    });
+
+    expect(api.calls[0]).toEqual({
+      method: "POST",
+      path: "/api/projects/7/crons",
+      body: {
+        name: "pipeline",
+        schedule: "30 7 * * *",
+        command: "run-pipeline",
+        timeout_ms: 21_600_000,
+      },
+    });
+  });
+
   test("cron update shapes enabled into the API's numeric flag", async () => {
     const { api, server } = createHarness(registerEnvTools);
     api.on("PUT", "/api/crons/3", () =>
@@ -637,6 +670,31 @@ describe("env, cron, volume, and file tools", () => {
       body: { enabled: 1 },
     });
     expect(toolText(result)).toContain('"enabled": 1');
+  });
+
+  test("cron update forwards timeout_ms", async () => {
+    const { api, server } = createHarness(registerEnvTools);
+    api.on("PUT", "/api/crons/3", () =>
+      json({
+        id: 3,
+        enabled: 1,
+        name: "nightly",
+        schedule: "0 3 * * *",
+        command: "echo hi",
+        timeout_ms: 10_800_000,
+      }),
+    );
+
+    await server.call("moor_cron_update", {
+      cron_id: 3,
+      timeout_ms: 10_800_000,
+    });
+
+    expect(api.calls[0]).toEqual({
+      method: "PUT",
+      path: "/api/crons/3",
+      body: { timeout_ms: 10_800_000 },
+    });
   });
 
   test("file set requires exactly one content source via API error text", async () => {

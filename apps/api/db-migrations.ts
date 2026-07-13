@@ -298,6 +298,17 @@ export const schemaMigrations: readonly Migration[] = [
       );
     },
   },
+  {
+    version: 20,
+    up(db) {
+      addColumnIfMissing(
+        db,
+        "crons",
+        "timeout_ms",
+        "ALTER TABLE crons ADD COLUMN timeout_ms INTEGER NOT NULL DEFAULT 600000",
+      );
+    },
+  },
 ];
 
 export const finalSchemaVersion = schemaMigrations[schemaMigrations.length - 1]?.version ?? 0;

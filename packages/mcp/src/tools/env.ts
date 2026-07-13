@@ -1,6 +1,11 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
-import { isJsonObject, validateCronSchedule } from "../../../contract/src/index";
+import {
+  CRON_TIMEOUT_MAX_MS,
+  CRON_TIMEOUT_MIN_MS,
+  isJsonObject,
+  validateCronSchedule,
+} from "../../../contract/src/index";
 import type { ToolContext } from "./context";
 export function registerEnvTools(server: McpServer, client: ToolContext): void {
   const { apiResponse, resolveProject, readErrorMessage } = client;
@@ -82,9 +87,16 @@ export function registerEnvTools(server: McpServer, client: ToolContext): void {
         name: z.string().min(1).describe("Human-readable name for the cron"),
         schedule: z.string().describe('5-field crontab, e.g. "0 3 * * *" for 03:00 daily'),
         command: z.string().min(1).describe("Shell command to run inside the project's container"),
+        timeout_ms: z
+          .number()
+          .int()
+          .min(CRON_TIMEOUT_MIN_MS)
+          .max(CRON_TIMEOUT_MAX_MS)
+          .optional()
+          .describe("Maximum run time in milliseconds. Defaults to 10 minutes; maximum is 7 days."),
       }),
     },
-    async ({ project, name, schedule, command }) => {
+    async ({ project, name, schedule, command, timeout_ms }) => {
       const err = validateCronSchedule(schedule);
       if (err) throw new Error(`Invalid schedule: ${err}`);
       const p = await resolveProject(project);
@@ -92,6 +104,7 @@ export function registerEnvTools(server: McpServer, client: ToolContext): void {
         name,
         schedule,
         command,
+        ...(timeout_ms === undefined ? {} : { timeout_ms }),
       });
       if (!res.ok) throw new Error(`Failed to create cron: ${await readErrorMessage(res)}`);
       const cron = await res.json();
@@ -109,10 +122,11 @@ export function registerEnvTools(server: McpServer, client: ToolContext): void {
         name: z.string().min(1).optional(),
         schedule: z.string().optional(),
         command: z.string().min(1).optional(),
+        timeout_ms: z.number().int().min(CRON_TIMEOUT_MIN_MS).max(CRON_TIMEOUT_MAX_MS).optional(),
         enabled: z.boolean().optional().describe("Enable or disable the cron"),
       }),
     },
-    async ({ cron_id, name, schedule, command, enabled }) => {
+    async ({ cron_id, name, schedule, command, timeout_ms, enabled }) => {
       if (schedule !== undefined) {
         const err = validateCronSchedule(schedule);
         if (err) throw new Error(`Invalid schedule: ${err}`);
@@ -121,6 +135,7 @@ export function registerEnvTools(server: McpServer, client: ToolContext): void {
       if (name !== undefined) body.name = name;
       if (schedule !== undefined) body.schedule = schedule;
       if (command !== undefined) body.command = command;
+      if (timeout_ms !== undefined) body.timeout_ms = timeout_ms;
       if (enabled !== undefined) body.enabled = enabled ? 1 : 0;
       if (Object.keys(body).length === 0) {
         throw new Error("Provide at least one field to update");

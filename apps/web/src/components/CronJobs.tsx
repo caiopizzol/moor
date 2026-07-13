@@ -1,3 +1,4 @@
+import { CRON_TIMEOUT_DEFAULT_MS, CRON_TIMEOUT_MAX_MS } from "@moor-sh/contract";
 import { useCallback, useEffect, useState } from "react";
 import { api, type Cron, type Run } from "../lib/api";
 
@@ -15,9 +16,9 @@ function describeCron(schedule: string): string | null {
   if (minStep && hour === "*" && dom === "*" && mon === "*" && dow === "*")
     return `Every ${minStep[1]} minutes`;
 
-  if (min === "0" && hour.match(/^\*\/(\d+)$/) && dom === "*" && mon === "*" && dow === "*") {
-    const h = hour.match(/^\*\/(\d+)$/)![1];
-    return `Every ${h} hours`;
+  const hourStep = hour.match(/^\*\/(\d+)$/);
+  if (min === "0" && hourStep && dom === "*" && mon === "*" && dow === "*") {
+    return `Every ${hourStep[1]} hours`;
   }
 
   if (min.match(/^\d+$/) && hour === "*" && dom === "*" && mon === "*" && dow === "*")
@@ -69,6 +70,13 @@ function formatDuration(ms: number): string {
   const mins = Math.floor(secs / 60);
   const remSecs = secs % 60;
   return `${mins}m ${remSecs}s`;
+}
+
+function formatTimeout(ms: number): string {
+  const minutes = ms / 60_000;
+  if (minutes % 1440 === 0) return `${minutes / 1440}d timeout`;
+  if (minutes % 60 === 0) return `${minutes / 60}h timeout`;
+  return `${minutes}m timeout`;
 }
 
 // --- Schedule Builder ---
@@ -254,21 +262,24 @@ export function CronJobs({ projectId }: Props) {
   }, [load]);
 
   const handleSave = async () => {
-    if (!editing?.name?.trim() || !editing?.schedule?.trim() || !editing?.command?.trim()) return;
-    if (!isValidCron(editing.schedule!)) return;
+    const schedule = editing?.schedule?.trim();
+    if (!editing?.name?.trim() || !schedule || !editing.command?.trim()) return;
+    if (!isValidCron(schedule)) return;
     setSaving(true);
     try {
       if (editing.id) {
         await api.crons.update(editing.id, {
           name: editing.name,
-          schedule: editing.schedule,
+          schedule,
           command: editing.command,
+          timeout_ms: editing.timeout_ms ?? CRON_TIMEOUT_DEFAULT_MS,
         });
       } else {
         await api.crons.create(projectId, {
           name: editing.name,
-          schedule: editing.schedule,
+          schedule,
           command: editing.command,
+          timeout_ms: editing.timeout_ms ?? CRON_TIMEOUT_DEFAULT_MS,
         });
       }
       setEditing(null);
@@ -315,7 +326,12 @@ export function CronJobs({ projectId }: Props) {
     if (!loading && initialLoad) {
       setInitialLoad(false);
       if (crons.length === 0) {
-        setEditing({ name: "", schedule: "", command: "" });
+        setEditing({
+          name: "",
+          schedule: "",
+          command: "",
+          timeout_ms: CRON_TIMEOUT_DEFAULT_MS,
+        });
       }
     }
   }, [loading, initialLoad, crons.length]);
@@ -325,6 +341,11 @@ export function CronJobs({ projectId }: Props) {
   const schedule = editing?.schedule?.trim() || "";
   const valid = schedule ? isValidCron(schedule) : false;
   const description = schedule ? describeCron(schedule) : null;
+  const timeoutMinutes = (editing?.timeout_ms ?? CRON_TIMEOUT_DEFAULT_MS) / 60_000;
+  const timeoutValid =
+    Number.isInteger(timeoutMinutes) &&
+    timeoutMinutes >= 1 &&
+    timeoutMinutes <= CRON_TIMEOUT_MAX_MS / 60_000;
 
   if (editing) {
     return (
@@ -357,6 +378,18 @@ export function CronJobs({ projectId }: Props) {
             spellCheck={false}
             className={`cron-input-schedule ${schedule && !valid ? "invalid" : ""}`}
           />
+          <input
+            type="number"
+            min={1}
+            max={CRON_TIMEOUT_MAX_MS / 60_000}
+            value={timeoutMinutes}
+            onChange={(e) =>
+              setEditing({ ...editing, timeout_ms: Number(e.target.value) * 60_000 })
+            }
+            className={`cron-input-timeout ${timeoutValid ? "" : "invalid"}`}
+            title="Timeout in minutes"
+          />
+          <span className="cron-timeout-unit">min</span>
           {schedule && <span className={`cron-dot ${valid ? "valid" : "invalid"}`} />}
           <button
             type="button"
@@ -386,7 +419,9 @@ export function CronJobs({ projectId }: Props) {
           <button
             type="button"
             className="btn btn-sm btn-run"
-            disabled={saving || !editing.name?.trim() || !valid || !editing.command?.trim()}
+            disabled={
+              saving || !editing.name?.trim() || !valid || !editing.command?.trim() || !timeoutValid
+            }
             onClick={handleSave}
           >
             {saving ? "Saving..." : editing.id ? "Update" : "Create"}
@@ -429,6 +464,7 @@ export function CronJobs({ projectId }: Props) {
               <span className="cron-row-schedule">
                 {describeCron(cron.schedule) || cron.schedule}
               </span>
+              <span className="cron-row-timeout">{formatTimeout(cron.timeout_ms)}</span>
               <button
                 type="button"
                 className="btn btn-sm btn-run"
@@ -454,7 +490,14 @@ export function CronJobs({ projectId }: Props) {
         <button
           type="button"
           className="btn btn-sm"
-          onClick={() => setEditing({ name: "", schedule: "", command: "" })}
+          onClick={() =>
+            setEditing({
+              name: "",
+              schedule: "",
+              command: "",
+              timeout_ms: CRON_TIMEOUT_DEFAULT_MS,
+            })
+          }
         >
           + Add
         </button>
