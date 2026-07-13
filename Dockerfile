@@ -47,6 +47,7 @@ RUN bun install --frozen-lockfile --ignore-scripts --production
 
 # Copy built client and server source
 COPY --from=build /app/apps/web/dist apps/web/dist
+COPY packages/contract/ packages/contract/
 COPY apps/api/ apps/api/
 
 RUN mkdir -p data
