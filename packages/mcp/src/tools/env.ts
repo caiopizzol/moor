@@ -81,7 +81,7 @@ export function registerEnvTools(server: McpServer, client: ToolContext): void {
     {
       title: "Create Cron",
       description:
-        "Creates a cron schedule on a project. Schedule is a 5-field crontab string with numeric values only (no jan/sun/etc.). Day-of-week uses 0=Sunday through 6=Saturday; 7 is not accepted.",
+        "Creates a cron schedule on a project. Schedule is a 5-field crontab string with numeric values only (no jan/sun/etc.). Day-of-week uses 0=Sunday through 6=Saturday; 7 is not accepted. timeout_ms defaults to 10 minutes and supports up to 7 days.",
       inputSchema: z.object({
         project: z.string().describe("Project name or ID"),
         name: z.string().min(1).describe("Human-readable name for the cron"),
@@ -116,7 +116,8 @@ export function registerEnvTools(server: McpServer, client: ToolContext): void {
     "moor_cron_update",
     {
       title: "Update Cron",
-      description: "Updates a cron's fields by id. Schedule is validated if provided.",
+      description:
+        "Updates a cron's fields by id, including timeout_ms. Schedule and timeout are validated if provided.",
       inputSchema: z.object({
         cron_id: z.number().int().positive().describe("Cron ID"),
         name: z.string().min(1).optional(),

@@ -119,8 +119,8 @@ The server registers 53 tools. Regenerate this section with `bun run docs` after
 | --- | --- | --- |
 | `moor_env_list` | List Environment Variables | List all environment variables set for a project. |
 | `moor_env_set` | Set Environment Variables | Set environment variables for a project. Merges with existing vars. Automatically restarts the container if running. |
-| `moor_cron_create` | Create Cron | Creates a cron schedule on a project. Schedule is a 5-field crontab string with numeric values only (no jan/sun/etc.). Day-of-week uses 0=Sunday through 6=Saturday; 7 is not accepted. `timeout_ms` defaults to 10 minutes and supports up to 7 days. |
-| `moor_cron_update` | Update Cron | Updates a cron's fields by id, including `timeout_ms`. Schedule and timeout are validated if provided. |
+| `moor_cron_create` | Create Cron | Creates a cron schedule on a project. Schedule is a 5-field crontab string with numeric values only (no jan/sun/etc.). Day-of-week uses 0=Sunday through 6=Saturday; 7 is not accepted. timeout_ms defaults to 10 minutes and supports up to 7 days. |
+| `moor_cron_update` | Update Cron | Updates a cron's fields by id, including timeout_ms. Schedule and timeout are validated if provided. |
 | `moor_cron_delete` | Delete Cron | Deletes a cron by id. |
 | `moor_cron_run` | Run Cron Now | Triggers a cron to run immediately. Requires the project's container to be running. |
 | `moor_env_delete` | Delete Environment Variables | Removes one or more environment variables from a project. Restarts the container only if at least one key was actually deleted AND the project was running. |
