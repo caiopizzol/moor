@@ -76,7 +76,7 @@ Agents should pass `--json`. Each streamed API event is emitted as one JSON obje
 {"event":"done","data":"Container started"}
 ```
 
-Failures return a non-zero exit status. Pre-stream errors are written to stderr and, in JSON mode, use `{"error":"...","status":400}`. Errors received after streaming begins remain ordered with the other JSONL events on stdout.
+Failures return a non-zero exit status. Pre-stream errors are written to stderr and, in JSON mode, preserve the API's structured fields plus the HTTP `status`. Errors received after streaming begins remain ordered with the other JSONL events on stdout.
 
 ## `moor mcp config`
 

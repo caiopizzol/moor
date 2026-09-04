@@ -210,6 +210,37 @@ describe("project deploy command", () => {
     expect(capture.stderr).toEqual(['{"error":"project already exists","status":409}\n']);
   });
 
+  test("preserves structured pre-stream API failures in JSON mode", async () => {
+    configureClientEnv();
+    globalThis.fetch = (async (..._args: Parameters<typeof fetch>): Promise<Response> =>
+      Response.json(
+        {
+          ok: false,
+          code: "credential_not_active",
+          source_credential_id: 42,
+          state: "failed",
+          error: "credential is not active",
+        },
+        { status: 400 },
+      )) as typeof fetch;
+    const capture = captureOutput();
+
+    const exitCode = await deployCommand(
+      ["app", "--github-url", "https://github.com/example/app", "--json"],
+      capture.output,
+    );
+
+    expect(exitCode).toBe(1);
+    expect(JSON.parse(capture.stderr.join(""))).toEqual({
+      ok: false,
+      code: "credential_not_active",
+      source_credential_id: 42,
+      state: "failed",
+      error: "credential is not active",
+      status: 400,
+    });
+  });
+
   test("rejects invalid env JSON before making a request", async () => {
     configureClientEnv();
     let fetchCalled = false;

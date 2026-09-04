@@ -149,9 +149,7 @@ export async function deployCommand(
     return 1;
   }
   if (!response.ok) {
-    output.stderr(
-      `${formatError(await readErrorMessage(response), response.status, parsed.json)}\n`,
-    );
+    output.stderr(`${await formatResponseError(response, parsed.json)}\n`);
     return 1;
   }
 
@@ -222,6 +220,22 @@ function parseEnvJson(text: string): Record<string, string> {
 function formatError(message: string, status: number | undefined, json: boolean): string {
   if (!json) return `Error: ${message}`;
   return JSON.stringify({ error: message, ...(status === undefined ? {} : { status }) });
+}
+
+async function formatResponseError(response: Response, json: boolean): Promise<string> {
+  if (!json) return formatError(await readErrorMessage(response), response.status, false);
+
+  const copy = response.clone();
+  const message = await readErrorMessage(response);
+  try {
+    const body: unknown = await copy.json();
+    if (typeof body === "object" && body !== null && !Array.isArray(body)) {
+      return JSON.stringify({ ...body, status: response.status });
+    }
+  } catch {
+    // Fall back to the normalized error message below.
+  }
+  return formatError(message, response.status, true);
 }
 
 function isDeploySummary(value: unknown): value is DeploySummary {
