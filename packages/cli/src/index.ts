@@ -31,7 +31,7 @@ Usage: moor <command> [options]
 Commands:
   status                          List all projects (human-readable alias)
   logs <project> [-f] [-n <lines>] [--json] View container logs
-  rebuild <project> [--no-cache]  Rebuild and restart from source
+  rebuild <project> [--no-cache] [--json] Rebuild and restart from source
   restart <project> [--json]      Stop and start a container
   exec <project> <command>        Run a command in a container
   env list <project> [--json]     List environment variables
@@ -59,7 +59,7 @@ switch (command) {
     process.exitCode = await logsCommand(args.slice(1));
     break;
   case "rebuild":
-    await rebuildCommand(args.slice(1));
+    process.exitCode = await rebuildCommand(args.slice(1));
     break;
   case "restart":
     process.exitCode = await restartCommand(args.slice(1));

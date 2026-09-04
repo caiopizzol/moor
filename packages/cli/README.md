@@ -44,7 +44,7 @@ moor status                          # list all projects (human-readable alias)
 moor project list [--json]           # list projects
 moor project get <name|id> [--json]  # get one project
 moor logs <project> [-f] [-n 100] [--json] # view container logs
-moor rebuild <project>               # rebuild from source
+moor rebuild <project> [--no-cache] [--json] # rebuild from source
 moor restart <project> [--json]      # stop + start
 moor exec <project> <command>        # run a command in the container
 moor env list <project> [--json]     # list environment variables
@@ -85,6 +85,12 @@ Success prints the API response as one JSON document with `logs`, `lastTimestamp
 ## Restart
 
 `moor restart api --json` returns the API response as one JSON document. Errors go to stderr with a non-zero exit code. Unknown options and extra arguments are rejected. Without `--json`, the existing progress messages are preserved.
+
+## Rebuild
+
+`moor rebuild api --json` emits one `{event,data}` JSON object per line as the API builds and starts the project. Use `--no-cache` to bypass the build cache. Human mode retains progress and log output.
+
+Failures before streaming emit one JSON error document on stderr. Stream failures emit JSONL error events on stdout and exit nonzero. A stream ending without a completion or error event also fails. Unknown options and extra arguments are rejected.
 
 ## Environment variables
 
