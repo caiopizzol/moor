@@ -76,6 +76,10 @@ export type DeployProjectInput = {
   lifecycleLockHeld?: boolean;
 };
 
+export type RestartProjectInput = {
+  lifecycleLockHeld?: boolean;
+};
+
 export type BuildRunLike = {
   readonly abort: AbortController;
   appendStdout(text: string): void;
@@ -701,10 +705,11 @@ async function startProjectAfterDrainCheck(
 export async function restartProject(
   project: Project,
   partialDeps?: Partial<DeployDeps>,
+  input: RestartProjectInput = {},
 ): Promise<ProjectActionResult> {
   const deps = makeDeployDeps(partialDeps);
 
-  return withProjectLifecycleLocks(project, async () => {
+  const restartLifecycle = async (): Promise<ProjectActionResult> => {
     const currentProject = refreshProjectLifecycleState(project, deps);
     if (!currentProject) return errorResult("Not found", 404);
 
@@ -723,7 +728,11 @@ export async function restartProject(
     }
 
     return { kind: "json", body: { message: "Container restarted" } };
-  });
+  };
+
+  return input.lifecycleLockHeld
+    ? restartLifecycle()
+    : withProjectLifecycleLocks(project, restartLifecycle);
 }
 
 export async function stopProject(
