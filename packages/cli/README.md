@@ -48,7 +48,8 @@ moor rebuild <project>               # rebuild from source
 moor restart <project>               # stop + start
 moor exec <project> <command>        # run a command in the container
 moor env list <project>              # list environment variables
-moor env set <project> KEY=VALUE     # set environment variables and restart
+moor env set <project> KEY=VALUE     # set environment variables (human mode)
+moor env set <project> --env-file - --json # set environment variables (agent mode)
 moor stats                           # server resource usage
 moor history <project> [--hours N]   # stored resource history and events
 moor project deploy <name> [options] # create or update and optionally run a project
@@ -80,6 +81,22 @@ moor logs api -n 100 --json
 Success prints the API response as one JSON document with `logs`, `lastTimestamp`, and `state` (`ok`, `exited`, `no_container`, or `missing`). Failures print structured JSON to stderr and exit nonzero. Exact project names take precedence over numeric IDs, matching `moor project get`.
 
 `--json` cannot be combined with `--follow` yet. Use `moor logs api --follow` for the existing human-readable polling mode; a later streaming slice will define JSONL follow events.
+
+## Environment variables
+
+The existing human syntax remains available:
+
+```bash
+moor env set api PORT=3000
+```
+
+For agents, pass a JSON object through a file or stdin so values do not appear in command arguments:
+
+```bash
+printf '%s' '{"DATABASE_URL":"..."}' | moor env set api --env-file - --json
+```
+
+The command merges the supplied keys and restarts the project only when it is running. JSON success is one document containing `updated_keys` and `restarted`. Failures are written as JSON to stderr with a non-zero exit status; if values were saved but restart failed, the error retains `env_updated` and `updated_keys`.
 
 ## `moor project deploy`
 

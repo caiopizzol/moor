@@ -457,3 +457,158 @@ test("project list keeps configuration failures valid JSON", async () => {
     expect(JSON.parse(stderr)).toEqual({ error: scenario.error });
   }
 });
+
+test("env set reads secrets from stdin and uses the atomic API endpoint", async () => {
+  const secret = "secret-value-not-in-argv";
+  const requests: Array<{
+    method: string;
+    path: string;
+    authorization: string | null;
+    body?: unknown;
+  }> = [];
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: async (incoming) => {
+      const request = {
+        method: incoming.method,
+        path: new URL(incoming.url).pathname,
+        authorization: incoming.headers.get("Authorization"),
+      };
+      if (request.path === "/api/projects") {
+        requests.push(request);
+        return Response.json([{ id: 7, name: "api", status: "running" }]);
+      }
+      requests.push({ ...request, body: await incoming.json() });
+      return Response.json({ updated_keys: ["TOKEN"], restarted: true });
+    },
+  });
+
+  try {
+    const command = [
+      globalThis.process.execPath,
+      join(import.meta.dir, "index.ts"),
+      "env",
+      "set",
+      "api",
+      "--env-file",
+      "-",
+      "--json",
+    ];
+    expect(command.join(" ")).not.toContain(secret);
+    const child = Bun.spawn({
+      cmd: command,
+      env: {
+        ...globalThis.process.env,
+        MOOR_URL: server.url.origin,
+        MOOR_API_KEY: "test-key",
+      },
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    if (
+      typeof child.stdin === "number" ||
+      typeof child.stdout === "number" ||
+      typeof child.stderr === "number"
+    ) {
+      throw new Error("expected piped process input and output");
+    }
+    child.stdin.write(JSON.stringify({ TOKEN: secret }));
+    child.stdin.end();
+
+    const [exitCode, stdout, stderr] = await Promise.all([
+      child.exited,
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+    ]);
+
+    expect(exitCode).toBe(0);
+    expect(JSON.parse(stdout)).toEqual({ updated_keys: ["TOKEN"], restarted: true });
+    expect(stderr).toBe("");
+    expect(requests).toEqual([
+      {
+        method: "GET",
+        path: "/api/projects",
+        authorization: "Bearer test-key",
+      },
+      {
+        method: "POST",
+        path: "/api/projects/7/envs",
+        authorization: "Bearer test-key",
+        body: { vars: { TOKEN: secret } },
+      },
+    ]);
+  } finally {
+    await server.stop(true);
+  }
+});
+
+test("env set propagates structured restart failures to the process exit code", async () => {
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: (incoming) => {
+      if (new URL(incoming.url).pathname === "/api/projects") {
+        return Response.json([{ id: 7, name: "api", status: "running" }]);
+      }
+      return Response.json(
+        {
+          error: "Environment variables were updated, but restart failed",
+          env_updated: true,
+          updated_keys: ["TOKEN"],
+        },
+        { status: 500 },
+      );
+    },
+  });
+
+  try {
+    const child = Bun.spawn({
+      cmd: [
+        globalThis.process.execPath,
+        join(import.meta.dir, "index.ts"),
+        "env",
+        "set",
+        "api",
+        "--env-file",
+        "-",
+        "--json",
+      ],
+      env: {
+        ...globalThis.process.env,
+        MOOR_URL: server.url.origin,
+        MOOR_API_KEY: "test-key",
+      },
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    if (
+      typeof child.stdin === "number" ||
+      typeof child.stdout === "number" ||
+      typeof child.stderr === "number"
+    ) {
+      throw new Error("expected piped process input and output");
+    }
+    child.stdin.write('{"TOKEN":"secret-value"}');
+    child.stdin.end();
+
+    const [exitCode, stdout, stderr] = await Promise.all([
+      child.exited,
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+    ]);
+
+    expect(exitCode).toBe(1);
+    expect(stdout).toBe("");
+    expect(JSON.parse(stderr)).toEqual({
+      error: "Environment variables were updated, but restart failed",
+      env_updated: true,
+      updated_keys: ["TOKEN"],
+      status: 500,
+    });
+  } finally {
+    await server.stop(true);
+  }
+});
