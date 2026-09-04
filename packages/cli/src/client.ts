@@ -57,6 +57,16 @@ export async function readErrorMessage(res: Response): Promise<string> {
   return parseErrorMessage(text, res.status);
 }
 
+export function findProject(projects: Project[], selector: string): Project | undefined {
+  const selectorId = /^\d+$/.test(selector) ? Number(selector) : undefined;
+  return (
+    projects.find((project) => project.name === selector) ??
+    (Number.isSafeInteger(selectorId)
+      ? projects.find((project) => project.id === selectorId)
+      : undefined)
+  );
+}
+
 export async function resolveProject(nameOrId: string): Promise<Project> {
   const res = await apiGet("/api/projects");
   if (!res.ok) {
@@ -64,7 +74,7 @@ export async function resolveProject(nameOrId: string): Promise<Project> {
     process.exit(1);
   }
   const projects = (await res.json()) as Project[];
-  const match = projects.find((p) => p.name === nameOrId || String(p.id) === nameOrId);
+  const match = findProject(projects, nameOrId);
   if (!match) {
     console.error(`Project "${nameOrId}" not found`);
     process.exit(1);

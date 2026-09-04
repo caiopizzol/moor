@@ -203,6 +203,100 @@ test("status remains the human-readable project-list alias", async () => {
   }
 });
 
+test("logs emits finite JSON and structured failures through the real CLI", async () => {
+  const requests: Array<{
+    path: string;
+    authorization: string | null;
+  }> = [];
+  let logRequests = 0;
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: (incoming) => {
+      const url = new URL(incoming.url);
+      requests.push({
+        path: `${url.pathname}${url.search}`,
+        authorization: incoming.headers.get("Authorization"),
+      });
+      if (url.pathname === "/api/projects") {
+        return Response.json([
+          { id: 7, name: "api" },
+          { id: 8, name: "7" },
+        ]);
+      }
+      logRequests += 1;
+      if (logRequests === 1) {
+        return Response.json({ logs: "ready\n", lastTimestamp: 42, state: "ok" });
+      }
+      return Response.json(
+        { logs: "", lastTimestamp: 0, state: "docker_error", error: "daemon unavailable" },
+        { status: 502 },
+      );
+    },
+  });
+
+  async function runLogs() {
+    const child = Bun.spawn({
+      cmd: [
+        globalThis.process.execPath,
+        join(import.meta.dir, "index.ts"),
+        "logs",
+        "7",
+        "-n",
+        "25",
+        "--json",
+      ],
+      env: {
+        ...globalThis.process.env,
+        MOOR_URL: server.url.origin,
+        MOOR_API_KEY: "test-key",
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    if (typeof child.stdout === "number" || typeof child.stderr === "number") {
+      throw new Error("expected piped process output");
+    }
+
+    const [exitCode, stdout, stderr] = await Promise.all([
+      child.exited,
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+    ]);
+    return { exitCode, stdout, stderr };
+  }
+
+  try {
+    const success = await runLogs();
+    expect(success.exitCode).toBe(0);
+    expect(JSON.parse(success.stdout)).toEqual({
+      logs: "ready\n",
+      lastTimestamp: 42,
+      state: "ok",
+    });
+    expect(success.stderr).toBe("");
+
+    const failure = await runLogs();
+    expect(failure.exitCode).toBe(1);
+    expect(failure.stdout).toBe("");
+    expect(JSON.parse(failure.stderr)).toEqual({
+      logs: "",
+      lastTimestamp: 0,
+      state: "docker_error",
+      error: "daemon unavailable",
+      status: 502,
+    });
+    expect(requests).toEqual([
+      { path: "/api/projects", authorization: "Bearer test-key" },
+      { path: "/api/projects/8/logs?tail=25", authorization: "Bearer test-key" },
+      { path: "/api/projects", authorization: "Bearer test-key" },
+      { path: "/api/projects/8/logs?tail=25", authorization: "Bearer test-key" },
+    ]);
+  } finally {
+    await server.stop(true);
+  }
+});
+
 test("project get sends bearer auth and emits the API record as JSON", async () => {
   let request:
     | {
