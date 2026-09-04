@@ -45,6 +45,25 @@ export type CreateProjectRequest = {
 
 export type UpdateProjectRequest = Partial<CreateProjectRequest>;
 
+export type DeployRequest = Omit<CreateProjectRequest, "github_url" | "docker_image"> & {
+  github_url?: string;
+  docker_image?: string;
+  volumes?: Array<{ name: string; target: string }>;
+  files?: CreateProjectFileRequest[];
+  env?: Record<string, string>;
+  run?: boolean;
+  update_existing?: boolean;
+};
+
+export type DeploySummary = {
+  action: "created" | "updated";
+  project_id: number;
+  project_name: string;
+  env_keys: string[];
+  run: boolean;
+  env_changes_pending_restart: boolean;
+};
+
 export type DeleteProjectResponse =
   | { ok: true; project_deleted: true; volumes_purged: number }
   | {

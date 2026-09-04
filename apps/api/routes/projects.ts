@@ -1,7 +1,11 @@
+import type {
+  CreateProjectRequest,
+  UpdateProjectRequest,
+} from "../../../packages/contract/src/index";
 import { syncCaddyRoutes } from "../caddy";
 import { parseStringArray, serializeStringArray, validateStringArray } from "../container-config";
 import db from "../db";
-import { withProjectLifecycleLock } from "../deploy";
+import { withProjectLifecycleLock, withProjectLifecycleLocks } from "../deploy";
 import { removeContainer, removeVolume, stopContainer } from "../docker";
 import { errorResponse, responseErrorMessage } from "../http";
 import { reconcileGithubUrl, redactCredentials, serializeProject } from "../redact";
@@ -81,48 +85,52 @@ export async function handleProjects(req: Request, url: URL): Promise<Response |
   }
 
   if (req.method === "POST" && !id) {
-    return await handleCreate(req);
+    return await createProject((await req.json()) as Partial<CreateProjectRequest>);
   }
 
   if (req.method === "PUT" && id) {
-    return await handleUpdate(req, id);
+    return await updateProject(id, (await req.json()) as UpdateProjectRequest);
   }
 
   if (req.method === "DELETE" && id) {
-    const { hadDomain, purgeVolumes, volumeNames } = await withProjectLifecycleLock(
-      id,
-      async () => {
-        // Stop and remove the container before deleting the project. The query
-        // happens inside the lifecycle lock so it sees the latest replacement.
-        const project = db
-          .query("SELECT container_id, domain FROM projects WHERE id = ?")
-          .get(id) as {
-          container_id: string | null;
-          domain: string | null;
-        } | null;
-        if (project?.container_id) {
-          try {
-            await stopContainer(project.container_id);
-            await removeContainer(project.container_id);
-          } catch {
-            // best effort — container may already be gone
-          }
+    const projectIdentity = db.query("SELECT id, name FROM projects WHERE id = ?").get(id) as {
+      id: number;
+      name: string;
+    } | null;
+    const deleteProject = async () => {
+      // Stop and remove the container before deleting the project. The query
+      // happens inside the lifecycle lock so it sees the latest replacement.
+      const project = db
+        .query("SELECT container_id, domain FROM projects WHERE id = ?")
+        .get(id) as {
+        container_id: string | null;
+        domain: string | null;
+      } | null;
+      if (project?.container_id) {
+        try {
+          await stopContainer(project.container_id);
+          await removeContainer(project.container_id);
+        } catch {
+          // best effort — container may already be gone
         }
+      }
 
-        // #35: purge_volumes is an explicit destructive opt-in. By default the
-        // project's named Docker volumes are preserved (so a recreated project of
-        // the same name could remount them, and the operator never loses data to
-        // a misclick). Volume docker_names must be collected BEFORE the project
-        // row is deleted — the ON DELETE CASCADE wipes project_volumes too.
-        const url2 = new URL(req.url);
-        const purgeVolumes = url2.searchParams.get("purge_volumes") === "true";
-        const volumeNames = purgeVolumes ? collectProjectVolumeDockerNames(id) : [];
-        const hadDomain = !!project?.domain;
-        db.query("DELETE FROM projects WHERE id = ?").run(id);
+      // #35: purge_volumes is an explicit destructive opt-in. By default the
+      // project's named Docker volumes are preserved (so a recreated project of
+      // the same name could remount them, and the operator never loses data to
+      // a misclick). Volume docker_names must be collected BEFORE the project
+      // row is deleted — the ON DELETE CASCADE wipes project_volumes too.
+      const url2 = new URL(req.url);
+      const purgeVolumes = url2.searchParams.get("purge_volumes") === "true";
+      const volumeNames = purgeVolumes ? collectProjectVolumeDockerNames(id) : [];
+      const hadDomain = !!project?.domain;
+      db.query("DELETE FROM projects WHERE id = ?").run(id);
 
-        return { hadDomain, purgeVolumes, volumeNames };
-      },
-    );
+      return { hadDomain, purgeVolumes, volumeNames };
+    };
+    const { hadDomain, purgeVolumes, volumeNames } = projectIdentity
+      ? await withProjectLifecycleLocks(projectIdentity, deleteProject)
+      : await withProjectLifecycleLock(id, deleteProject);
 
     // Both Caddy sync and volume purge attempt UNCONDITIONALLY. We must not
     // return early on Caddy failure if a purge was requested: by this point
@@ -180,8 +188,7 @@ export async function handleProjects(req: Request, url: URL): Promise<Response |
   return null;
 }
 
-async function handleCreate(req: Request): Promise<Response> {
-  const body = await req.json();
+export async function createProject(body: Partial<CreateProjectRequest>): Promise<Response> {
   const {
     name,
     github_url,
@@ -228,7 +235,10 @@ async function handleCreate(req: Request): Promise<Response> {
   }
 
   const validPolicies = ["no", "on-failure", "always", "unless-stopped"];
-  const policy = validPolicies.includes(restart_policy) ? restart_policy : "unless-stopped";
+  const policy =
+    typeof restart_policy === "string" && validPolicies.includes(restart_policy)
+      ? restart_policy
+      : "unless-stopped";
 
   // docker_image projects can't pin a source credential. Force null even
   // if the caller sent one; build path only consumes it on the github_url
@@ -265,8 +275,7 @@ async function handleCreate(req: Request): Promise<Response> {
   return Response.json(safe, { status: 201 });
 }
 
-async function handleUpdate(req: Request, id: number): Promise<Response> {
-  const body = await req.json();
+export async function updateProject(id: number, body: UpdateProjectRequest): Promise<Response> {
   const fields: string[] = [];
   const values: (string | number | null)[] = [];
 
@@ -323,7 +332,7 @@ async function handleUpdate(req: Request, id: number): Promise<Response> {
     "source_credential_id",
     "command",
     "entrypoint",
-  ]) {
+  ] as const) {
     if (key === "github_url" && skipGithubUrl) continue;
     // Skip any caller-supplied source_credential_id when switching to
     // docker_image. The force-clear block below will set it to null.
@@ -335,13 +344,16 @@ async function handleUpdate(req: Request, id: number): Promise<Response> {
       if (key === "domain") {
         values.push(body[key]?.trim() || null);
       } else if (key === "restart_policy") {
-        values.push(validPolicies.includes(body[key]) ? body[key] : "unless-stopped");
+        const policy = body[key];
+        values.push(
+          typeof policy === "string" && validPolicies.includes(policy) ? policy : "unless-stopped",
+        );
       } else if (key === "command" || key === "entrypoint") {
         // Stored as JSON text; an empty array or null clears the override.
         values.push(serializeStringArray(body[key]));
       } else {
         // memory_limit_mb and cpus: null is the clear signal, numbers persist as-is.
-        values.push(body[key]);
+        values.push(body[key] as string | number | null);
       }
     }
   }

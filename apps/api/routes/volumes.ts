@@ -38,50 +38,7 @@ export async function handleVolumes(req: Request, url: URL): Promise<Response | 
     }
 
     if (req.method === "POST") {
-      const body = (await req.json()) as { name?: string; target?: string };
-
-      const nameErr = validateVolumeName(body.name);
-      if (nameErr) return errorResponse(nameErr, 400);
-      const targetErr = validateVolumeTarget(body.target);
-      if (targetErr) return errorResponse(targetErr, 400);
-      // Validation above narrowed these, but TS still sees them as
-      // string|undefined; the asserts make the SQL bindings type-check.
-      const volName = body.name as string;
-      const volTarget = body.target as string;
-
-      const dockerName = buildDockerName(project.name, volName);
-      const dockerErr = validateDockerName(dockerName);
-      if (dockerErr) return errorResponse(dockerErr, 400);
-
-      try {
-        const inserted = db
-          .query(
-            "INSERT INTO project_volumes (project_id, name, target, docker_name) VALUES (?, ?, ?, ?) RETURNING id, project_id, name, target, docker_name",
-          )
-          .get(project.id, volName, volTarget, dockerName) as VolumeRow;
-        return Response.json(inserted, { status: 201 });
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        if (msg.includes("UNIQUE")) {
-          if (msg.includes("project_volumes.docker_name")) {
-            return errorResponse(
-              `A Docker volume named "${dockerName}" already exists for another project. Use a different volume name.`,
-              409,
-            );
-          }
-          if (msg.includes("project_volumes.name") || msg.includes("project_id, name")) {
-            return errorResponse(`This project already has a volume named "${body.name}"`, 409);
-          }
-          if (msg.includes("project_volumes.target") || msg.includes("project_id, target")) {
-            return errorResponse(
-              `This project already has a volume mounted at "${body.target}"`,
-              409,
-            );
-          }
-          return errorResponse(`Volume conflict: ${msg}`, 409);
-        }
-        throw e;
-      }
+      return addProjectVolume(project, await req.json());
     }
 
     return null;
@@ -108,6 +65,49 @@ export async function handleVolumes(req: Request, url: URL): Promise<Response | 
   }
 
   return null;
+}
+
+export function addProjectVolume(
+  project: Project,
+  body: { name?: string; target?: string },
+): Response {
+  const nameErr = validateVolumeName(body.name);
+  if (nameErr) return errorResponse(nameErr, 400);
+  const targetErr = validateVolumeTarget(body.target);
+  if (targetErr) return errorResponse(targetErr, 400);
+  const volName = body.name as string;
+  const volTarget = body.target as string;
+
+  const dockerName = buildDockerName(project.name, volName);
+  const dockerErr = validateDockerName(dockerName);
+  if (dockerErr) return errorResponse(dockerErr, 400);
+
+  try {
+    const inserted = db
+      .query(
+        "INSERT INTO project_volumes (project_id, name, target, docker_name) VALUES (?, ?, ?, ?) RETURNING id, project_id, name, target, docker_name",
+      )
+      .get(project.id, volName, volTarget, dockerName) as VolumeRow;
+    return Response.json(inserted, { status: 201 });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (msg.includes("UNIQUE")) {
+      if (msg.includes("project_volumes.docker_name")) {
+        return errorResponse(
+          `A Docker volume named "${dockerName}" already exists for another project. Use a different volume name.`,
+          409,
+        );
+      }
+      if (msg.includes("project_volumes.name") || msg.includes("project_id, name")) {
+        return errorResponse(`This project already has a volume named "${body.name}"`, 409);
+      }
+      if (msg.includes("project_volumes.target") || msg.includes("project_id, target")) {
+        return errorResponse(`This project already has a volume mounted at "${body.target}"`, 409);
+      }
+      return errorResponse(`Volume conflict: ${msg}`, 409);
+    }
+    throw e;
+  }
 }
 
 /** Used by createAndStartContainer callers: pull the mount list for a project

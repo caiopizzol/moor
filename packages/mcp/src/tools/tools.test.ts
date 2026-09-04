@@ -284,6 +284,9 @@ describe("project tools", () => {
 
   test("moor_deploy rejects non-repo GitHub URLs before side effects", async () => {
     const { api, server } = createHarness(registerProjectTools);
+    api.on("POST", "/api/deploy", () =>
+      errorJson('github_url must point to /owner/repo; got "/owner/repo/tree/main"'),
+    );
 
     await expect(
       server.call("moor_deploy", {
@@ -291,16 +294,23 @@ describe("project tools", () => {
         github_url: "https://github.com/owner/repo/tree/main",
       }),
     ).rejects.toThrow("github_url must point to /owner/repo");
-    expect(api.calls).toHaveLength(0);
+    expect(api.calls).toEqual([
+      {
+        method: "POST",
+        path: "/api/deploy",
+        body: {
+          name: "app",
+          github_url: "https://github.com/owner/repo/tree/main",
+          run: true,
+          update_existing: false,
+        },
+      },
+    ]);
   });
 
-  test("moor_deploy normalizes domains and surfaces create errors from JSON", async () => {
-    const { api, server } = createHarness(registerProjectTools, { projects: [] });
-    api.on("GET", "/api/server/drain", () =>
-      json({ state: { enabled: false, reason: null, expires_at: null } }),
-    );
-    api.on("GET", "/api/projects", () => json([]));
-    api.on("POST", "/api/projects", () => errorJson("domain already routed", 409));
+  test("moor_deploy delegates domain normalization and create errors to the API", async () => {
+    const { api, server } = createHarness(registerProjectTools);
+    api.on("POST", "/api/deploy", () => errorJson("[create] domain already routed", 409));
 
     await expect(
       server.call("moor_deploy", {
@@ -310,45 +320,63 @@ describe("project tools", () => {
       }),
     ).rejects.toThrow("[create] domain already routed");
 
-    expect(
-      api.calls.find((call) => call.path === "/api/projects" && call.method === "POST"),
-    ).toEqual({
-      method: "POST",
-      path: "/api/projects",
-      body: {
-        name: "app",
-        github_url: undefined,
-        docker_image: "nginx:alpine",
-        branch: undefined,
-        dockerfile: undefined,
-        domain: "app.example.com",
-        domain_port: undefined,
-        restart_policy: undefined,
-        memory_limit_mb: undefined,
-        cpus: undefined,
-        source_credential_id: undefined,
-        command: undefined,
-        entrypoint: undefined,
+    expect(api.calls).toEqual([
+      {
+        method: "POST",
+        path: "/api/deploy",
+        body: {
+          name: "app",
+          docker_image: "nginx:alpine",
+          domain: " App.Example.COM ",
+          run: true,
+          update_existing: false,
+        },
       },
-    });
+    ]);
+  });
+
+  test("moor_deploy surfaces tagged pre-stream run failures from the API", async () => {
+    const { api, server } = createHarness(registerProjectTools);
+    api.on("POST", "/api/deploy", () =>
+      json(
+        {
+          ok: false,
+          code: "credential_not_active",
+          source_credential_id: 42,
+          state: "failed",
+          error:
+            '[run] {"ok":false,"code":"credential_not_active","source_credential_id":42,"state":"failed"}',
+        },
+        { status: 400 },
+      ),
+    );
+
+    await expect(
+      server.call("moor_deploy", {
+        name: "app",
+        github_url: "https://github.com/owner/app",
+        source_credential_id: 42,
+      }),
+    ).rejects.toThrow(
+      '[run] {"ok":false,"code":"credential_not_active","source_credential_id":42,"state":"failed"}',
+    );
+    expect(api.calls).toHaveLength(1);
   });
 
   test("moor_deploy renders create plus run output", async () => {
-    const { api, server, setSse } = createHarness(registerProjectTools, { projects: [] });
-    setSse({ logs: "pull complete\nstarted\n" });
-    api.on("GET", "/api/server/drain", () =>
-      json({ state: { enabled: false, reason: null, expires_at: null } }),
-    );
-    api.on("GET", "/api/projects", () => json([]));
-    api.on("POST", "/api/projects", () =>
-      json(
-        projectFixture({ id: 10, name: "app", docker_image: "nginx:alpine", github_url: null }),
-        {
-          status: 201,
-        },
-      ),
-    );
-    api.on("POST", "/api/projects/10/run", () => new Response("event: done\n"));
+    const { api, server, setSse } = createHarness(registerProjectTools);
+    setSse({
+      logs: "pull complete\nstarted\n",
+      deploy: {
+        action: "created",
+        project_id: 10,
+        project_name: "app",
+        env_keys: [],
+        run: true,
+        env_changes_pending_restart: false,
+      },
+    });
+    api.on("POST", "/api/deploy", () => new Response("event: deploy\n"));
 
     const result = await server.call("moor_deploy", {
       name: "app",
@@ -358,6 +386,55 @@ describe("project tools", () => {
     expect(toolText(result)).toBe(
       "Created project app (id=10).\n\nBuild/run output:\npull complete\nstarted\n",
     );
+    expect(api.calls).toEqual([
+      {
+        method: "POST",
+        path: "/api/deploy",
+        body: {
+          name: "app",
+          docker_image: "nginx:alpine",
+          run: true,
+          update_existing: false,
+        },
+      },
+    ]);
+  });
+
+  test("moor_deploy preserves structured run failures from the API stream", async () => {
+    const { api, server, setSse } = createHarness(registerProjectTools);
+    setSse({
+      logs: "clone failed\n",
+      structuredError: {
+        code: "source_credential_required",
+        message: "private repo requires a credential",
+      },
+      deploy: {
+        action: "updated",
+        project_id: 7,
+        project_name: "app",
+        env_keys: [],
+        run: true,
+        env_changes_pending_restart: false,
+      },
+    });
+    api.on("POST", "/api/deploy", () => new Response("event: deploy\n"));
+
+    const result = await server.call("moor_deploy", {
+      name: "app",
+      github_url: "https://github.com/owner/app",
+      update_existing: true,
+    });
+
+    expect(isErrorResult(result)).toBe(true);
+    expect(toolText(result)).toContain(
+      "Failed: code=source_credential_required message=private repo requires a credential",
+    );
+    expect(structuredContent(result)).toEqual({
+      code: "source_credential_required",
+      message: "private repo requires a credential",
+      project_id: 7,
+    });
+    expect(api.calls).toHaveLength(1);
   });
 });
 

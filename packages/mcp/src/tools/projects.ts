@@ -1,11 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
-import {
-  isJsonObject,
-  type Project,
-  validateGithubRepoUrl,
-  validateGithubUrl,
-} from "../../../contract/src/index";
+import { isJsonObject, type Project, validateGithubUrl } from "../../../contract/src/index";
 import type { ToolContext } from "./context";
 export function registerProjectTools(server: McpServer, client: ToolContext): void {
   const { apiResponse, resolveProject, readErrorMessage, readSSE } = client;
@@ -475,230 +470,21 @@ export function registerProjectTools(server: McpServer, client: ToolContext): vo
       }),
     },
     async (input) => {
-      // Up-front validation: do strict checks before any side effects.
-      if (input.github_url) validateGithubRepoUrl(input.github_url);
-      if (input.github_url && input.docker_image) {
-        throw new Error("Cannot set both github_url and docker_image");
-      }
-
-      // #79: drain-mode preflight. moor_deploy is a composition: by the
-      // time the run step (Step 3) hits the drain 503 from /api/projects/
-      // :id/run, the create/update/volume/env side effects have already
-      // landed. Check drain server-side BEFORE any writes so a drained
-      // deploy fails cleanly without leaving partial state.
-      //
-      // Skipped when run: false because the no-run mode is metadata-only —
-      // no container work, so drain doesn't apply.
-      if (input.run !== false) {
-        const drainRes = await apiResponse.get("/api/server/drain");
-        if (drainRes.ok) {
-          const { state } = (await drainRes.json()) as {
-            state: { enabled: boolean; reason: string | null; expires_at: string | null };
-          };
-          if (state.enabled) {
-            throw new Error(
-              `[drain] moor is draining (reason: ${state.reason ?? "(none)"}; expires_at: ${state.expires_at}). Refusing deploy before any project create/update side effects. Use moor_drain_disable to re-enable, or retry after expiry. Pass run: false if you only need metadata changes.`,
-            );
-          }
-        }
-        // If the drain endpoint is unreachable (older moor or transient
-        // failure), don't block the deploy — the per-route gate inside
-        // /api/projects/:id/run will still catch it before container work
-        // starts. Preflight is an optimization, not the guarantee.
-      }
-
-      // Resolve existence and check domain conflicts from a single project list.
-      const listRes = await apiResponse.get("/api/projects");
-      if (!listRes.ok) throw new Error(`Failed to list projects: ${listRes.status}`);
-      const projects = (await listRes.json()) as Project[];
-      const existing = projects.find((p) => p.name === input.name);
-
-      if (existing && !input.update_existing) {
-        throw new Error(
-          `Project "${input.name}" already exists. Pass update_existing: true to update it.`,
-        );
-      }
-
-      if (!existing) {
-        const sources = (input.github_url ? 1 : 0) + (input.docker_image ? 1 : 0);
-        if (sources !== 1) {
-          throw new Error("Provide exactly one of github_url or docker_image");
-        }
-      }
-
-      // Normalize once for both the conflict check and the write. The API trims but
-      // does not lowercase, so " Example.com " vs an existing "example.com" would
-      // slip past the raw-string pre-check and only surface as a Caddy collision.
-      const normalizedDomain =
-        input.domain === undefined ? undefined : input.domain.trim().toLowerCase() || null;
-
-      if (normalizedDomain) {
-        const conflict = projects.find(
-          (p) =>
-            p.domain && p.domain.trim().toLowerCase() === normalizedDomain && p.id !== existing?.id,
-        );
-        if (conflict) {
-          throw new Error(
-            `Domain "${normalizedDomain}" is already used by project "${conflict.name}" (id=${conflict.id}). Refusing before Caddy reload.`,
-          );
-        }
-      }
-
-      // Step 1: create or update project metadata.
-      let projectId: number;
-      let projectName: string;
-      if (!existing) {
-        const createBody: Record<string, unknown> = {
-          name: input.name,
-          github_url: input.github_url,
-          docker_image: input.docker_image,
-          branch: input.branch,
-          dockerfile: input.dockerfile,
-          domain: normalizedDomain,
-          domain_port: input.domain_port,
-          restart_policy: input.restart_policy,
-          memory_limit_mb: input.memory_limit_mb,
-          cpus: input.cpus,
-          source_credential_id: input.source_credential_id,
-          command: input.command,
-          entrypoint: input.entrypoint,
-        };
-        const res = await apiResponse.post("/api/projects", createBody);
-        if (!res.ok) throw new Error(`[create] ${await readErrorMessage(res)}`);
-        const created = (await res.json()) as Project;
-        projectId = created.id;
-        projectName = created.name;
-      } else {
-        // Update only fields explicitly provided. `name` is the lookup key here,
-        // not a rename target; use moor_project_update for renames.
-        const updateBody: Record<string, unknown> = {};
-        if (input.github_url !== undefined) updateBody.github_url = input.github_url;
-        if (input.docker_image !== undefined) updateBody.docker_image = input.docker_image;
-        if (input.branch !== undefined) updateBody.branch = input.branch;
-        if (input.dockerfile !== undefined) updateBody.dockerfile = input.dockerfile;
-        if (normalizedDomain !== undefined) updateBody.domain = normalizedDomain;
-        if (input.domain_port !== undefined) updateBody.domain_port = input.domain_port;
-        if (input.restart_policy !== undefined) updateBody.restart_policy = input.restart_policy;
-        if (input.memory_limit_mb !== undefined) updateBody.memory_limit_mb = input.memory_limit_mb;
-        if (input.cpus !== undefined) updateBody.cpus = input.cpus;
-        if (input.source_credential_id !== undefined)
-          updateBody.source_credential_id = input.source_credential_id;
-        if (input.command !== undefined) updateBody.command = input.command;
-        if (input.entrypoint !== undefined) updateBody.entrypoint = input.entrypoint;
-
-        if (Object.keys(updateBody).length > 0) {
-          const res = await apiResponse.put(`/api/projects/${existing.id}`, updateBody);
-          if (!res.ok) throw new Error(`[update] ${await readErrorMessage(res)}`);
-        }
-        projectId = existing.id;
-        projectName = existing.name;
-      }
-
-      // Step 1.5: add named volumes (additions only — moor_deploy never removes
-      // volumes, even on update_existing). Mounts apply on next container
-      // recreate, which the run step below triggers by default.
-      if (input.volumes && input.volumes.length > 0) {
-        // Cache the existing list once so we can resolve 409s without re-fetching
-        // per conflict. Only fetched if a 409 actually occurs.
-        let existingVolumes: Array<{ name: string; target: string }> | null = null;
-        for (const v of input.volumes) {
-          const vRes = await apiResponse.post(`/api/projects/${projectId}/volumes`, v);
-          if (vRes.ok) continue;
-          const text = await readErrorMessage(vRes);
-          if (vRes.status !== 409) {
-            throw new Error(`[volumes] failed to add ${v.name}: ${text}`);
-          }
-          // 409 is tolerable ONLY if the existing volume matches the requested
-          // spec exactly (same name, same target). A 409 with a drifted target
-          // means the operator changed the desired mount and we'd silently
-          // ignore the change — fail loudly instead.
-          if (existingVolumes === null) {
-            const listRes = await apiResponse.get(`/api/projects/${projectId}/volumes`);
-            if (!listRes.ok) {
-              throw new Error(
-                `[volumes] could not resolve 409 on ${v.name}: failed to list existing volumes: ${await readErrorMessage(listRes)}`,
-              );
-            }
-            existingVolumes = (await listRes.json()) as Array<{ name: string; target: string }>;
-          }
-          const match = existingVolumes.find((e) => e.name === v.name);
-          if (!match) {
-            // 409 was for some other reason (target collision under a different
-            // name, or cross-project docker_name collision). Operator must
-            // intervene.
-            throw new Error(
-              `[volumes] conflict adding ${v.name}: ${text} (no existing volume by that name; check for target collision)`,
-            );
-          }
-          if (match.target !== v.target) {
-            throw new Error(
-              `[volumes] conflict adding ${v.name}: existing target "${match.target}" differs from requested "${v.target}". moor_deploy does not change mount targets; use moor_volume_remove + moor_volume_add explicitly.`,
-            );
-          }
-          // Same name, same target — idempotent re-run, tolerable.
-        }
-      }
-
-      // Step 1.6: inject declarative files (additions/updates only — deploy never
-      // removes files; use moor_file_remove for that). The route upserts by path,
-      // so re-deploying the same path updates its content. Files are written into
-      // the container right before start on the recreate the run step triggers.
-      if (input.files && input.files.length > 0) {
-        for (const f of input.files) {
-          const fRes = await apiResponse.post(`/api/projects/${projectId}/files`, f);
-          if (!fRes.ok) {
-            throw new Error(`[files] failed to set ${f.path}: ${await readErrorMessage(fRes)}`);
-          }
-        }
-      }
-
-      // Step 2: merge envs. Omitted env leaves existing untouched; {} is a no-op.
-      const envEntries = input.env ? Object.entries(input.env) : [];
-      const envProvided = envEntries.length > 0;
-      if (envProvided) {
-        const existingRes = await apiResponse.get(`/api/projects/${projectId}/envs`);
-        if (!existingRes.ok) {
-          throw new Error(`[set_env] Failed to read envs: ${existingRes.status}`);
-        }
-        const existingEnvs = (await existingRes.json()) as { key: string; value: string }[];
-        const merged = new Map(existingEnvs.map((v) => [v.key, v.value]));
-        for (const [k, v] of envEntries) merged.set(k, v);
-        const allVars = Array.from(merged, ([key, value]) => ({ key, value }));
-        const putRes = await apiResponse.put(`/api/projects/${projectId}/envs`, allVars);
-        if (!putRes.ok) throw new Error(`[set_env] ${await readErrorMessage(putRes)}`);
-      }
-
-      // Step 3: run, default true. Wait for the full SSE stream like moor_rebuild.
-      let runLogs = "";
-      let runStructuredError: { code: string; message: string } | undefined;
-      if (input.run) {
-        const runRes = await apiResponse.post(`/api/projects/${projectId}/run`);
-        if (!runRes.ok) throw new Error(`[run] ${await readErrorMessage(runRes)}`);
-        const { logs, error, structuredError } = await readSSE(runRes);
-        runLogs = logs;
-        // #119: classified failure (today: source_credential_required) is
-        // returned as isError below so the agent can branch on the code
-        // instead of parsing a thrown message.
-        if (structuredError) {
-          runStructuredError = structuredError;
-        } else if (error) {
-          throw new Error(`[run] ${error}`);
-        }
-      }
+      const response = await apiResponse.post("/api/deploy", input);
+      if (!response.ok) throw new Error(await readErrorMessage(response));
+      const { logs, error, structuredError, deploy } = await readSSE(response);
+      if (!deploy) throw new Error("Deploy response did not include project metadata");
+      if (error && !structuredError) throw new Error(`[run] ${error}`);
 
       const lines: string[] = [];
       lines.push(
-        existing
-          ? `Updated project ${projectName} (id=${projectId}).`
-          : `Created project ${projectName} (id=${projectId}).`,
+        `${deploy.action === "created" ? "Created" : "Updated"} project ${deploy.project_name} (id=${deploy.project_id}).`,
       );
-      if (envProvided) {
-        lines.push(
-          `Merged ${envEntries.length} env var(s): ${envEntries.map(([k]) => k).join(", ")}.`,
-        );
+      if (deploy.env_keys.length > 0) {
+        lines.push(`Merged ${deploy.env_keys.length} env var(s): ${deploy.env_keys.join(", ")}.`);
       }
-      if (!input.run) {
-        if (envProvided && existing?.status === "running") {
+      if (!deploy.run) {
+        if (deploy.env_changes_pending_restart) {
           lines.push(
             "Note: project is running; env changes will not take effect until the next run or restart.",
           );
@@ -706,19 +492,14 @@ export function registerProjectTools(server: McpServer, client: ToolContext): vo
       } else {
         lines.push("");
         lines.push("Build/run output:");
-        lines.push(runLogs || "(no output)");
+        lines.push(logs || "(no output)");
       }
-      // #119: if the build was classified as auth-failure, return isError
-      // with the structured payload so the agent can call _check + add a
-      // credential and retry. The project row exists (create/update already
-      // committed) so the agent just needs to fix the credential and run
-      // deploy again with the pinned id.
-      if (runStructuredError) {
+      if (structuredError) {
         lines.push("");
-        lines.push(`Failed: code=${runStructuredError.code} message=${runStructuredError.message}`);
+        lines.push(`Failed: code=${structuredError.code} message=${structuredError.message}`);
         return {
           content: [{ type: "text", text: lines.join("\n") }],
-          structuredContent: { ...runStructuredError, project_id: projectId },
+          structuredContent: { ...structuredError, project_id: deploy.project_id },
           isError: true,
         };
       }

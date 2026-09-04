@@ -651,11 +651,14 @@ describe("project lifecycle serialization", () => {
 
   test("does not serialize lifecycle work for different projects", async () => {
     const ops: string[] = [];
-    let secondProjectStarted = false;
     let markFirstCreateStarted: () => void = () => {};
+    let markSecondProjectStarted: () => void = () => {};
     let releaseFirstCreate: () => void = () => {};
     const firstCreateStarted = new Promise<void>((resolve) => {
       markFirstCreateStarted = resolve;
+    });
+    const secondProjectStarted = new Promise<void>((resolve) => {
+      markSecondProjectStarted = resolve;
     });
     const firstCreateGate = new Promise<void>((resolve) => {
       releaseFirstCreate = resolve;
@@ -667,7 +670,7 @@ describe("project lifecycle serialization", () => {
           await firstCreateGate;
           return "container-app";
         }
-        secondProjectStarted = true;
+        markSecondProjectStarted();
         return "container-other";
       },
     });
@@ -678,8 +681,10 @@ describe("project lifecycle serialization", () => {
       makeProject({ id: 2, name: "other", image_tag: "moor/other:latest" }),
       deps,
     );
-    await Promise.resolve();
-    const secondStartedBeforeRelease = secondProjectStarted;
+    const secondStartedBeforeRelease = await Promise.race([
+      secondProjectStarted.then(() => true),
+      new Promise<false>((resolve) => setTimeout(() => resolve(false), 100)),
+    ]);
     releaseFirstCreate();
     await Promise.all([first, second]);
 

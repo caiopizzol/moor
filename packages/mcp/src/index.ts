@@ -7,6 +7,7 @@ import {
   type Project,
   parseErrorMessage,
 } from "../../contract/src/index";
+import { readSSE } from "./sse";
 import { registerCleanupTools } from "./tools/cleanup";
 import { registerCredentialTools } from "./tools/credentials";
 import { registerEnvTools } from "./tools/env";
@@ -99,50 +100,6 @@ async function resolveProject(name: string): Promise<Project> {
   const match = projects.find((p) => p.name === name || String(p.id) === name);
   if (!match) throw new Error(`Project "${name}" not found`);
   return match;
-}
-
-// --- SSE stream reader ---
-
-async function readSSE(res: Response): Promise<{
-  logs: string;
-  error?: string;
-  structuredError?: { code: string; message: string };
-}> {
-  const reader = res.body?.getReader();
-  if (!reader) return { logs: "" };
-
-  const decoder = new TextDecoder();
-  let buffer = "";
-  let currentEvent = "";
-  let logs = "";
-  let error: string | undefined;
-  let structuredError: { code: string; message: string } | undefined;
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-
-    const lines = buffer.split("\n");
-    buffer = lines.pop() || "";
-
-    for (const line of lines) {
-      if (line.startsWith("event: ")) {
-        currentEvent = line.slice(7).trim();
-      } else if (line.startsWith("data: ")) {
-        const data = JSON.parse(line.slice(6));
-        if (currentEvent === "log") logs += data;
-        else if (currentEvent === "error") error = data;
-        // #119: structured-error fires alongside event: error when the
-        // server classifies a build failure (today: source_credential_required).
-        // Captured here so deploy/rebuild tools can surface the code to
-        // the agent instead of throwing a generic message.
-        else if (currentEvent === "structured-error") structuredError = data;
-        currentEvent = "";
-      }
-    }
-  }
-  return { logs, error, structuredError };
 }
 
 // --- MCP Server ---
