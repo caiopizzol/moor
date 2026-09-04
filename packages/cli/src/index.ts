@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { deployCommand } from "./commands/deploy";
 import { envCommand } from "./commands/env";
 import { execCommand } from "./commands/exec";
 import { historyCommand } from "./commands/history";
@@ -36,6 +37,7 @@ Commands:
   env set <project> K=V [K=V ...] Set environment variables
   stats                           Show server resource usage
   history <project> [--hours N]   Stored resource history + events (default 24h)
+  project deploy <name> [options] Create or update and optionally run a project
   mcp config --client <name>      Generate MCP client config snippet
 
 Environment:
@@ -70,6 +72,13 @@ switch (command) {
     break;
   case "history":
     await historyCommand(args.slice(1));
+    break;
+  case "project":
+    if (args[1] === "deploy") process.exitCode = await deployCommand(args.slice(2));
+    else {
+      console.error("Usage: moor project deploy <name> [options]");
+      process.exitCode = 1;
+    }
     break;
   case "mcp":
     mcpCommand(args.slice(1));
