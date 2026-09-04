@@ -80,6 +80,8 @@ export const api = {
       request<{ message: string }>(`/api/projects/${id}/start`, { method: "POST" }),
     stop: (id: number) =>
       request<{ message: string }>(`/api/projects/${id}/stop`, { method: "POST" }),
+    restart: (id: number) =>
+      request<{ message: string }>(`/api/projects/${id}/restart`, { method: "POST" }),
     run: (id: number) =>
       request<{ message: string }>(`/api/projects/${id}/run`, { method: "POST" }),
     history: (id: number, fromMs: number, toMs: number) =>

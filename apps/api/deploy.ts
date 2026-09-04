@@ -12,7 +12,7 @@ import {
 } from "./docker";
 import { requireNotDraining } from "./drain";
 import { validateGithubUrl } from "./github-url";
-import { errorResponse } from "./http";
+import { errorResponse, responseErrorMessage } from "./http";
 import { autoDetectPorts, getProjectPorts } from "./ports";
 import { redactCredentials, redactCredentialsInText } from "./redact";
 import { getResolvedProjectFiles } from "./routes/files";
@@ -48,6 +48,7 @@ export type Project = {
 type EnvVar = { key: string; value: string };
 type PortBinding = { host_port: number; container_port: number };
 type VolumeMount = { docker_name: string; target: string };
+type ProjectLifecycleState = Pick<Project, "image_tag" | "container_id">;
 
 type ContainerStartConfig = {
   envs: EnvVar[];
@@ -89,6 +90,7 @@ export type DeployDeps = {
   getResolvedProjectFiles: (projectId: number, envs: EnvVar[]) => ResolvedFile[];
   createAndStartContainer: typeof createAndStartContainer;
   stopContainer: typeof stopContainer;
+  getProjectLifecycleState: (project: Project) => ProjectLifecycleState | null;
   syncCaddyRoutes: typeof syncCaddyRoutes;
   updateProjectImageTag: (projectId: number, imageTag: string) => void;
   updateProjectContainerId: (projectId: number, containerId: string) => void;
@@ -112,6 +114,10 @@ function makeDefaultDeps(): DeployDeps {
     getResolvedProjectFiles,
     createAndStartContainer,
     stopContainer,
+    getProjectLifecycleState: (project) =>
+      db
+        .query("SELECT image_tag, container_id FROM projects WHERE id = ?")
+        .get(project.id) as ProjectLifecycleState | null,
     syncCaddyRoutes,
     updateProjectImageTag: (projectId, imageTag) => {
       db.query("UPDATE projects SET image_tag = ? WHERE id = ?").run(imageTag, projectId);
@@ -125,6 +131,37 @@ function makeDefaultDeps(): DeployDeps {
 
 function makeDeployDeps(partialDeps?: Partial<DeployDeps>): DeployDeps {
   return { ...makeDefaultDeps(), ...partialDeps };
+}
+
+// Fixed-name replacement is destructive, so start, stop, restart, deploy,
+// and project deletion queue through one critical section per project.
+const projectLifecycleTails = new Map<number, Promise<void>>();
+
+export async function withProjectLifecycleLock<T>(
+  projectId: number,
+  run: () => Promise<T>,
+): Promise<T> {
+  const previous = projectLifecycleTails.get(projectId) ?? Promise.resolve();
+  let release: () => void = () => {};
+  const current = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  projectLifecycleTails.set(projectId, current);
+
+  await previous;
+  try {
+    return await run();
+  } finally {
+    release();
+    if (projectLifecycleTails.get(projectId) === current) {
+      projectLifecycleTails.delete(projectId);
+    }
+  }
+}
+
+function refreshProjectLifecycleState(project: Project, deps: DeployDeps): Project | null {
+  const latest = deps.getProjectLifecycleState(project);
+  return latest === null ? null : { ...project, ...latest };
 }
 
 function resolverFailureResult(failure: ResolveFailure): ProjectActionResult {
@@ -283,12 +320,6 @@ export async function deployProject(
           ? " anonymous-clone"
           : ""),
   );
-  deps.setProjectRecordedStatus(project.id, status, project.container_id);
-
-  // #65: one deploy run row covers build/pull + port detection + container
-  // start. INSERT before the build starts so moor_run_get can tail mid-build;
-  // BuildRun periodically flushes the rolling tail into runs.stdout.
-  const run = deps.createBuildRun(project.id);
 
   // Stream build/pull output via SSE
   let streamClosed = false;
@@ -307,13 +338,6 @@ export async function deployProject(
         } catch {
           streamClosed = true;
         }
-      };
-
-      // Mirror every log line into both the SSE stream (for the UI/CLI) and
-      // the persistent BuildRun (for moor_run_get). Single source of text.
-      const log = (line: string) => {
-        send("log", line);
-        run.appendStdout(line);
       };
 
       const safeClose = () => {
@@ -336,91 +360,122 @@ export async function deployProject(
         }
       }, 5000);
 
-      const startTime = deps.now();
-
-      try {
-        if (dockerImage) {
-          log(`Pulling ${dockerImage}...\n`);
-          await deps.pullImageStreaming(dockerImage, log, run.abort.signal);
-        } else {
-          // resolvedCloneUrl is guaranteed non-null in this branch
-          // (resolved above, before side effects).
-          await deps.buildImageStreaming(
-            resolvedCloneUrl as string,
-            project.branch,
-            project.dockerfile,
-            tag,
-            log,
-            noCache,
-            run.abort.signal,
-          );
+      await withProjectLifecycleLock(project.id, async () => {
+        const drained = deps.requireNotDraining();
+        if (drained) {
+          send("error", await responseErrorMessage(drained));
+          return;
         }
 
-        const elapsed = ((deps.now() - startTime) / 1000).toFixed(1);
-        const verb = isImageProject ? "Pull" : "Build";
-
-        // #68: past this point cancel() can't stop anything useful - the
-        // container-start phase below uses different Docker endpoints and
-        // AbortController on the build/pull fetch won't reach them.
-        run.markStreamingDone();
-
-        deps.updateProjectImageTag(project.id, tag);
-        deps.setProjectRecordedStatus(project.id, "stopped", project.container_id);
-
-        log(`\n${verb} completed in ${elapsed}s\n`);
-
-        // Auto-detect exposed ports from image
-        const detectedPorts = await deps.autoDetectPorts(project.id, tag, true);
-        for (const { host_port, container_port } of detectedPorts) {
-          log(`Port ${container_port} → host :${host_port}\n`);
+        const currentProject = refreshProjectLifecycleState(project, deps);
+        if (!currentProject) {
+          send("error", "Not found");
+          return;
         }
-      } catch (e) {
-        // #68: if cancel() fired AbortError, BuildRun.cancel already
-        // finalized the row with exit_code=130 and "[cancelled by user]".
-        // Don't re-finalize or overwrite with a generic failure. Also
-        // reconcile status from the actual container state - the cancel
-        // didn't touch the previously-running container, so leaving
-        // status='error' would lie about the project state.
-        if (run.abort.signal.aborted) {
-          await deps.reconcileProjectStatusAfterInterrupt(project.id, project.container_id);
-          send("error", "cancelled by user");
+
+        deps.setProjectRecordedStatus(project.id, status, currentProject.container_id);
+
+        // #65: one deploy run row covers build/pull + port detection + container
+        // start. INSERT before the build starts so moor_run_get can tail mid-build;
+        // BuildRun periodically flushes the rolling tail into runs.stdout.
+        const run = deps.createBuildRun(project.id);
+
+        // Mirror every log line into both the SSE stream (for the UI/CLI) and
+        // the persistent BuildRun (for moor_run_get). Single source of text.
+        const log = (line: string) => {
+          send("log", line);
+          run.appendStdout(line);
+        };
+
+        const startTime = deps.now();
+
+        try {
+          if (dockerImage) {
+            log(`Pulling ${dockerImage}...\n`);
+            await deps.pullImageStreaming(dockerImage, log, run.abort.signal);
+          } else {
+            // resolvedCloneUrl is guaranteed non-null in this branch
+            // (resolved above, before side effects).
+            await deps.buildImageStreaming(
+              resolvedCloneUrl as string,
+              project.branch,
+              project.dockerfile,
+              tag,
+              log,
+              noCache,
+              run.abort.signal,
+            );
+          }
+
+          const elapsed = ((deps.now() - startTime) / 1000).toFixed(1);
+          const verb = isImageProject ? "Pull" : "Build";
+
+          // #68: past this point cancel() can't stop anything useful - the
+          // container-start phase below uses different Docker endpoints and
+          // AbortController on the build/pull fetch won't reach them.
+          run.markStreamingDone();
+
+          deps.updateProjectImageTag(project.id, tag);
+          deps.setProjectRecordedStatus(project.id, "stopped", currentProject.container_id);
+
+          log(`\n${verb} completed in ${elapsed}s\n`);
+
+          // Auto-detect exposed ports from image
+          const detectedPorts = await deps.autoDetectPorts(project.id, tag, true);
+          for (const { host_port, container_port } of detectedPorts) {
+            log(`Port ${container_port} → host :${host_port}\n`);
+          }
+        } catch (e) {
+          // #68: if cancel() fired AbortError, BuildRun.cancel already
+          // finalized the row with exit_code=130 and "[cancelled by user]".
+          // Don't re-finalize or overwrite with a generic failure. Also
+          // reconcile status from the actual container state - the cancel
+          // didn't touch the previously-running container, so leaving
+          // status='error' would lie about the project state.
+          if (run.abort.signal.aborted) {
+            await deps.reconcileProjectStatusAfterInterrupt(
+              project.id,
+              currentProject.container_id,
+            );
+            send("error", "cancelled by user");
+            safeClose();
+            return;
+          }
+          const rawMessage = e instanceof Error ? e.message : "Unknown error";
+          // Redact any credentialed URLs Docker may have echoed into the
+          // error message before it lands in logs, stored stderr, or SSE.
+          const message = redactCredentialsInText(rawMessage);
+          console.error(`[run] FAILED: ${message}`);
+          run.appendStderr(`${message}\n`);
+          run.finalize(1);
+          deps.setProjectRecordedStatus(project.id, "error", currentProject.container_id);
+          for (const ev of buildErrorEvents(message)) send(ev.event, ev.data);
           safeClose();
           return;
         }
-        const rawMessage = e instanceof Error ? e.message : "Unknown error";
-        // Redact any credentialed URLs Docker may have echoed into the
-        // error message before it lands in logs, stored stderr, or SSE.
-        const message = redactCredentialsInText(rawMessage);
-        console.error(`[run] FAILED: ${message}`);
-        run.appendStderr(`${message}\n`);
-        run.finalize(1);
-        deps.setProjectRecordedStatus(project.id, "error", project.container_id);
-        for (const ev of buildErrorEvents(message)) send(ev.event, ev.data);
-        safeClose();
-        return;
-      }
 
-      // Container start is part of the same deploy run - operator's
-      // mental model is "rebuild" includes "and is now running."
-      try {
-        log("Starting container...\n");
-        const containerId = await createStartAndRecord(project, tag, deps);
-        console.log(`[run] container started: ${containerId}`);
+        // Container start is part of the same deploy run - operator's
+        // mental model is "rebuild" includes "and is now running."
+        try {
+          log("Starting container...\n");
+          const containerId = await createStartAndRecord(currentProject, tag, deps);
+          console.log(`[run] container started: ${containerId}`);
 
-        if (project.domain) {
-          log(`Route: ${project.domain} -> :${project.domain_port}\n`);
+          if (currentProject.domain) {
+            log(`Route: ${currentProject.domain} -> :${currentProject.domain_port}\n`);
+          }
+
+          run.finalize(0);
+          send("done", "Container started");
+        } catch (e) {
+          deps.setProjectRecordedStatus(project.id, "error", currentProject.container_id);
+          const message = e instanceof Error ? e.message : "Unknown error";
+          console.error(`[run] CONTAINER START FAILED: ${message}`);
+          run.appendStderr(`${message}\n`);
+          run.finalize(1);
+          send("error", message);
         }
-
-        run.finalize(0);
-        send("done", "Container started");
-      } catch (e) {
-        deps.setProjectRecordedStatus(project.id, "error", project.container_id);
-        const message = e instanceof Error ? e.message : "Unknown error";
-        console.error(`[run] CONTAINER START FAILED: ${message}`);
-        run.appendStderr(`${message}\n`);
-        run.finalize(1);
-        send("error", message);
-      }
+      });
 
       safeClose();
     },
@@ -530,12 +585,23 @@ export async function startProject(
 ): Promise<ProjectActionResult> {
   const deps = makeDeployDeps(partialDeps);
 
-  // #79: drain-mode gate. Starting a container is "new work" from
-  // moor's perspective - same gate as deploy/build. Stop/logs stay
-  // open so operators can quiesce things during drain.
-  const drained = deps.requireNotDraining();
-  if (drained) return { kind: "response", response: drained };
+  return withProjectLifecycleLock(project.id, async () => {
+    // #79: drain-mode gate. Starting a container is "new work" from
+    // moor's perspective - same gate as deploy/build. Stop/logs stay
+    // open so operators can quiesce things during drain.
+    const drained = deps.requireNotDraining();
+    if (drained) return { kind: "response", response: drained };
 
+    const currentProject = refreshProjectLifecycleState(project, deps);
+    if (!currentProject) return errorResult("Not found", 404);
+    return startProjectAfterDrainCheck(currentProject, deps);
+  });
+}
+
+async function startProjectAfterDrainCheck(
+  project: Project,
+  deps: DeployDeps,
+): Promise<ProjectActionResult> {
   console.log(`[start] project=${project.name} image=${project.image_tag}`);
   if (!project.image_tag) {
     console.log("[start] rejected — no image built");
@@ -578,27 +644,66 @@ export async function startProject(
   }
 }
 
+export async function restartProject(
+  project: Project,
+  partialDeps?: Partial<DeployDeps>,
+): Promise<ProjectActionResult> {
+  const deps = makeDeployDeps(partialDeps);
+
+  return withProjectLifecycleLock(project.id, async () => {
+    const currentProject = refreshProjectLifecycleState(project, deps);
+    if (!currentProject) return errorResult("Not found", 404);
+
+    // A restart is new container work. Refuse it before stopping the current
+    // container so drain mode cannot turn a safe rejection into downtime.
+    const drained = deps.requireNotDraining();
+    if (drained) return { kind: "response", response: drained };
+
+    // startProject validates this too, but restart must validate before stop.
+    if (!currentProject.image_tag) return errorResult("No image built yet", 400);
+
+    await stopProjectAfterLifecycleLock(currentProject, deps);
+    const started = await startProjectAfterDrainCheck(currentProject, deps);
+    if (started.kind !== "json" || (started.status !== undefined && started.status >= 400)) {
+      return started;
+    }
+
+    return { kind: "json", body: { message: "Container restarted" } };
+  });
+}
+
 export async function stopProject(
   project: Project,
   partialDeps?: Partial<DeployDeps>,
 ): Promise<ProjectActionResult> {
   const deps = makeDeployDeps(partialDeps);
 
-  console.log(`[stop] project=${project.name} container=${project.container_id}`);
-  if (!project.container_id) {
+  return withProjectLifecycleLock(project.id, () => stopProjectAfterLifecycleLock(project, deps));
+}
+
+async function stopProjectAfterLifecycleLock(
+  project: Project,
+  deps: DeployDeps,
+): Promise<ProjectActionResult> {
+  const currentProject = refreshProjectLifecycleState(project, deps);
+  if (!currentProject) return errorResult("Not found", 404);
+  const containerId = currentProject.container_id;
+
+  console.log(`[stop] project=${project.name} container=${containerId}`);
+  if (!containerId) {
     console.log("[stop] no container — marking as stopped");
-    deps.setProjectRecordedStatus(project.id, "stopped", project.container_id);
+    deps.setProjectRecordedStatus(project.id, "stopped", containerId);
     return { kind: "json", body: { message: "Container stopped" } };
   }
 
   try {
-    await deps.stopContainer(project.container_id);
+    await deps.stopContainer(containerId);
     console.log("[stop] container stopped");
   } catch (e) {
     const message = e instanceof Error ? e.message : "Unknown error";
     console.error(`[stop] error during stop (marking as stopped anyway): ${message}`);
   }
 
-  deps.setProjectRecordedStatus(project.id, "stopped", project.container_id);
+  deps.setProjectRecordedStatus(project.id, "stopped", containerId);
   return { kind: "json", body: { message: "Container stopped" } };
 }

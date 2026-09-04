@@ -95,6 +95,18 @@ describe("#79 drain gates on action routes", () => {
     await expectDrain503(res);
   });
 
+  test("POST /api/projects/:id/restart returns 503 before stopping when drained", async () => {
+    const p = insertProject("p");
+    enableDrain({ reason: "upgrading", ttl_minutes: 30 });
+    const res = await call(handleDocker, "POST", `/api/projects/${p.id}/restart`);
+    await expectDrain503(res);
+
+    const project = db.query("SELECT status FROM projects WHERE id = ?").get(p.id) as {
+      status: string;
+    };
+    expect(project.status).toBe("running");
+  });
+
   test("POST /api/projects/:id/exec returns 503 when drained (sync exec)", async () => {
     const p = insertProject("p");
     enableDrain({ reason: "upgrading", ttl_minutes: 30 });

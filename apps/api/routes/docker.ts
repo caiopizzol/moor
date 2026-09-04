@@ -4,6 +4,7 @@ import {
   deployProject,
   type Project,
   type ProjectActionResult,
+  restartProject,
   startProject,
   stopProject,
 } from "../deploy";
@@ -26,7 +27,9 @@ import {
 export { buildErrorEvents, buildErrorResponse } from "../deploy";
 
 export async function handleDocker(req: Request, url: URL): Promise<Response | null> {
-  const match = url.pathname.match(/^\/api\/projects\/(\d+)\/(build|start|stop|run|logs|exec)$/);
+  const match = url.pathname.match(
+    /^\/api\/projects\/(\d+)\/(build|start|stop|restart|run|logs|exec)$/,
+  );
   if (!match) return null;
 
   const id = Number(match[1]);
@@ -45,6 +48,7 @@ export async function handleDocker(req: Request, url: URL): Promise<Response | n
   if (action === "build" && req.method === "POST") return handleBuild(project);
   if (action === "start" && req.method === "POST") return handleStart(project);
   if (action === "stop" && req.method === "POST") return handleStop(project);
+  if (action === "restart" && req.method === "POST") return handleRestart(project);
   if (action === "run" && req.method === "POST") return handleRun(req, project);
   if (action === "logs" && req.method === "GET") return handleLogs(project, url);
   if (action === "exec" && req.method === "POST") return handleExec(req, project);
@@ -234,4 +238,8 @@ async function handleStart(project: Project): Promise<Response> {
 
 async function handleStop(project: Project): Promise<Response> {
   return projectActionResultToResponse(await stopProject(project));
+}
+
+async function handleRestart(project: Project): Promise<Response> {
+  return projectActionResultToResponse(await restartProject(project));
 }

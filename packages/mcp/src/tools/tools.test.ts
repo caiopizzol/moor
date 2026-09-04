@@ -416,6 +416,16 @@ describe("run and log tools", () => {
     });
   });
 
+  test("moor_restart delegates restart orchestration to the API", async () => {
+    const { api, server } = createHarness(registerRunTools);
+    api.on("POST", "/api/projects/7/restart", () => json({ message: "Container restarted" }));
+
+    const result = await server.call("moor_restart", { project: "app" });
+
+    expect(toolText(result)).toBe("app restarted.");
+    expect(api.calls).toEqual([{ method: "POST", path: "/api/projects/7/restart" }]);
+  });
+
   test("moor_runs renders compact run list rows", async () => {
     const { api, server } = createHarness(registerRunTools);
     api.on("GET", "/api/projects/7/runs?include_output=false&page=2", () =>
@@ -571,23 +581,52 @@ describe("env, cron, volume, and file tools", () => {
     const { api, server } = createHarness(registerEnvTools);
     api.on("GET", "/api/projects/7/envs", () => json([{ key: "A", value: "1" }]));
     api.on("PUT", "/api/projects/7/envs", () => noContent());
-    api.on("POST", "/api/projects/7/stop", () => noContent());
-    api.on("POST", "/api/projects/7/start", () => noContent());
+    api.on("POST", "/api/projects/7/restart", () => noContent());
 
     const result = await server.call("moor_env_set", {
       project: "app",
       vars: { B: "2" },
     });
 
-    expect(api.calls[1]).toEqual({
-      method: "PUT",
-      path: "/api/projects/7/envs",
-      body: [
+    expect(api.calls).toEqual([
+      { method: "GET", path: "/api/projects/7/envs" },
+      {
+        method: "PUT",
+        path: "/api/projects/7/envs",
+        body: [
+          { key: "A", value: "1" },
+          { key: "B", value: "2" },
+        ],
+      },
+      { method: "POST", path: "/api/projects/7/restart" },
+    ]);
+    expect(toolText(result)).toBe("Set B on app. Container restarted.");
+  });
+
+  test("moor_env_delete delegates a running-project restart to the API", async () => {
+    const { api, server } = createHarness(registerEnvTools);
+    api.on("GET", "/api/projects/7/envs", () =>
+      json([
         { key: "A", value: "1" },
         { key: "B", value: "2" },
-      ],
+      ]),
+    );
+    api.on("DELETE", "/api/projects/7/envs/B", () => noContent());
+    api.on("POST", "/api/projects/7/restart", () => noContent());
+
+    const result = await server.call("moor_env_delete", {
+      project: "app",
+      keys: ["B", "MISSING"],
     });
-    expect(toolText(result)).toBe("Set B on app. Container restarted.");
+
+    expect(api.calls).toEqual([
+      { method: "GET", path: "/api/projects/7/envs" },
+      { method: "DELETE", path: "/api/projects/7/envs/B" },
+      { method: "POST", path: "/api/projects/7/restart" },
+    ]);
+    expect(toolText(result)).toBe(
+      "Deleted B from app. (Not present: MISSING.) Container restarted.",
+    );
   });
 
   test("moor_env_set surfaces JSON errors from the env write", async () => {
