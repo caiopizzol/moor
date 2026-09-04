@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import type { Project, ProjectActionResult } from "../deploy";
 
 const { default: db } = await import("../db");
-const { withProjectLifecycleLock } = await import("../deploy");
+const { acquireProjectNameLifecycleLock, withProjectLifecycleLock } = await import("../deploy");
 const { handleDeploy } = await import("./deploy");
 
 function sseStream(text: string): ReadableStream<Uint8Array> {
@@ -227,6 +227,89 @@ describe("POST /api/deploy", () => {
     expect(db.query("SELECT docker_image FROM projects WHERE name = 'app'").get()).toEqual({
       docker_image: "nginx:new",
     });
+  });
+
+  test("merges deploy env values into an existing project", async () => {
+    const project = db
+      .query(
+        "INSERT INTO projects (name, docker_image, branch) VALUES ('app', 'nginx:alpine', 'main') RETURNING id",
+      )
+      .get() as { id: number };
+    db.query("INSERT INTO env_vars (project_id, key, value) VALUES (?, 'KEEP', 'existing')").run(
+      project.id,
+    );
+
+    const response = await call({
+      name: "app",
+      env: { ADD: "new" },
+      run: false,
+      update_existing: true,
+    });
+
+    expect(response.status).toBe(200);
+    expect(
+      db.query("SELECT key, value FROM env_vars WHERE project_id = ? ORDER BY key").all(project.id),
+    ).toEqual([
+      { key: "ADD", value: "new" },
+      { key: "KEEP", value: "existing" },
+    ]);
+  });
+
+  test("serializes deploys that concurrently create the same project name", async () => {
+    const releaseBarrier = await acquireProjectNameLifecycleLock("same-name");
+    let markFirstAtLock: () => void = () => {};
+    let markSecondAtLock: () => void = () => {};
+    const firstAtLock = new Promise<void>((resolve) => {
+      markFirstAtLock = resolve;
+    });
+    const secondAtLock = new Promise<void>((resolve) => {
+      markSecondAtLock = resolve;
+    });
+    const deps = (markAtLock: () => void): Parameters<typeof handleDeploy>[2] => {
+      let drainCalls = 0;
+      return {
+        requireNotDraining: () => {
+          drainCalls += 1;
+          if (drainCalls === 1) markAtLock();
+          return null;
+        },
+        runProject: async () => ({ kind: "json", body: { message: "started" } }),
+      };
+    };
+
+    const first = call(
+      {
+        name: "same-name",
+        docker_image: "nginx:first",
+        env: { ORDER: "first" },
+        update_existing: true,
+      },
+      deps(markFirstAtLock),
+    );
+    await firstAtLock;
+    const second = call(
+      {
+        name: "same-name",
+        docker_image: "nginx:second",
+        env: { ORDER: "second" },
+        update_existing: true,
+      },
+      deps(markSecondAtLock),
+    );
+    await secondAtLock;
+    const projectBeforeRelease = db.query("SELECT id FROM projects WHERE name = 'same-name'").get();
+    releaseBarrier();
+
+    const responses = await Promise.all([first, second]);
+    expect(responses.map(({ status }) => status)).toEqual([200, 200]);
+    const project = db
+      .query("SELECT id, docker_image FROM projects WHERE name = 'same-name'")
+      .get() as { id: number; docker_image: string };
+    expect(projectBeforeRelease).toBeNull();
+    expect(project.docker_image).toBe("nginx:second");
+    expect(
+      db.query("SELECT value FROM env_vars WHERE project_id = ? AND key = 'ORDER'").get(project.id),
+    ).toEqual({ value: "second" });
   });
 
   test("tags pre-stream run failures without dropping their structured fields", async () => {
