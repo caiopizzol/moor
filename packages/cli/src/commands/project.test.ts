@@ -103,6 +103,16 @@ describe("project inspection commands", () => {
     expect(capture.stderr).toEqual([]);
   });
 
+  test("normalizes a zero-padded numeric project ID", async () => {
+    configureClient(() => Response.json([project]));
+    const capture = captureOutput();
+
+    const exitCode = await projectGetCommand(["007", "--json"], capture.output);
+
+    expect(exitCode).toBe(0);
+    expect(JSON.parse(capture.stdout.join(""))).toEqual(project);
+  });
+
   test("resolves a project name from the list", async () => {
     const paths = configureClient(() => Response.json([project]));
     const capture = captureOutput();

@@ -51,9 +51,12 @@ export async function projectGetCommand(
 
   const result = await fetchJson<Project[]>("/api/projects", parsed.json, output);
   if (!result.ok) return 1;
+  const selectorId = /^\d+$/.test(parsed.project) ? Number(parsed.project) : undefined;
   const project =
     result.value.find((candidate) => candidate.name === parsed.project) ??
-    result.value.find((candidate) => String(candidate.id) === parsed.project);
+    (Number.isSafeInteger(selectorId)
+      ? result.value.find((candidate) => candidate.id === selectorId)
+      : undefined);
   if (!project) {
     writeError(`Project "${parsed.project}" not found`, undefined, parsed.json, output);
     return 1;
