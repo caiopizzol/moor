@@ -1,20 +1,27 @@
 import { readFile } from "node:fs/promises";
 import type { EnvVar, MergeEnvVarsResponse, Project } from "../../../contract/src/index";
-import { apiGet, apiPost, clientConfigError, findProject, readErrorMessage } from "../client";
+import { apiGet, apiPost, findProject } from "../client";
+import { type CommandOutput, defaultCommandOutput, requestJson, writeError } from "../protocol";
 
 export const ENV_USAGE = `Usage:
-  moor env list <project>
+  moor env list <project> [--json]
   moor env set <project> KEY=VALUE [KEY=VALUE ...]
   moor env set <project> --env-file <path|-> [--json]
 
 Options:
   --env-file <path|->  Read a JSON object of environment values; - reads stdin
-  --json               Emit one JSON document; requires --env-file`;
+  --json               Emit one JSON document; env set requires --env-file`;
 
-type EnvOutput = {
-  stdout: (text: string) => void;
-  stderr: (text: string) => void;
+const ENV_LIST_USAGE = "Usage: moor env list <project> [--json]";
+
+type EnvOutput = CommandOutput & {
   readText: (path: string) => Promise<string>;
+};
+
+type ParsedEnvListArgs = {
+  project?: string;
+  json: boolean;
+  error?: string;
 };
 
 type ParsedEnvSetArgs = {
@@ -26,8 +33,7 @@ type ParsedEnvSetArgs = {
 };
 
 const defaultOutput: EnvOutput = {
-  stdout: (text) => process.stdout.write(text),
-  stderr: (text) => process.stderr.write(text),
+  ...defaultCommandOutput,
   readText: async (path) => (path === "-" ? await Bun.stdin.text() : await readFile(path, "utf8")),
 };
 
@@ -49,22 +55,32 @@ export async function envCommand(
 }
 
 async function envList(args: string[], output: EnvOutput): Promise<number> {
-  const projectName = args[0];
-  if (!projectName) {
-    output.stderr("Usage: moor env list <project>\n");
+  if (args.includes("--help") || args.includes("-h")) {
+    output.stdout(`${ENV_LIST_USAGE}\n`);
+    return 0;
+  }
+
+  const parsed = parseEnvListArgs(args);
+  if (!parsed.project || parsed.error) {
+    writeError(output, parsed.error ?? "Project is required", parsed.json);
+    if (!parsed.json) output.stderr(`${ENV_LIST_USAGE}\n`);
     return 1;
   }
 
-  const project = await getProject(projectName, false, output);
+  const project = await getProject(parsed.project, parsed.json, output);
   if (!project) return 1;
-  const result = await getJson<EnvVar[]>(
-    `/api/projects/${project.id}/envs`,
-    false,
+  const result = await requestJson<EnvVar[]>(
+    () => apiGet(`/api/projects/${project.id}/envs`),
+    parsed.json,
     "Failed to get environment variables",
     output,
   );
   if (!result.ok) return 1;
 
+  if (parsed.json) {
+    output.stdout(`${JSON.stringify(result.value)}\n`);
+    return 0;
+  }
   if (result.value.length === 0) {
     output.stdout("No environment variables set.\n");
     return 0;
@@ -73,6 +89,18 @@ async function envList(args: string[], output: EnvOutput): Promise<number> {
     output.stdout(`${variable.key}=${variable.value}\n`);
   }
   return 0;
+}
+
+export function parseEnvListArgs(args: string[]): ParsedEnvListArgs {
+  const json = args.includes("--json");
+  const positional = args.filter((arg) => arg !== "--json");
+  const option = positional.find((arg) => arg.startsWith("-"));
+  if (option) return { json, error: `Unknown option: ${option}` };
+  if (positional.length === 0) return { json, error: "Project is required" };
+  if (positional.length > 1) {
+    return { project: positional[0], json, error: `Unexpected argument: ${positional[1]}` };
+  }
+  return { project: positional[0], json };
 }
 
 export function parseEnvSetArgs(args: string[]): ParsedEnvSetArgs {
@@ -138,7 +166,7 @@ async function envSet(args: string[], output: EnvOutput): Promise<number> {
 
   const parsed = parseEnvSetArgs(args);
   if (!parsed.project || parsed.error) {
-    writeError(parsed.error ?? "Project is required", parsed.json, output);
+    writeError(output, parsed.error ?? "Project is required", parsed.json);
     if (!parsed.json) output.stderr(`${ENV_USAGE}\n`);
     return 1;
   }
@@ -149,21 +177,21 @@ async function envSet(args: string[], output: EnvOutput): Promise<number> {
       vars = parseEnvJson(await output.readText(parsed.envFile));
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      writeError(`Failed to read --env-file: ${message}`, parsed.json, output);
+      writeError(output, `Failed to read --env-file: ${message}`, parsed.json);
       return 1;
     }
   }
   if (!vars) {
-    writeError("No environment values provided", parsed.json, output);
+    writeError(output, "No environment values provided", parsed.json);
     return 1;
   }
 
   const project = await getProject(parsed.project, parsed.json, output);
   if (!project) return 1;
-  const result = await postJson<MergeEnvVarsResponse>(
-    `/api/projects/${project.id}/envs`,
-    { vars },
+  const result = await requestJson<MergeEnvVarsResponse>(
+    () => apiPost(`/api/projects/${project.id}/envs`, { vars }),
     parsed.json,
+    "Failed to set environment variables",
     output,
   );
   if (!result.ok) return 1;
@@ -182,72 +210,16 @@ async function getProject(
   json: boolean,
   output: EnvOutput,
 ): Promise<Project | undefined> {
-  const projects = await getJson<Project[]>(
-    "/api/projects",
+  const projects = await requestJson<Project[]>(
+    () => apiGet("/api/projects"),
     json,
     "Failed to list projects",
     output,
   );
   if (!projects.ok) return;
   const project = findProject(projects.value, selector);
-  if (!project) writeError(`Project "${selector}" not found`, json, output);
+  if (!project) writeError(output, `Project "${selector}" not found`, json);
   return project;
-}
-
-async function getJson<T>(
-  path: string,
-  json: boolean,
-  humanError: string,
-  output: EnvOutput,
-): Promise<{ ok: true; value: T } | { ok: false }> {
-  return requestJson(() => apiGet(path), json, humanError, output);
-}
-
-async function postJson<T>(
-  path: string,
-  body: unknown,
-  json: boolean,
-  output: EnvOutput,
-): Promise<{ ok: true; value: T } | { ok: false }> {
-  return requestJson(
-    () => apiPost(path, body),
-    json,
-    "Failed to set environment variables",
-    output,
-  );
-}
-
-async function requestJson<T>(
-  request: () => Promise<Response>,
-  json: boolean,
-  humanError: string,
-  output: EnvOutput,
-): Promise<{ ok: true; value: T } | { ok: false }> {
-  const configError = clientConfigError();
-  if (configError) {
-    writeError(configError, json, output);
-    return { ok: false };
-  }
-
-  let response: Response;
-  try {
-    response = await request();
-  } catch (error) {
-    writeError(error instanceof Error ? error.message : String(error), json, output);
-    return { ok: false };
-  }
-  if (!response.ok) {
-    if (json) output.stderr(`${await formatResponseError(response)}\n`);
-    else output.stderr(`${humanError}: ${await readErrorMessage(response)}\n`);
-    return { ok: false };
-  }
-
-  try {
-    return { ok: true, value: (await response.json()) as T };
-  } catch (error) {
-    writeError(error instanceof Error ? error.message : String(error), json, output);
-    return { ok: false };
-  }
 }
 
 function parseEnvJson(text: string): Record<string, string> {
@@ -259,22 +231,4 @@ function parseEnvJson(text: string): Record<string, string> {
     throw new Error("expected every environment value to be a string");
   }
   return value as Record<string, string>;
-}
-
-async function formatResponseError(response: Response): Promise<string> {
-  const copy = response.clone();
-  const message = await readErrorMessage(response);
-  try {
-    const body: unknown = await copy.json();
-    if (typeof body === "object" && body !== null && !Array.isArray(body)) {
-      return JSON.stringify({ ...body, status: response.status });
-    }
-  } catch {
-    // Fall back to the normalized error message below.
-  }
-  return JSON.stringify({ error: message, status: response.status });
-}
-
-function writeError(message: string, json: boolean, output: EnvOutput): void {
-  output.stderr(json ? `${JSON.stringify({ error: message })}\n` : `Error: ${message}\n`);
 }

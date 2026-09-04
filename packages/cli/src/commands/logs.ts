@@ -1,12 +1,10 @@
 import type { LogsResponse, Project } from "../../../contract/src/index";
-import { apiGet, clientConfigError, findProject, readErrorMessage } from "../client";
+import { apiGet, findProject } from "../client";
+import { type CommandOutput, defaultCommandOutput, requestJson, writeError } from "../protocol";
 
 const USAGE = "Usage: moor logs <project> [-f] [-n <lines>] [--json]";
 
-type LogsOutput = {
-  stdout: (text: string) => void;
-  stderr: (text: string) => void;
-};
+type LogsOutput = CommandOutput;
 
 type ParsedLogsArgs = {
   project?: string;
@@ -16,10 +14,7 @@ type ParsedLogsArgs = {
   error?: string;
 };
 
-const defaultOutput: LogsOutput = {
-  stdout: (text) => process.stdout.write(text),
-  stderr: (text) => process.stderr.write(text),
-};
+const defaultOutput: LogsOutput = defaultCommandOutput;
 
 export function parseLogsArgs(args: string[]): ParsedLogsArgs {
   let project: string | undefined;
@@ -76,13 +71,13 @@ export async function logsCommand(
 
   const parsed = parseLogsArgs(args);
   if (!parsed.project || parsed.error) {
-    writeError(parsed.error ?? "Project is required", parsed.json, output);
+    writeError(output, parsed.error ?? "Project is required", parsed.json);
     if (!parsed.json) output.stderr(`${USAGE}\n`);
     return 1;
   }
 
-  const projects = await getJson<Project[]>(
-    "/api/projects",
+  const projects = await requestJson<Project[]>(
+    () => apiGet("/api/projects"),
     parsed.json,
     "Failed to list projects",
     output,
@@ -90,12 +85,12 @@ export async function logsCommand(
   if (!projects.ok) return 1;
   const project = findProject(projects.value, parsed.project);
   if (!project) {
-    writeError(`Project "${parsed.project}" not found`, parsed.json, output);
+    writeError(output, `Project "${parsed.project}" not found`, parsed.json);
     return 1;
   }
 
-  const initial = await getJson<LogsResponse>(
-    `/api/projects/${project.id}/logs?tail=${parsed.tail}`,
+  const initial = await requestJson<LogsResponse>(
+    () => apiGet(`/api/projects/${project.id}/logs?tail=${parsed.tail}`),
     parsed.json,
     "Failed to get logs",
     output,
@@ -131,55 +126,4 @@ export async function logsCommand(
   });
 
   return await new Promise<number>(() => {});
-}
-
-async function getJson<T>(
-  path: string,
-  json: boolean,
-  humanError: string,
-  output: LogsOutput,
-): Promise<{ ok: true; value: T } | { ok: false }> {
-  const configError = clientConfigError();
-  if (configError) {
-    writeError(configError, json, output);
-    return { ok: false };
-  }
-
-  let response: Response;
-  try {
-    response = await apiGet(path);
-  } catch (error) {
-    writeError(error instanceof Error ? error.message : String(error), json, output);
-    return { ok: false };
-  }
-  if (!response.ok) {
-    if (json) output.stderr(`${await formatResponseError(response)}\n`);
-    else output.stderr(`${humanError}: ${response.status}\n`);
-    return { ok: false };
-  }
-
-  try {
-    return { ok: true, value: (await response.json()) as T };
-  } catch (error) {
-    writeError(error instanceof Error ? error.message : String(error), json, output);
-    return { ok: false };
-  }
-}
-
-async function formatResponseError(response: Response): Promise<string> {
-  const copy = response.clone();
-  const message = await readErrorMessage(response);
-  try {
-    const body: unknown = await copy.json();
-    if (typeof body === "object" && body !== null && !Array.isArray(body)) {
-      return JSON.stringify({ ...body, status: response.status });
-    }
-  } catch {
-    // Fall back to the normalized error message below.
-  }
-  return JSON.stringify({ error: message, status: response.status });
-}
-
-function writeError(message: string, json: boolean, output: LogsOutput): void {
-  output.stderr(json ? `${JSON.stringify({ error: message })}\n` : `Error: ${message}\n`);
 }
