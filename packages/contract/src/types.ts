@@ -152,6 +152,15 @@ export type EnvVar = {
 
 export type SetEnvVarsRequest = Array<{ key: string; value: string }>;
 
+export type MergeEnvVarsRequest = {
+  vars: Record<string, string>;
+};
+
+export type MergeEnvVarsResponse = {
+  updated_keys: string[];
+  restarted: boolean;
+};
+
 export type PortMapping = {
   id: number;
   project_id: number;

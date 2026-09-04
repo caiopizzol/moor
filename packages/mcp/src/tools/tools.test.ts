@@ -654,11 +654,9 @@ describe("env, cron, volume, and file tools", () => {
     );
   });
 
-  test("moor_env_set merges with existing envs and restarts running projects", async () => {
+  test("moor_env_set delegates merge and restart orchestration to one API request", async () => {
     const { api, server } = createHarness(registerEnvTools);
-    api.on("GET", "/api/projects/7/envs", () => json([{ key: "A", value: "1" }]));
-    api.on("PUT", "/api/projects/7/envs", () => noContent());
-    api.on("POST", "/api/projects/7/restart", () => noContent());
+    api.on("POST", "/api/projects/7/envs", () => json({ updated_keys: ["B"], restarted: true }));
 
     const result = await server.call("moor_env_set", {
       project: "app",
@@ -666,16 +664,11 @@ describe("env, cron, volume, and file tools", () => {
     });
 
     expect(api.calls).toEqual([
-      { method: "GET", path: "/api/projects/7/envs" },
       {
-        method: "PUT",
+        method: "POST",
         path: "/api/projects/7/envs",
-        body: [
-          { key: "A", value: "1" },
-          { key: "B", value: "2" },
-        ],
+        body: { vars: { B: "2" } },
       },
-      { method: "POST", path: "/api/projects/7/restart" },
     ]);
     expect(toolText(result)).toBe("Set B on app. Container restarted.");
   });
@@ -708,8 +701,7 @@ describe("env, cron, volume, and file tools", () => {
 
   test("moor_env_set surfaces JSON errors from the env write", async () => {
     const { api, server } = createHarness(registerEnvTools);
-    api.on("GET", "/api/projects/7/envs", () => json([]));
-    api.on("PUT", "/api/projects/7/envs", () => errorJson("env key is invalid", 400));
+    api.on("POST", "/api/projects/7/envs", () => errorJson("env key is invalid", 400));
 
     await expect(
       server.call("moor_env_set", { project: "app", vars: { "BAD KEY": "x" } }),

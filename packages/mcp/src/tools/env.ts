@@ -4,6 +4,7 @@ import {
   CRON_TIMEOUT_MAX_MS,
   CRON_TIMEOUT_MIN_MS,
   isJsonObject,
+  type MergeEnvVarsResponse,
   validateCronSchedule,
 } from "../../../contract/src/index";
 import type { ToolContext } from "./context";
@@ -46,30 +47,10 @@ export function registerEnvTools(server: McpServer, client: ToolContext): void {
     },
     async ({ project, vars }) => {
       const p = await resolveProject(project);
-
-      // Fetch existing and merge
-      const existingRes = await apiResponse.get(`/api/projects/${p.id}/envs`);
-      if (!existingRes.ok) throw new Error(`Failed to get envs: ${existingRes.status}`);
-      const existing = (await existingRes.json()) as { key: string; value: string }[];
-      const merged = new Map(existing.map((v) => [v.key, v.value]));
-      for (const [key, value] of Object.entries(vars)) {
-        merged.set(key, value);
-      }
-      const allVars = Array.from(merged, ([key, value]) => ({ key, value }));
-
-      const setRes = await apiResponse.put(`/api/projects/${p.id}/envs`, allVars);
+      const setRes = await apiResponse.post(`/api/projects/${p.id}/envs`, { vars });
       if (!setRes.ok) throw new Error(`Failed to set envs: ${await readErrorMessage(setRes)}`);
-
-      const keys = Object.keys(vars).join(", ");
-      let text = `Set ${keys} on ${p.name}.`;
-
-      // Restart if running
-      if (p.status === "running") {
-        const restartRes = await apiResponse.post(`/api/projects/${p.id}/restart`);
-        if (!restartRes.ok)
-          throw new Error(`Set vars but failed to restart: ${await readErrorMessage(restartRes)}`);
-        text += " Container restarted.";
-      }
+      const result = (await setRes.json()) as MergeEnvVarsResponse;
+      const text = `Set ${result.updated_keys.join(", ")} on ${p.name}.${result.restarted ? " Container restarted." : ""}`;
 
       return { content: [{ type: "text", text }] };
     },

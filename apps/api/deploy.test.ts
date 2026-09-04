@@ -4,6 +4,7 @@ import { describe, expect, test } from "bun:test";
 import type { BuildRunLike, DeployDeps, Project, ProjectActionResult } from "./deploy";
 
 const {
+  acquireProjectLifecycleLock,
   buildProject,
   deployProject,
   restartProject,
@@ -324,6 +325,19 @@ describe("deployProject orchestration", () => {
 });
 
 describe("restartProject orchestration", () => {
+  test("uses a lifecycle lock already held by its caller", async () => {
+    const ops: string[] = [];
+    const project = makeProject({ image_tag: "moor/app:latest", container_id: "container-old" });
+    const release = await acquireProjectLifecycleLock(project.id);
+
+    const restarting = restartProject(project, makeDeps(ops), { lifecycleLockHeld: true });
+    const opsWhileLocked = [...ops];
+    release();
+    await restarting;
+
+    expect(opsWhileLocked).toContain("stop:container-old");
+  });
+
   test("rejects drain before stopping the container", async () => {
     const ops: string[] = [];
     const deps = makeDeps(ops, {
