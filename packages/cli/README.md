@@ -43,7 +43,7 @@ export MOOR_URL=http://127.0.0.1:8080
 moor status                          # list all projects (human-readable alias)
 moor project list [--json]           # list projects
 moor project get <name|id> [--json]  # get one project
-moor logs <project> [-f] [-n 100]    # view container logs
+moor logs <project> [-f] [-n 100] [--json] # view container logs
 moor rebuild <project>               # rebuild from source
 moor restart <project>               # stop + start
 moor exec <project> <command>        # run a command in the container
@@ -68,6 +68,18 @@ moor project get 7 --json
 Both commands print one JSON document to stdout in `--json` mode. Failures print a JSON error to stderr and exit nonzero. Without `--json`, `project list` uses the same table as the existing `moor status` alias and `project get` prints readable, indented JSON.
 
 Project selectors accept a name or numeric ID. If a numeric selector matches both, an exact project name takes precedence.
+
+## Logs
+
+Use finite JSON mode when an agent needs recent container output and its state:
+
+```bash
+moor logs api -n 100 --json
+```
+
+Success prints the API response as one JSON document with `logs`, `lastTimestamp`, and `state` (`ok`, `exited`, `no_container`, or `missing`). Failures print structured JSON to stderr and exit nonzero. Exact project names take precedence over numeric IDs, matching `moor project get`.
+
+`--json` cannot be combined with `--follow` yet. Use `moor logs api --follow` for the existing human-readable polling mode; a later streaming slice will define JSONL follow events.
 
 ## `moor project deploy`
 

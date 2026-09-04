@@ -30,7 +30,7 @@ Usage: moor <command> [options]
 
 Commands:
   status                          List all projects (human-readable alias)
-  logs <project> [-f] [-n <lines>] View container logs
+  logs <project> [-f] [-n <lines>] [--json] View container logs
   rebuild <project> [--no-cache]  Rebuild and restart from source
   restart <project>               Stop and start a container
   exec <project> <command>        Run a command in a container
@@ -53,10 +53,10 @@ const command = args[0];
 
 switch (command) {
   case "status":
-    process.exitCode = await statusCommand();
+    process.exitCode = await statusCommand(args.slice(1));
     break;
   case "logs":
-    await logsCommand(args.slice(1));
+    process.exitCode = await logsCommand(args.slice(1));
     break;
   case "rebuild":
     await rebuildCommand(args.slice(1));

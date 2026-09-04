@@ -1,5 +1,5 @@
 import type { Project } from "../../../contract/src/index";
-import { apiGet, clientConfigError, readErrorMessage } from "../client";
+import { apiGet, clientConfigError, findProject, readErrorMessage } from "../client";
 
 export const PROJECT_USAGE = `Usage:
   moor project list [--json]
@@ -51,12 +51,7 @@ export async function projectGetCommand(
 
   const result = await fetchJson<Project[]>("/api/projects", parsed.json, output);
   if (!result.ok) return 1;
-  const selectorId = /^\d+$/.test(parsed.project) ? Number(parsed.project) : undefined;
-  const project =
-    result.value.find((candidate) => candidate.name === parsed.project) ??
-    (Number.isSafeInteger(selectorId)
-      ? result.value.find((candidate) => candidate.id === selectorId)
-      : undefined);
+  const project = findProject(result.value, parsed.project);
   if (!project) {
     writeError(`Project "${parsed.project}" not found`, undefined, parsed.json, output);
     return 1;

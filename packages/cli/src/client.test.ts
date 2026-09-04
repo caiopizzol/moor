@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { apiGet, apiPost, apiPut, readErrorMessage, resolveProject } from "./client";
+import type { Project } from "../../contract/src/index";
+import { apiGet, apiPost, apiPut, findProject, readErrorMessage, resolveProject } from "./client";
 
 const originalFetch = globalThis.fetch;
 const originalMoorUrl = process.env.MOOR_URL;
@@ -43,6 +44,17 @@ function firstCall(calls: FetchCall[]): FetchCall {
 }
 
 describe("client API helpers", () => {
+  test("findProject prefers exact names before normalized numeric IDs", () => {
+    const projects = [
+      { id: 7, name: "api" },
+      { id: 8, name: "007" },
+    ] as Project[];
+
+    expect(findProject(projects, "007")?.id).toBe(8);
+    expect(findProject(projects, "0007")?.id).toBe(7);
+    expect(findProject(projects, "missing")).toBeUndefined();
+  });
+
   test("apiGet returns the raw response while using the shared contract client", async () => {
     configureClientEnv();
     const rawResponse = new Response("not-json", { status: 418 });
