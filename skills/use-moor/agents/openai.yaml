@@ -1,0 +1,4 @@
+interface:
+  display_name: "Use Moor"
+  short_description: "Deploy and inspect apps through the Moor CLI"
+  default_prompt: "Use $use-moor to inspect a Moor project and troubleshoot its deployment."
