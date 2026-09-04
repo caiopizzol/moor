@@ -60,6 +60,7 @@ Deploy from GitHub or a registry image through the same API operation used by MC
 ```bash
 moor project deploy api --github-url https://github.com/example/api
 moor project deploy web --docker-image nginx:alpine --domain web.example.com --domain-port 80
+moor project deploy private --github-url https://github.com/example/private --source-credential-id 42
 ```
 
 Pass `--update-existing` to update a project with the same name, or `--no-run` to save its configuration without rebuilding or starting it. Environment values are read from a JSON object so secrets do not appear in the command line:

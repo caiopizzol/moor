@@ -61,6 +61,8 @@ describe("project deploy command", () => {
         "app.example.com",
         "--domain-port",
         "8080",
+        "--source-credential-id",
+        "42",
         "--env-file",
         "env.json",
         "--update-existing",
@@ -75,6 +77,7 @@ describe("project deploy command", () => {
         dockerfile: "ops/Dockerfile",
         domain: "app.example.com",
         domain_port: 8080,
+        source_credential_id: 42,
         update_existing: true,
         run: false,
       },
@@ -96,6 +99,23 @@ describe("project deploy command", () => {
   test("does not accept environment values on argv", () => {
     expect(parseDeployArgs(["app", "--env", "TOKEN=secret-value"]).error).toBe(
       "Unknown option: --env",
+    );
+  });
+
+  test("rejects a flag used as a missing option value", () => {
+    expect(parseDeployArgs(["app", "--docker-image", "--json", "--update-existing"])).toEqual({
+      json: true,
+      error: "--docker-image requires a value",
+    });
+    expect(parseDeployArgs(["app", "--env-file", "-"]).envFile).toBe("-");
+  });
+
+  test("requires a positive integer source credential ID", () => {
+    expect(parseDeployArgs(["app", "--source-credential-id", "0"]).error).toBe(
+      "--source-credential-id must be a positive integer",
+    );
+    expect(parseDeployArgs(["app", "--source-credential-id", "1.5"]).error).toBe(
+      "--source-credential-id must be a positive integer",
     );
   });
 
@@ -192,6 +212,38 @@ describe("project deploy command", () => {
 
     expect(exitCode).toBe(1);
     expect(capture.stderr).toEqual(["Error [source_credential_required]: credential required\n"]);
+  });
+
+  test("keeps reader failures in the JSONL stream after streaming begins", async () => {
+    configureClientEnv();
+    globalThis.fetch = (async (..._args: Parameters<typeof fetch>): Promise<Response> =>
+      sseResponse([
+        'event: deploy\ndata: {"action":"created","project_id":7,"project_name":"app","env_keys":[],"run":true,"env_changes_pending_restart":false}\n\n',
+        "event: log\ndata: not-json\n\n",
+      ])) as typeof fetch;
+    const capture = captureOutput();
+
+    const exitCode = await deployCommand(
+      ["app", "--docker-image", "nginx:alpine", "--json"],
+      capture.output,
+    );
+
+    expect(exitCode).toBe(1);
+    expect(capture.stderr).toEqual([]);
+    const events = capture.stdout.map((line) => JSON.parse(line));
+    expect(events[0]).toEqual({
+      event: "deploy",
+      data: {
+        action: "created",
+        project_id: 7,
+        project_name: "app",
+        env_keys: [],
+        run: true,
+        env_changes_pending_restart: false,
+      },
+    });
+    expect(events[1]?.event).toBe("error");
+    expect(events[1]?.data).toContain("JSON");
   });
 
   test("renders pre-stream API failures as JSON on stderr", async () => {

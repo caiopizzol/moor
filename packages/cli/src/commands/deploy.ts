@@ -11,6 +11,7 @@ Options:
   --dockerfile <path>      Dockerfile path (default: Dockerfile)
   --domain <domain>        Route a public domain to the project
   --domain-port <port>     Container port for the public domain
+  --source-credential-id <id> Select a stored credential for a private repository
   --env-file <path|->      Merge env from a JSON object; - reads stdin
   --update-existing        Update a project with the same name
   --no-run                 Save configuration without building or starting
@@ -67,13 +68,16 @@ export function parseDeployArgs(args: string[]): ParsedDeployArgs {
         "--dockerfile",
         "--domain",
         "--domain-port",
+        "--source-credential-id",
         "--env-file",
       ].includes(arg)
     ) {
       return { json, error: `Unknown option: ${arg}` };
     }
     const value = args[index + 1];
-    if (!value) return { json, error: `${arg} requires a value` };
+    if (!value || (value.startsWith("-") && !(arg === "--env-file" && value === "-"))) {
+      return { json, error: `${arg} requires a value` };
+    }
     index += 1;
     switch (arg) {
       case "--github-url":
@@ -97,6 +101,14 @@ export function parseDeployArgs(args: string[]): ParsedDeployArgs {
           return { json, error: "--domain-port must be a positive integer" };
         }
         input.domain_port = port;
+        break;
+      }
+      case "--source-credential-id": {
+        const credentialId = Number(value);
+        if (!Number.isInteger(credentialId) || credentialId <= 0) {
+          return { json, error: "--source-credential-id must be a positive integer" };
+        }
+        input.source_credential_id = credentialId;
         break;
       }
       case "--env-file":
@@ -193,7 +205,11 @@ export async function deployCommand(
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    output.stderr(`${formatError(message, undefined, parsed.json)}\n`);
+    if (parsed.json) {
+      output.stdout(`${JSON.stringify({ event: "error", data: message })}\n`);
+    } else {
+      output.stderr(`${formatError(message, undefined, false)}\n`);
+    }
     return 1;
   }
 
