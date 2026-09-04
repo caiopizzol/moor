@@ -34,7 +34,7 @@ Commands:
   rebuild <project> [--no-cache]  Rebuild and restart from source
   restart <project>               Stop and start a container
   exec <project> <command>        Run a command in a container
-  env list <project>              List environment variables
+  env list <project> [--json]     List environment variables
   env set <project> [options]     Set environment variables
   stats                           Show server resource usage
   history <project> [--hours N]   Stored resource history + events (default 24h)

@@ -1,6 +1,12 @@
 import { readFile } from "node:fs/promises";
 import type { DeployRequest, DeploySummary } from "../../../contract/src/index";
-import { apiPost, readErrorMessage, streamSSE } from "../client";
+import { apiPost, streamSSE } from "../client";
+import {
+  type CommandOutput,
+  defaultCommandOutput,
+  formatError,
+  formatResponseError,
+} from "../protocol";
 
 const USAGE = `Usage: moor project deploy <name> [options]
 
@@ -17,9 +23,7 @@ Options:
   --no-run                 Save configuration without building or starting
   --json                   Emit one {event,data} JSON object per line`;
 
-type DeployOutput = {
-  stdout: (text: string) => void;
-  stderr: (text: string) => void;
+type DeployOutput = CommandOutput & {
   readText: (path: string) => Promise<string>;
 };
 
@@ -31,8 +35,7 @@ type ParsedDeployArgs = {
 };
 
 const defaultOutput: DeployOutput = {
-  stdout: (text) => process.stdout.write(text),
-  stderr: (text) => process.stderr.write(text),
+  ...defaultCommandOutput,
   readText: async (path) => (path === "-" ? await Bun.stdin.text() : await readFile(path, "utf8")),
 };
 
@@ -231,27 +234,6 @@ function parseEnvJson(text: string): Record<string, string> {
     throw new Error("expected every environment value to be a string");
   }
   return value as Record<string, string>;
-}
-
-function formatError(message: string, status: number | undefined, json: boolean): string {
-  if (!json) return `Error: ${message}`;
-  return JSON.stringify({ error: message, ...(status === undefined ? {} : { status }) });
-}
-
-async function formatResponseError(response: Response, json: boolean): Promise<string> {
-  if (!json) return formatError(await readErrorMessage(response), response.status, false);
-
-  const copy = response.clone();
-  const message = await readErrorMessage(response);
-  try {
-    const body: unknown = await copy.json();
-    if (typeof body === "object" && body !== null && !Array.isArray(body)) {
-      return JSON.stringify({ ...body, status: response.status });
-    }
-  } catch {
-    // Fall back to the normalized error message below.
-  }
-  return formatError(message, response.status, true);
 }
 
 function isDeploySummary(value: unknown): value is DeploySummary {

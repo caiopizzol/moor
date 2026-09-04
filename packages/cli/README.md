@@ -47,7 +47,7 @@ moor logs <project> [-f] [-n 100] [--json] # view container logs
 moor rebuild <project>               # rebuild from source
 moor restart <project>               # stop + start
 moor exec <project> <command>        # run a command in the container
-moor env list <project>              # list environment variables
+moor env list <project> [--json]     # list environment variables
 moor env set <project> KEY=VALUE     # set environment variables (human mode)
 moor env set <project> --env-file - --json # set environment variables (agent mode)
 moor stats                           # server resource usage
@@ -83,6 +83,14 @@ Success prints the API response as one JSON document with `logs`, `lastTimestamp
 `--json` cannot be combined with `--follow` yet. Use `moor logs api --follow` for the existing human-readable polling mode; a later streaming slice will define JSONL follow events.
 
 ## Environment variables
+
+List a project's environment values as one JSON document for agents:
+
+```bash
+moor env list api --json
+```
+
+Without `--json`, the command preserves the existing `KEY=VALUE` output. Unknown options and extra arguments are rejected.
 
 The existing human syntax remains available:
 

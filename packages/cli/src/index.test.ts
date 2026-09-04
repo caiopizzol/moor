@@ -208,7 +208,11 @@ test("status forwards project-list arguments while preserving its human alias", 
     expect(json.stderr).toBe("");
 
     const failure = await runStatus();
-    expect(failure).toEqual({ exitCode: 1, stdout: "", stderr: "Error: Unavailable\n" });
+    expect(failure).toEqual({
+      exitCode: 1,
+      stdout: "",
+      stderr: "Error: Failed to list projects: Unavailable\n",
+    });
     expect(requests).toEqual([
       { method: "GET", path: "/api/projects", authorization: "Bearer test-key" },
       { method: "GET", path: "/api/projects", authorization: "Bearer test-key" },
@@ -455,6 +459,61 @@ test("project list keeps configuration failures valid JSON", async () => {
     expect(exitCode).toBe(1);
     expect(stdout).toBe("");
     expect(JSON.parse(stderr)).toEqual({ error: scenario.error });
+  }
+});
+
+test("env list sends bearer auth and emits one JSON document", async () => {
+  const requests: Array<{ path: string; authorization: string | null }> = [];
+  const variables = [{ id: 1, project_id: 7, key: "PORT", value: "3000" }];
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: (incoming) => {
+      const path = new URL(incoming.url).pathname;
+      requests.push({ path, authorization: incoming.headers.get("Authorization") });
+      return path === "/api/projects"
+        ? Response.json([{ id: 7, name: "api", status: "running" }])
+        : Response.json(variables);
+    },
+  });
+
+  try {
+    const child = Bun.spawn({
+      cmd: [
+        globalThis.process.execPath,
+        join(import.meta.dir, "index.ts"),
+        "env",
+        "list",
+        "api",
+        "--json",
+      ],
+      env: {
+        ...globalThis.process.env,
+        MOOR_URL: server.url.origin,
+        MOOR_API_KEY: "test-key",
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    if (typeof child.stdout === "number" || typeof child.stderr === "number") {
+      throw new Error("expected piped process output");
+    }
+
+    const [exitCode, stdout, stderr] = await Promise.all([
+      child.exited,
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+    ]);
+
+    expect(exitCode).toBe(0);
+    expect(JSON.parse(stdout)).toEqual(variables);
+    expect(stderr).toBe("");
+    expect(requests).toEqual([
+      { path: "/api/projects", authorization: "Bearer test-key" },
+      { path: "/api/projects/7/envs", authorization: "Bearer test-key" },
+    ]);
+  } finally {
+    await server.stop(true);
   }
 });
 

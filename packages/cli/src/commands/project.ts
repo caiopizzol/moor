@@ -1,20 +1,15 @@
 import type { Project } from "../../../contract/src/index";
-import { apiGet, clientConfigError, findProject, readErrorMessage } from "../client";
+import { apiGet, findProject } from "../client";
+import { type CommandOutput, defaultCommandOutput, requestJson, writeError } from "../protocol";
 
 export const PROJECT_USAGE = `Usage:
   moor project list [--json]
   moor project get <name|id> [--json]
   moor project deploy <name> [options]`;
 
-type ProjectOutput = {
-  stdout: (text: string) => void;
-  stderr: (text: string) => void;
-};
+type ProjectOutput = CommandOutput;
 
-const defaultOutput: ProjectOutput = {
-  stdout: (text) => process.stdout.write(text),
-  stderr: (text) => process.stderr.write(text),
-};
+const defaultOutput: ProjectOutput = defaultCommandOutput;
 
 export async function projectListCommand(
   args: string[],
@@ -28,7 +23,12 @@ export async function projectListCommand(
   const parsed = parseJsonArgs(args);
   if (parsed.error) return argumentError(parsed.error, parsed.json, output);
 
-  const result = await fetchJson<Project[]>("/api/projects", parsed.json, output);
+  const result = await requestJson<Project[]>(
+    () => apiGet("/api/projects"),
+    parsed.json,
+    "Failed to list projects",
+    output,
+  );
   if (!result.ok) return 1;
 
   if (parsed.json) output.stdout(`${JSON.stringify(result.value)}\n`);
@@ -49,11 +49,16 @@ export async function projectGetCommand(
   if (!parsed.project)
     return argumentError(parsed.error ?? "Project is required", parsed.json, output);
 
-  const result = await fetchJson<Project[]>("/api/projects", parsed.json, output);
+  const result = await requestJson<Project[]>(
+    () => apiGet("/api/projects"),
+    parsed.json,
+    "Failed to list projects",
+    output,
+  );
   if (!result.ok) return 1;
   const project = findProject(result.value, parsed.project);
   if (!project) {
-    writeError(`Project "${parsed.project}" not found`, undefined, parsed.json, output);
+    writeError(output, `Project "${parsed.project}" not found`, parsed.json);
     return 1;
   }
 
@@ -81,45 +86,9 @@ function parseProjectGetArgs(args: string[]): {
   return { project: positional[0], json };
 }
 
-async function fetchJson<T>(
-  path: string,
-  json: boolean,
-  output: ProjectOutput,
-): Promise<{ ok: true; value: T } | { ok: false }> {
-  const configError = clientConfigError();
-  if (configError) {
-    writeError(configError, undefined, json, output);
-    return { ok: false };
-  }
-  try {
-    const response = await apiGet(path);
-    if (!response.ok) {
-      writeError(await readErrorMessage(response), response.status, json, output);
-      return { ok: false };
-    }
-    return { ok: true, value: (await response.json()) as T };
-  } catch (error) {
-    writeError(error instanceof Error ? error.message : String(error), undefined, json, output);
-    return { ok: false };
-  }
-}
-
 function argumentError(message: string, json: boolean, output: ProjectOutput): number {
-  writeError(message, undefined, json, output);
+  writeError(output, message, json);
   return 1;
-}
-
-function writeError(
-  message: string,
-  status: number | undefined,
-  json: boolean,
-  output: ProjectOutput,
-): void {
-  if (json) {
-    output.stderr(`${JSON.stringify({ error: message, ...(status ? { status } : {}) })}\n`);
-  } else {
-    output.stderr(`Error: ${message}\n`);
-  }
 }
 
 function renderProjectTable(projects: Project[]): string {

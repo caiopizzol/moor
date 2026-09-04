@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { envCommand, parseEnvSetArgs } from "./env";
+import { envCommand, parseEnvListArgs, parseEnvSetArgs } from "./env";
 
 const originalFetch = globalThis.fetch;
 const originalMoorUrl = process.env.MOOR_URL;
@@ -34,6 +34,113 @@ function captureOutput(readText: (path: string) => Promise<string> = async () =>
     },
   };
 }
+
+describe("env list command", () => {
+  test("parses JSON mode and rejects unknown or extra arguments", () => {
+    expect(parseEnvListArgs(["app", "--json"])).toEqual({ project: "app", json: true });
+    expect(parseEnvListArgs(["app", "extra", "--json"]).error).toBe("Unexpected argument: extra");
+    expect(parseEnvListArgs(["app", "--unknown"]).error).toBe("Unknown option: --unknown");
+  });
+
+  test("shows subcommand help without making a request", async () => {
+    configureClientEnv();
+    let fetchCalled = false;
+    globalThis.fetch = (async (..._args: Parameters<typeof fetch>): Promise<Response> => {
+      fetchCalled = true;
+      return Response.json([]);
+    }) as typeof fetch;
+    const capture = captureOutput();
+
+    const exitCode = await envCommand(["list", "--help"], capture.output);
+
+    expect(exitCode).toBe(0);
+    expect(fetchCalled).toBe(false);
+    expect(capture.stdout).toEqual(["Usage: moor env list <project> [--json]\n"]);
+    expect(capture.stderr).toEqual([]);
+  });
+
+  test("rejects extra arguments before making a request", async () => {
+    configureClientEnv();
+    let fetchCalled = false;
+    globalThis.fetch = (async (..._args: Parameters<typeof fetch>): Promise<Response> => {
+      fetchCalled = true;
+      return Response.json([]);
+    }) as typeof fetch;
+    const capture = captureOutput();
+
+    const exitCode = await envCommand(["list", "app", "extra", "--json"], capture.output);
+
+    expect(exitCode).toBe(1);
+    expect(fetchCalled).toBe(false);
+    expect(capture.stdout).toEqual([]);
+    expect(capture.stderr).toEqual(['{"error":"Unexpected argument: extra"}\n']);
+  });
+
+  test("emits one JSON document while preserving human output", async () => {
+    configureClientEnv();
+    const variables = [
+      { id: 1, project_id: 7, key: "A", value: "1" },
+      { id: 2, project_id: 7, key: "TOKEN", value: "secret" },
+    ];
+    globalThis.fetch = (async (input: string | URL | Request): Promise<Response> => {
+      const url = new URL(typeof input === "string" || input instanceof URL ? input : input.url);
+      return url.pathname === "/api/projects"
+        ? Response.json([{ id: 7, name: "app", status: "running" }])
+        : Response.json(variables);
+    }) as typeof fetch;
+    const jsonCapture = captureOutput();
+    const humanCapture = captureOutput();
+
+    expect(await envCommand(["list", "app", "--json"], jsonCapture.output)).toBe(0);
+    expect(JSON.parse(jsonCapture.stdout.join(""))).toEqual(variables);
+    expect(jsonCapture.stderr).toEqual([]);
+    expect(await envCommand(["list", "app"], humanCapture.output)).toBe(0);
+    expect(humanCapture.stdout).toEqual(["A=1\n", "TOKEN=secret\n"]);
+    expect(humanCapture.stderr).toEqual([]);
+  });
+
+  test("emits an empty JSON array instead of human prose", async () => {
+    configureClientEnv();
+    globalThis.fetch = (async (input: string | URL | Request): Promise<Response> => {
+      const url = new URL(typeof input === "string" || input instanceof URL ? input : input.url);
+      return url.pathname === "/api/projects"
+        ? Response.json([{ id: 7, name: "app", status: "running" }])
+        : Response.json([]);
+    }) as typeof fetch;
+    const capture = captureOutput();
+
+    const exitCode = await envCommand(["list", "app", "--json"], capture.output);
+
+    expect(exitCode).toBe(0);
+    expect(capture.stdout).toEqual(["[]\n"]);
+    expect(capture.stderr).toEqual([]);
+  });
+
+  test("returns a structured nonzero error when listing variables fails", async () => {
+    configureClientEnv();
+    globalThis.fetch = (async (input: string | URL | Request): Promise<Response> => {
+      const url = new URL(typeof input === "string" || input instanceof URL ? input : input.url);
+      if (url.pathname === "/api/projects") {
+        return Response.json([{ id: 7, name: "app", status: "running" }]);
+      }
+      return Response.json(
+        { error: "Docker unavailable", code: "docker_unavailable" },
+        { status: 503 },
+      );
+    }) as typeof fetch;
+    const capture = captureOutput();
+
+    const exitCode = await envCommand(["list", "app", "--json"], capture.output);
+
+    expect(exitCode).toBe(1);
+    expect(capture.stdout).toEqual([]);
+    expect(JSON.parse(capture.stderr.join(""))).toEqual({
+      error: "Docker unavailable",
+      code: "docker_unavailable",
+      status: 503,
+    });
+  });
+});
 
 describe("env set command", () => {
   test("keeps human KEY=VALUE input separate from JSON file input", () => {
