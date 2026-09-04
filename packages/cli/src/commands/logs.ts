@@ -36,10 +36,13 @@ export function parseLogsArgs(args: string[]): ParsedLogsArgs {
     }
     if (arg === "-n" || arg === "--lines") {
       const value = args[index + 1];
-      if (!value || value.startsWith("-")) {
+      if (!value) {
         return { project, follow, tail, json, error: `${arg} requires a value` };
       }
       tail = Number(value);
+      if (value.startsWith("-") && Number.isNaN(tail)) {
+        return { project, follow, tail, json, error: `${arg} requires a value` };
+      }
       if (!Number.isSafeInteger(tail) || tail <= 0) {
         return { project, follow, tail, json, error: `${arg} must be a positive integer` };
       }

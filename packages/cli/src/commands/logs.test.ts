@@ -60,6 +60,10 @@ describe("logs command", () => {
     expect(parseLogsArgs(["api", "--lines", "0", "--json"]).error).toBe(
       "--lines must be a positive integer",
     );
+    expect(parseLogsArgs(["api", "-n", "-1", "--json"]).error).toBe(
+      "-n must be a positive integer",
+    );
+    expect(parseLogsArgs(["api", "-n", "--json"]).error).toBe("-n requires a value");
   });
 
   test("emits one JSON response and uses shared exact-name selector semantics", async () => {
