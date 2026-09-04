@@ -7,6 +7,7 @@ import { execCommand } from "./commands/exec";
 import { historyCommand } from "./commands/history";
 import { logsCommand } from "./commands/logs";
 import { mcpCommand } from "./commands/mcp";
+import { PROJECT_USAGE, projectGetCommand, projectListCommand } from "./commands/project";
 import { rebuildCommand } from "./commands/rebuild";
 import { restartCommand } from "./commands/restart";
 import { statsCommand } from "./commands/stats";
@@ -28,7 +29,7 @@ function printHelp() {
 Usage: moor <command> [options]
 
 Commands:
-  status                          List all projects
+  status                          List all projects (human-readable alias)
   logs <project> [-f] [-n <lines>] View container logs
   rebuild <project> [--no-cache]  Rebuild and restart from source
   restart <project>               Stop and start a container
@@ -37,6 +38,8 @@ Commands:
   env set <project> K=V [K=V ...] Set environment variables
   stats                           Show server resource usage
   history <project> [--hours N]   Stored resource history + events (default 24h)
+  project list [--json]           List projects
+  project get <name|id> [--json]  Get one project
   project deploy <name> [options] Create or update and optionally run a project
   mcp config --client <name>      Generate MCP client config snippet
 
@@ -50,7 +53,7 @@ const command = args[0];
 
 switch (command) {
   case "status":
-    await statusCommand();
+    process.exitCode = await statusCommand();
     break;
   case "logs":
     await logsCommand(args.slice(1));
@@ -74,9 +77,12 @@ switch (command) {
     await historyCommand(args.slice(1));
     break;
   case "project":
-    if (args[1] === "deploy") process.exitCode = await deployCommand(args.slice(2));
+    if (args[1] === "list") process.exitCode = await projectListCommand(args.slice(2));
+    else if (args[1] === "get") process.exitCode = await projectGetCommand(args.slice(2));
+    else if (args[1] === "deploy") process.exitCode = await deployCommand(args.slice(2));
+    else if (args[1] === "--help" || args[1] === "-h") console.log(PROJECT_USAGE);
     else {
-      console.error("Usage: moor project deploy <name> [options]");
+      console.error(PROJECT_USAGE);
       process.exitCode = 1;
     }
     break;
