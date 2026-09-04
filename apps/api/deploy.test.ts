@@ -354,6 +354,28 @@ describe("restartProject orchestration", () => {
     ]);
   });
 
+  test("starts a stopped project that has no existing container", async () => {
+    const ops: string[] = [];
+
+    const result = await restartProject(
+      makeProject({ image_tag: "moor/app:latest", container_id: null, status: "stopped" }),
+      makeDeps(ops),
+    );
+
+    expect(result).toEqual({ kind: "json", body: { message: "Container restarted" } });
+    expect(ops).toEqual([
+      "drain",
+      "status:stopped:null",
+      "envs:1",
+      "ports:1",
+      "volumes:1",
+      "files:1:1",
+      "create:moor/app:latest:moor-app:envs=1:ports=1:restart=unless-stopped:mem=null:cpus=null:volumes=1:cmd=0:entrypoint=0:files=0",
+      "container:1:container-1",
+      "status:running:container-1",
+    ]);
+  });
+
   test("returns the start failure after stopping", async () => {
     const ops: string[] = [];
     const deps = makeDeps(ops, {
