@@ -91,14 +91,14 @@ describe("project inspection commands", () => {
     expect(capture.stdout.join("")).toContain("api   running");
   });
 
-  test("gets a numeric project directly and emits compact JSON", async () => {
-    const paths = configureClient(() => Response.json(project));
+  test("gets a numeric project ID and emits compact JSON", async () => {
+    const paths = configureClient(() => Response.json([project]));
     const capture = captureOutput();
 
     const exitCode = await projectGetCommand(["7", "--json"], capture.output);
 
     expect(exitCode).toBe(0);
-    expect(paths).toEqual(["/api/projects/7"]);
+    expect(paths).toEqual(["/api/projects"]);
     expect(capture.stdout).toEqual([`${JSON.stringify(project)}\n`]);
     expect(capture.stderr).toEqual([]);
   });
@@ -114,6 +114,17 @@ describe("project inspection commands", () => {
     expect(JSON.parse(capture.stdout.join(""))).toEqual(project);
   });
 
+  test("prefers an exact numeric project name over the same project ID", async () => {
+    const numericName = { ...project, id: 8, name: "7" };
+    configureClient(() => Response.json([project, numericName]));
+    const capture = captureOutput();
+
+    const exitCode = await projectGetCommand(["7", "--json"], capture.output);
+
+    expect(exitCode).toBe(0);
+    expect(JSON.parse(capture.stdout.join(""))).toEqual(numericName);
+  });
+
   test("returns a structured not-found error for agents", async () => {
     configureClient(() => Response.json([]));
     const capture = captureOutput();
@@ -126,12 +137,12 @@ describe("project inspection commands", () => {
   });
 
   test("preserves API errors and rejects extra arguments", async () => {
-    configureClient(() => Response.json({ error: "Not found" }, { status: 404 }));
+    configureClient(() => Response.json({ error: "Unavailable" }, { status: 503 }));
     const apiCapture = captureOutput();
     const argumentCapture = captureOutput();
 
     expect(await projectGetCommand(["7", "--json"], apiCapture.output)).toBe(1);
-    expect(apiCapture.stderr).toEqual(['{"error":"Not found","status":404}\n']);
+    expect(apiCapture.stderr).toEqual(['{"error":"Unavailable","status":503}\n']);
     expect(await projectGetCommand(["api", "extra", "--json"], argumentCapture.output)).toBe(1);
     expect(argumentCapture.stderr).toEqual(['{"error":"Unexpected argument: extra"}\n']);
   });

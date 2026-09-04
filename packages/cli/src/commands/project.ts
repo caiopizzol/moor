@@ -1,5 +1,5 @@
 import type { Project } from "../../../contract/src/index";
-import { apiGet, readErrorMessage } from "../client";
+import { apiGet, clientConfigError, readErrorMessage } from "../client";
 
 export const PROJECT_USAGE = `Usage:
   moor project list [--json]
@@ -49,19 +49,14 @@ export async function projectGetCommand(
   if (!parsed.project)
     return argumentError(parsed.error ?? "Project is required", parsed.json, output);
 
-  let project: Project | undefined;
-  if (/^\d+$/.test(parsed.project)) {
-    const result = await fetchJson<Project>(`/api/projects/${parsed.project}`, parsed.json, output);
-    if (!result.ok) return 1;
-    project = result.value;
-  } else {
-    const result = await fetchJson<Project[]>("/api/projects", parsed.json, output);
-    if (!result.ok) return 1;
-    project = result.value.find((candidate) => candidate.name === parsed.project);
-    if (!project) {
-      writeError(`Project "${parsed.project}" not found`, undefined, parsed.json, output);
-      return 1;
-    }
+  const result = await fetchJson<Project[]>("/api/projects", parsed.json, output);
+  if (!result.ok) return 1;
+  const project =
+    result.value.find((candidate) => candidate.name === parsed.project) ??
+    result.value.find((candidate) => String(candidate.id) === parsed.project);
+  if (!project) {
+    writeError(`Project "${parsed.project}" not found`, undefined, parsed.json, output);
+    return 1;
   }
 
   output.stdout(`${JSON.stringify(project, null, parsed.json ? undefined : 2)}\n`);
@@ -93,6 +88,11 @@ async function fetchJson<T>(
   json: boolean,
   output: ProjectOutput,
 ): Promise<{ ok: true; value: T } | { ok: false }> {
+  const configError = clientConfigError();
+  if (configError) {
+    writeError(configError, undefined, json, output);
+    return { ok: false };
+  }
   try {
     const response = await apiGet(path);
     if (!response.ok) {

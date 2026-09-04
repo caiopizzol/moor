@@ -67,6 +67,8 @@ moor project get 7 --json
 
 Both commands print one JSON document to stdout in `--json` mode. Failures print a JSON error to stderr and exit nonzero. Without `--json`, `project list` uses the same table as the existing `moor status` alias and `project get` prints readable, indented JSON.
 
+Project selectors accept a name or numeric ID. If a numeric selector matches both, an exact project name takes precedence.
+
 ## `moor project deploy`
 
 Deploy from GitHub or a registry image through the same API operation used by MCP:

@@ -145,7 +145,7 @@ test("project get sends bearer auth and emits the API record as JSON", async () 
         path: new URL(incoming.url).pathname,
         authorization: incoming.headers.get("Authorization"),
       };
-      return Response.json(project);
+      return Response.json([project]);
     },
   });
 
@@ -182,7 +182,7 @@ test("project get sends bearer auth and emits the API record as JSON", async () 
     expect(stderr).toBe("");
     expect(request).toEqual({
       method: "GET",
-      path: "/api/projects/7",
+      path: "/api/projects",
       authorization: "Bearer test-key",
     });
   } finally {
@@ -230,5 +230,44 @@ test("project get propagates a structured API failure to the process exit code",
     expect(stderr).toBe('{"error":"Not found","status":404}\n');
   } finally {
     await server.stop(true);
+  }
+});
+
+test("project list keeps configuration failures valid JSON", async () => {
+  for (const scenario of [
+    {
+      env: { ...globalThis.process.env, MOOR_API_KEY: "test-key", MOOR_URL: undefined },
+      error: "MOOR_URL is not set",
+    },
+    {
+      env: { ...globalThis.process.env, MOOR_API_KEY: undefined, MOOR_URL: "https://moor.test" },
+      error: "MOOR_API_KEY is not set",
+    },
+  ]) {
+    const child = Bun.spawn({
+      cmd: [
+        globalThis.process.execPath,
+        join(import.meta.dir, "index.ts"),
+        "project",
+        "list",
+        "--json",
+      ],
+      env: scenario.env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    if (typeof child.stdout === "number" || typeof child.stderr === "number") {
+      throw new Error("expected piped process output");
+    }
+
+    const [exitCode, stdout, stderr] = await Promise.all([
+      child.exited,
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+    ]);
+
+    expect(exitCode).toBe(1);
+    expect(stdout).toBe("");
+    expect(JSON.parse(stderr)).toEqual({ error: scenario.error });
   }
 });
