@@ -73,4 +73,20 @@ describe("CLI protocol", () => {
     expect(capture.stdout).toEqual([]);
     expect(capture.stderr).toEqual(['{"error":"MOOR_URL is not set"}\n']);
   });
+
+  test("normalizes an interrupted error response body", async () => {
+    const response = new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.error(new Error("response body interrupted"));
+        },
+      }),
+      { status: 502 },
+    );
+
+    expect(JSON.parse(await formatResponseError(response, true))).toEqual({
+      error: "response body interrupted",
+      status: 502,
+    });
+  });
 });

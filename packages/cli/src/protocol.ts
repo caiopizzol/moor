@@ -26,7 +26,13 @@ export function writeError(
 
 export async function formatResponseError(response: Response, json: boolean): Promise<string> {
   const copy = response.clone();
-  const message = await readErrorMessage(response);
+  let message: string;
+  try {
+    message = await readErrorMessage(response);
+  } catch (error) {
+    message = error instanceof Error ? error.message : String(error);
+    return formatError(message, response.status, json);
+  }
   if (!json) return formatError(message, response.status, false);
 
   try {
