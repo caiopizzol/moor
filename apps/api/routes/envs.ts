@@ -8,6 +8,7 @@ import {
   type ProjectActionResult,
   type RestartProjectInput,
   restartProject,
+  withProjectLifecycleLock,
   withProjectLifecycleLocks,
 } from "../deploy";
 import { errorResponse, readJsonObject, responseErrorMessage } from "../http";
@@ -26,8 +27,10 @@ export async function handleEnvs(
   if (keyMatch && req.method === "DELETE") {
     const projectId = Number(keyMatch[1]);
     const key = decodeURIComponent(keyMatch[2]);
-    db.query("DELETE FROM env_vars WHERE project_id = ? AND key = ?").run(projectId, key);
-    return new Response(null, { status: 204 });
+    return await withProjectLifecycleLock(projectId, () => {
+      db.query("DELETE FROM env_vars WHERE project_id = ? AND key = ?").run(projectId, key);
+      return new Response(null, { status: 204 });
+    });
   }
 
   // /api/projects/:id/envs
@@ -41,7 +44,10 @@ export async function handleEnvs(
   }
 
   if (req.method === "PUT") {
-    return Response.json(replaceProjectEnvs(projectId, await req.json()));
+    const vars = await req.json();
+    return await withProjectLifecycleLock(projectId, () =>
+      Response.json(replaceProjectEnvs(projectId, vars)),
+    );
   }
 
   if (req.method === "POST") {

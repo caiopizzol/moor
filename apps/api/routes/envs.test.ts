@@ -4,7 +4,6 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import type { Project, ProjectActionResult, RestartProjectInput } from "../deploy";
 
 const { default: db } = await import("../db");
-const { acquireProjectLifecycleLock } = await import("../deploy");
 const { handleEnvs } = await import("./envs");
 
 function insertProject(status: "running" | "stopped" = "stopped"): Project {
@@ -85,23 +84,44 @@ describe("POST /api/projects/:id/envs", () => {
     expect(restarted).toEqual([project.id]);
   });
 
-  test("holds the project lifecycle lock across the write and restart", async () => {
+  test("serializes PUT and DELETE mutations across a running-project restart", async () => {
     const project = insertProject("running");
-    const release = await acquireProjectLifecycleLock(project.id);
-    let restartCalled = false;
+    db.query("INSERT INTO env_vars (project_id, key, value) VALUES (?, 'A', '1')").run(project.id);
+    let markRestartStarted: () => void = () => {};
+    let finishRestart: () => void = () => {};
+    const restartStarted = new Promise<void>((resolve) => {
+      markRestartStarted = resolve;
+    });
+    const restartGate = new Promise<void>((resolve) => {
+      finishRestart = resolve;
+    });
+    let envsDuringRestart: Array<{ key: string; value: string }> = [];
 
-    const responsePromise = call(project.id, { vars: { A: "1" } }, async () => {
-      restartCalled = true;
+    const postResponse = call(project.id, { vars: { B: "2" } }, async () => {
+      markRestartStarted();
+      await restartGate;
+      envsDuringRestart = envs(project.id);
       return { kind: "json", body: { message: "Container restarted" } };
     });
-    await Bun.sleep(0);
-    expect(envs(project.id)).toEqual([]);
-    expect(restartCalled).toBe(false);
+    await restartStarted;
 
-    release();
-    expect((await responsePromise).status).toBe(200);
-    expect(envs(project.id)).toEqual([{ key: "A", value: "1" }]);
-    expect(restartCalled).toBe(true);
+    const putUrl = new URL(`http://localhost/api/projects/${project.id}/envs`);
+    const putResponse = handleEnvs(
+      { method: "PUT", json: async () => [{ key: "C", value: "3" }] } as Request,
+      putUrl,
+    );
+    const deleteUrl = new URL(`http://localhost/api/projects/${project.id}/envs/A`);
+    const deleteResponse = handleEnvs(new Request(deleteUrl, { method: "DELETE" }), deleteUrl);
+    await Promise.resolve();
+
+    finishRestart();
+    expect((await postResponse).status).toBe(200);
+    expect((await putResponse)?.status).toBe(200);
+    expect((await deleteResponse)?.status).toBe(204);
+    expect(envsDuringRestart).toEqual([
+      { key: "A", value: "1" },
+      { key: "B", value: "2" },
+    ]);
   });
 
   test("reports that values were saved when restart fails", async () => {
