@@ -1,6 +1,96 @@
 import { expect, test } from "bun:test";
 import { join } from "node:path";
 
+test("restart preserves JSON output, authentication, selectors, and failure exit codes", async () => {
+  const requests: Array<{ method: string; path: string; authorization: string | null }> = [];
+  let failRestart = false;
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch(request) {
+      const path = new URL(request.url).pathname;
+      requests.push({
+        method: request.method,
+        path,
+        authorization: request.headers.get("Authorization"),
+      });
+      if (path === "/api/projects")
+        return Response.json([
+          { id: 7, name: "worker" },
+          { id: 8, name: "7" },
+        ]);
+      if (request.method === "POST" && path === "/api/projects/8/restart") {
+        return failRestart
+          ? Response.json({ error: "Draining", code: "drain" }, { status: 503 })
+          : Response.json({ message: "Container restarted" });
+      }
+      return Response.json({ error: "Unexpected request" }, { status: 404 });
+    },
+  });
+  const run = async (args: string[]) => {
+    const child = Bun.spawn({
+      cmd: [process.execPath, join(import.meta.dir, "index.ts"), "restart", ...args],
+      env: { ...process.env, MOOR_URL: server.url.origin, MOOR_API_KEY: "test-key" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [exitCode, stdout, stderr] = await Promise.all([
+      child.exited,
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+    ]);
+    return { exitCode, stdout, stderr };
+  };
+  try {
+    expect(await run(["7", "--json"])).toEqual({
+      exitCode: 0,
+      stdout: '{"message":"Container restarted"}\n',
+      stderr: "",
+    });
+    failRestart = true;
+    expect(await run(["--json", "7"])).toEqual({
+      exitCode: 1,
+      stdout: "",
+      stderr: '{"error":"Draining","code":"drain","status":503}\n',
+    });
+    expect(requests).toEqual([
+      { method: "GET", path: "/api/projects", authorization: "Bearer test-key" },
+      { method: "POST", path: "/api/projects/8/restart", authorization: "Bearer test-key" },
+      { method: "GET", path: "/api/projects", authorization: "Bearer test-key" },
+      { method: "POST", path: "/api/projects/8/restart", authorization: "Bearer test-key" },
+    ]);
+    requests.length = 0;
+    expect(await run(["missing", "--json"])).toEqual({
+      exitCode: 1,
+      stdout: "",
+      stderr: '{"error":"Project \\"missing\\" not found"}\n',
+    });
+    expect(requests.map(({ method, path }) => ({ method, path }))).toEqual([
+      { method: "GET", path: "/api/projects" },
+    ]);
+    requests.length = 0;
+    for (const [args, error] of [
+      [["--json"], "Project is required"],
+      [["7", "extra", "--json"], "Unexpected argument: extra"],
+      [["7", "--unknown", "--json"], "Unknown option: --unknown"],
+    ] as const) {
+      expect(await run([...args])).toEqual({
+        exitCode: 1,
+        stdout: "",
+        stderr: `${JSON.stringify({ error })}\n`,
+      });
+    }
+    expect(await run(["--help"])).toEqual({
+      exitCode: 0,
+      stdout: "Usage: moor restart <project> [--json]\n",
+      stderr: "",
+    });
+    expect(requests).toEqual([]);
+  } finally {
+    await server.stop(true);
+  }
+});
+
 test("project deploy propagates a JSON API failure to the process exit code", async () => {
   let request:
     | {

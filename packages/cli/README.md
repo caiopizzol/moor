@@ -45,7 +45,7 @@ moor project list [--json]           # list projects
 moor project get <name|id> [--json]  # get one project
 moor logs <project> [-f] [-n 100] [--json] # view container logs
 moor rebuild <project>               # rebuild from source
-moor restart <project>               # stop + start
+moor restart <project> [--json]      # stop + start
 moor exec <project> <command>        # run a command in the container
 moor env list <project> [--json]     # list environment variables
 moor env set <project> KEY=VALUE     # set environment variables (human mode)
@@ -81,6 +81,10 @@ moor logs api -n 100 --json
 Success prints the API response as one JSON document with `logs`, `lastTimestamp`, and `state` (`ok`, `exited`, `no_container`, or `missing`). Failures print structured JSON to stderr and exit nonzero. Exact project names take precedence over numeric IDs, matching `moor project get`.
 
 `--json` cannot be combined with `--follow` yet. Use `moor logs api --follow` for the existing human-readable polling mode; a later streaming slice will define JSONL follow events.
+
+## Restart
+
+`moor restart api --json` returns the API response as one JSON document. Errors go to stderr with a non-zero exit code. Unknown options and extra arguments are rejected. Without `--json`, the existing progress messages are preserved.
 
 ## Environment variables
 
