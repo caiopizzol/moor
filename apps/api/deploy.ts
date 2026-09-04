@@ -65,7 +65,16 @@ type ContainerStartConfig = {
 export type ProjectActionResult =
   | { kind: "response"; response: Response }
   | { kind: "json"; body: unknown; status?: number }
-  | { kind: "stream"; stream: ReadableStream<Uint8Array> };
+  | {
+      kind: "stream";
+      stream: ReadableStream<Uint8Array>;
+      completion?: Promise<void>;
+    };
+
+export type DeployProjectInput = {
+  noCache: boolean;
+  lifecycleLockHeld?: boolean;
+};
 
 export type BuildRunLike = {
   readonly abort: AbortController;
@@ -135,27 +144,59 @@ function makeDeployDeps(partialDeps?: Partial<DeployDeps>): DeployDeps {
 
 // Fixed-name replacement is destructive, so start, stop, restart, deploy,
 // and project deletion queue through one critical section per project.
-const projectLifecycleTails = new Map<number, Promise<void>>();
+const projectLifecycleTails = new Map<string, Promise<void>>();
 
-export async function withProjectLifecycleLock<T>(
-  projectId: number,
-  run: () => Promise<T>,
-): Promise<T> {
-  const previous = projectLifecycleTails.get(projectId) ?? Promise.resolve();
+async function acquireLifecycleLock(key: string): Promise<() => void> {
+  const previous = projectLifecycleTails.get(key) ?? Promise.resolve();
   let release: () => void = () => {};
   const current = new Promise<void>((resolve) => {
     release = resolve;
   });
-  projectLifecycleTails.set(projectId, current);
+  projectLifecycleTails.set(key, current);
 
   await previous;
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    release();
+    if (projectLifecycleTails.get(key) === current) {
+      projectLifecycleTails.delete(key);
+    }
+  };
+}
+
+export function acquireProjectLifecycleLock(projectId: number): Promise<() => void> {
+  return acquireLifecycleLock(`id:${projectId}`);
+}
+
+export function acquireProjectNameLifecycleLock(projectName: string): Promise<() => void> {
+  return acquireLifecycleLock(`name:${projectName}`);
+}
+
+export async function withProjectLifecycleLock<T>(
+  projectId: number,
+  run: () => Promise<T> | T,
+): Promise<T> {
+  const release = await acquireProjectLifecycleLock(projectId);
   try {
     return await run();
   } finally {
     release();
-    if (projectLifecycleTails.get(projectId) === current) {
-      projectLifecycleTails.delete(projectId);
-    }
+  }
+}
+
+export async function withProjectLifecycleLocks<T>(
+  project: Pick<Project, "id" | "name">,
+  run: () => Promise<T> | T,
+): Promise<T> {
+  const releaseName = await acquireProjectNameLifecycleLock(project.name);
+  const releaseId = await acquireProjectLifecycleLock(project.id);
+  try {
+    return await run();
+  } finally {
+    releaseId();
+    releaseName();
   }
 }
 
@@ -260,7 +301,7 @@ async function createStartAndRecord(
 
 export async function deployProject(
   project: Project,
-  input: { noCache: boolean },
+  input: DeployProjectInput,
   partialDeps?: Partial<DeployDeps>,
 ): Promise<ProjectActionResult> {
   const deps = makeDeployDeps(partialDeps);
@@ -281,7 +322,9 @@ export async function deployProject(
   if (!project.github_url && !project.docker_image) {
     if (project.image_tag) {
       console.log("[run] no source, starting existing image");
-      return startProject(project, deps);
+      return input.lifecycleLockHeld
+        ? startProjectAfterDrainCheck(project, deps)
+        : startProject(project, deps);
     }
     console.log("[run] no source or image_tag — nothing to do");
     return errorResult("No GitHub URL or Docker image configured", 400);
@@ -324,6 +367,10 @@ export async function deployProject(
   // Stream build/pull output via SSE
   let streamClosed = false;
   let keepalive: ReturnType<typeof setInterval> | null = null;
+  let markComplete: () => void = () => {};
+  const completion = new Promise<void>((resolve) => {
+    markComplete = resolve;
+  });
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       const encoder = new TextEncoder();
@@ -360,7 +407,7 @@ export async function deployProject(
         }
       }, 5000);
 
-      await withProjectLifecycleLock(project.id, async () => {
+      const runLifecycle = async () => {
         const drained = deps.requireNotDraining();
         if (drained) {
           send("error", await responseErrorMessage(drained));
@@ -475,9 +522,16 @@ export async function deployProject(
           run.finalize(1);
           send("error", message);
         }
-      });
+      };
 
-      safeClose();
+      try {
+        if (input.lifecycleLockHeld) await runLifecycle();
+        else await withProjectLifecycleLocks(project, runLifecycle);
+        safeClose();
+      } finally {
+        if (keepalive !== null) clearInterval(keepalive);
+        markComplete();
+      }
     },
     cancel() {
       if (keepalive !== null) clearInterval(keepalive);
@@ -488,7 +542,7 @@ export async function deployProject(
     },
   });
 
-  return { kind: "stream", stream };
+  return { kind: "stream", stream, completion };
 }
 
 export async function buildProject(
@@ -585,7 +639,7 @@ export async function startProject(
 ): Promise<ProjectActionResult> {
   const deps = makeDeployDeps(partialDeps);
 
-  return withProjectLifecycleLock(project.id, async () => {
+  return withProjectLifecycleLocks(project, async () => {
     // #79: drain-mode gate. Starting a container is "new work" from
     // moor's perspective - same gate as deploy/build. Stop/logs stay
     // open so operators can quiesce things during drain.
@@ -650,7 +704,7 @@ export async function restartProject(
 ): Promise<ProjectActionResult> {
   const deps = makeDeployDeps(partialDeps);
 
-  return withProjectLifecycleLock(project.id, async () => {
+  return withProjectLifecycleLocks(project, async () => {
     const currentProject = refreshProjectLifecycleState(project, deps);
     if (!currentProject) return errorResult("Not found", 404);
 
@@ -678,7 +732,7 @@ export async function stopProject(
 ): Promise<ProjectActionResult> {
   const deps = makeDeployDeps(partialDeps);
 
-  return withProjectLifecycleLock(project.id, () => stopProjectAfterLifecycleLock(project, deps));
+  return withProjectLifecycleLocks(project, () => stopProjectAfterLifecycleLock(project, deps));
 }
 
 async function stopProjectAfterLifecycleLock(

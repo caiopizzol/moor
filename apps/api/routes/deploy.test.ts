@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import type { Project, ProjectActionResult } from "../deploy";
 
 const { default: db } = await import("../db");
+const { withProjectLifecycleLock } = await import("../deploy");
 const { handleDeploy } = await import("./deploy");
 
 function sseStream(text: string): ReadableStream<Uint8Array> {
@@ -146,6 +147,22 @@ describe("POST /api/deploy", () => {
     expect(db.query("SELECT id FROM projects").get()).toBeNull();
   });
 
+  test("rejects conflicting volumes within one request before creating a project", async () => {
+    const response = await call({
+      name: "app",
+      docker_image: "nginx:alpine",
+      volumes: [
+        { name: "data", target: "/shared" },
+        { name: "cache", target: "/shared" },
+      ],
+      run: false,
+    });
+
+    expect(response.status).toBe(400);
+    expect(db.query("SELECT id FROM projects").get()).toBeNull();
+    expect(db.query("SELECT id FROM project_volumes").get()).toBeNull();
+  });
+
   test("validates project metadata types before creating a project", async () => {
     const invalidMetadata = [
       { domain: 123 },
@@ -246,6 +263,10 @@ describe("POST /api/deploy", () => {
 
   test("cancelling the deploy response cancels the wrapped run stream", async () => {
     let cancelledWith: unknown;
+    let markComplete: () => void = () => {};
+    const completion = new Promise<void>((resolve) => {
+      markComplete = resolve;
+    });
     const inner = new ReadableStream<Uint8Array>({
       cancel(reason) {
         cancelledWith = reason;
@@ -255,7 +276,7 @@ describe("POST /api/deploy", () => {
       { name: "app", docker_image: "nginx:alpine" },
       {
         requireNotDraining: () => null,
-        runProject: async () => ({ kind: "stream", stream: inner }),
+        runProject: async () => ({ kind: "stream", stream: inner, completion }),
       },
     );
     const reader = response.body?.getReader();
@@ -263,9 +284,121 @@ describe("POST /api/deploy", () => {
 
     const first = await reader.read();
     expect(new TextDecoder().decode(first.value)).toStartWith("event: deploy\n");
-    await reader.cancel("client disconnected");
+    const cancellation = reader.cancel("client disconnected");
+
+    const project = db.query("SELECT id FROM projects WHERE name = 'app'").get() as { id: number };
+    let competingLifecycleRan = false;
+    const competing = withProjectLifecycleLock(project.id, () => {
+      competingLifecycleRan = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(cancelledWith).toBe("client disconnected");
+    expect(competingLifecycleRan).toBe(false);
+
+    markComplete();
+    await cancellation;
+    await competing;
+    expect(competingLifecycleRan).toBe(true);
+  });
+
+  test("rechecks drain after waiting for an active project lifecycle", async () => {
+    const project = db
+      .query(
+        "INSERT INTO projects (name, docker_image, branch) VALUES ('app', 'nginx:old', 'main') RETURNING id",
+      )
+      .get() as { id: number };
+    let releaseActive: () => void = () => {};
+    let markActive: () => void = () => {};
+    const activeGate = new Promise<void>((resolve) => {
+      releaseActive = resolve;
+    });
+    const activeStarted = new Promise<void>((resolve) => {
+      markActive = resolve;
+    });
+    const active = withProjectLifecycleLock(project.id, async () => {
+      markActive();
+      await activeGate;
+    });
+    await activeStarted;
+
+    let drainCalls = 0;
+    let draining = false;
+    let markFirstDrain: () => void = () => {};
+    const firstDrain = new Promise<void>((resolve) => {
+      markFirstDrain = resolve;
+    });
+    const pending = call(
+      {
+        name: "app",
+        docker_image: "nginx:new",
+        update_existing: true,
+      },
+      {
+        requireNotDraining: () => {
+          drainCalls += 1;
+          markFirstDrain();
+          return draining ? Response.json({ error: "moor is draining" }, { status: 503 }) : null;
+        },
+        runProject: async () => ({ kind: "json", body: { message: "started" } }),
+      },
+    );
+    await firstDrain;
+    draining = true;
+    releaseActive();
+    await active;
+
+    const response = await pending;
+    expect(response.status).toBe(503);
+    expect(drainCalls).toBe(2);
+    expect(db.query("SELECT docker_image FROM projects WHERE id = ?").get(project.id)).toEqual({
+      docker_image: "nginx:old",
+    });
+  });
+
+  test("holds the project lifecycle lock until the deploy stream finishes", async () => {
+    const project = db
+      .query(
+        "INSERT INTO projects (name, docker_image, branch) VALUES ('app', 'nginx:old', 'main') RETURNING id",
+      )
+      .get() as { id: number };
+    let closeRunStream: () => void = () => {};
+    let markRunStarted: () => void = () => {};
+    const runStarted = new Promise<void>((resolve) => {
+      markRunStarted = resolve;
+    });
+    const response = await call(
+      {
+        name: "app",
+        docker_image: "nginx:new",
+        update_existing: true,
+      },
+      {
+        requireNotDraining: () => null,
+        runProject: async () => ({
+          kind: "stream",
+          stream: new ReadableStream<Uint8Array>({
+            start(controller) {
+              closeRunStream = () => controller.close();
+              markRunStarted();
+            },
+          }),
+        }),
+      },
+    );
+    await runStarted;
+
+    let competingLifecycleRan = false;
+    const competing = withProjectLifecycleLock(project.id, () => {
+      competingLifecycleRan = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(competingLifecycleRan).toBe(false);
+
+    closeRunStream();
+    await response.text();
+    await competing;
+    expect(competingLifecycleRan).toBe(true);
   });
 
   test("accepts an identical existing volume but rejects target drift", async () => {

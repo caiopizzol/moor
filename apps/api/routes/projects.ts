@@ -5,7 +5,7 @@ import type {
 import { syncCaddyRoutes } from "../caddy";
 import { parseStringArray, serializeStringArray, validateStringArray } from "../container-config";
 import db from "../db";
-import { withProjectLifecycleLock } from "../deploy";
+import { withProjectLifecycleLock, withProjectLifecycleLocks } from "../deploy";
 import { removeContainer, removeVolume, stopContainer } from "../docker";
 import { errorResponse, responseErrorMessage } from "../http";
 import { reconcileGithubUrl, redactCredentials, serializeProject } from "../redact";
@@ -93,40 +93,44 @@ export async function handleProjects(req: Request, url: URL): Promise<Response |
   }
 
   if (req.method === "DELETE" && id) {
-    const { hadDomain, purgeVolumes, volumeNames } = await withProjectLifecycleLock(
-      id,
-      async () => {
-        // Stop and remove the container before deleting the project. The query
-        // happens inside the lifecycle lock so it sees the latest replacement.
-        const project = db
-          .query("SELECT container_id, domain FROM projects WHERE id = ?")
-          .get(id) as {
-          container_id: string | null;
-          domain: string | null;
-        } | null;
-        if (project?.container_id) {
-          try {
-            await stopContainer(project.container_id);
-            await removeContainer(project.container_id);
-          } catch {
-            // best effort — container may already be gone
-          }
+    const projectIdentity = db.query("SELECT id, name FROM projects WHERE id = ?").get(id) as {
+      id: number;
+      name: string;
+    } | null;
+    const deleteProject = async () => {
+      // Stop and remove the container before deleting the project. The query
+      // happens inside the lifecycle lock so it sees the latest replacement.
+      const project = db
+        .query("SELECT container_id, domain FROM projects WHERE id = ?")
+        .get(id) as {
+        container_id: string | null;
+        domain: string | null;
+      } | null;
+      if (project?.container_id) {
+        try {
+          await stopContainer(project.container_id);
+          await removeContainer(project.container_id);
+        } catch {
+          // best effort — container may already be gone
         }
+      }
 
-        // #35: purge_volumes is an explicit destructive opt-in. By default the
-        // project's named Docker volumes are preserved (so a recreated project of
-        // the same name could remount them, and the operator never loses data to
-        // a misclick). Volume docker_names must be collected BEFORE the project
-        // row is deleted — the ON DELETE CASCADE wipes project_volumes too.
-        const url2 = new URL(req.url);
-        const purgeVolumes = url2.searchParams.get("purge_volumes") === "true";
-        const volumeNames = purgeVolumes ? collectProjectVolumeDockerNames(id) : [];
-        const hadDomain = !!project?.domain;
-        db.query("DELETE FROM projects WHERE id = ?").run(id);
+      // #35: purge_volumes is an explicit destructive opt-in. By default the
+      // project's named Docker volumes are preserved (so a recreated project of
+      // the same name could remount them, and the operator never loses data to
+      // a misclick). Volume docker_names must be collected BEFORE the project
+      // row is deleted — the ON DELETE CASCADE wipes project_volumes too.
+      const url2 = new URL(req.url);
+      const purgeVolumes = url2.searchParams.get("purge_volumes") === "true";
+      const volumeNames = purgeVolumes ? collectProjectVolumeDockerNames(id) : [];
+      const hadDomain = !!project?.domain;
+      db.query("DELETE FROM projects WHERE id = ?").run(id);
 
-        return { hadDomain, purgeVolumes, volumeNames };
-      },
-    );
+      return { hadDomain, purgeVolumes, volumeNames };
+    };
+    const { hadDomain, purgeVolumes, volumeNames } = projectIdentity
+      ? await withProjectLifecycleLocks(projectIdentity, deleteProject)
+      : await withProjectLifecycleLock(id, deleteProject);
 
     // Both Caddy sync and volume purge attempt UNCONDITIONALLY. We must not
     // return early on Caddy failure if a purge was requested: by this point

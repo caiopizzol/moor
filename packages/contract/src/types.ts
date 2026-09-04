@@ -49,12 +49,7 @@ export type DeployRequest = Omit<CreateProjectRequest, "github_url" | "docker_im
   github_url?: string;
   docker_image?: string;
   volumes?: Array<{ name: string; target: string }>;
-  files?: Array<{
-    path: string;
-    content?: string;
-    env_ref?: string;
-    mode?: string;
-  }>;
+  files?: CreateProjectFileRequest[];
   env?: Record<string, string>;
   run?: boolean;
   update_existing?: boolean;

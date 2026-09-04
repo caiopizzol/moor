@@ -12,7 +12,14 @@ import {
   validateStringArray,
 } from "../container-config";
 import db from "../db";
-import { deployProject, type Project, type ProjectActionResult } from "../deploy";
+import {
+  acquireProjectLifecycleLock,
+  acquireProjectNameLifecycleLock,
+  type DeployProjectInput,
+  deployProject,
+  type Project,
+  type ProjectActionResult,
+} from "../deploy";
 import { requireNotDraining } from "../drain";
 import { errorResponse, readJsonObject, responseErrorMessage } from "../http";
 import { validateCpus, validateMemoryLimitMb } from "../resource-limits";
@@ -24,7 +31,7 @@ import { addProjectVolume } from "./volumes";
 
 type DeployRouteDeps = {
   requireNotDraining: () => Response | null;
-  runProject: (project: Project, input: { noCache: boolean }) => Promise<ProjectActionResult>;
+  runProject: (project: Project, input: DeployProjectInput) => Promise<ProjectActionResult>;
 };
 
 const defaultDeps: DeployRouteDeps = {
@@ -67,136 +74,159 @@ export async function handleDeploy(
     if (drained) return drained;
   }
 
-  const existing = db
-    .query("SELECT * FROM projects WHERE name = ?")
-    .get(input.name) as Project | null;
-  if (existing && !input.update_existing) {
-    return errorResponse(
-      `Project "${input.name}" already exists. Pass update_existing: true to update it.`,
-      409,
-    );
-  }
-  if (!existing) {
-    const sources = (input.github_url ? 1 : 0) + (input.docker_image ? 1 : 0);
-    if (sources !== 1) {
-      return errorResponse("Provide exactly one of github_url or docker_image", 400);
-    }
-  }
-
-  const normalizedDomain =
-    input.domain === undefined ? undefined : input.domain?.trim().toLowerCase() || null;
-  if (normalizedDomain) {
-    const conflict = db
-      .query("SELECT id, name FROM projects WHERE lower(trim(domain)) = ? AND id != ? LIMIT 1")
-      .get(normalizedDomain, existing?.id ?? -1) as { id: number; name: string } | null;
-    if (conflict) {
-      return errorResponse(
-        `Domain "${normalizedDomain}" is already used by project "${conflict.name}" (id=${conflict.id}). Refusing before Caddy reload.`,
-        409,
-      );
-    }
-  }
-
-  let projectId: number;
-  let projectName: string;
-  let action: DeploySummary["action"];
-  if (existing) {
-    const updateBody: Record<string, unknown> = {};
-    for (const key of METADATA_KEYS) {
-      if (key in input) updateBody[key] = input[key];
-    }
-    if (normalizedDomain !== undefined) updateBody.domain = normalizedDomain;
-    if (Object.keys(updateBody).length > 0) {
-      const response = await updateProject(existing.id, updateBody as UpdateProjectRequest);
-      if (!response.ok) return await stepError("update", response);
-    }
-    projectId = existing.id;
-    projectName = existing.name;
-    action = "updated";
-  } else {
-    const createBody: Record<string, unknown> = { name: input.name };
-    for (const key of METADATA_KEYS) {
-      if (key in input) createBody[key] = input[key];
-    }
-    if (normalizedDomain !== undefined) createBody.domain = normalizedDomain;
-    const response = await createProject(createBody as CreateProjectRequest);
-    if (!response.ok) return await stepError("create", response);
-    const created = (await response.json()) as { id: number; name: string };
-    projectId = created.id;
-    projectName = created.name;
-    action = "created";
-  }
-
-  for (const volume of input.volumes ?? []) {
-    const response = addProjectVolume({ id: projectId, name: projectName }, volume);
-    if (response.ok) continue;
-    const message = await responseErrorMessage(response);
-    if (response.status !== 409) {
-      return errorResponse(`[volumes] failed to add ${volume.name}: ${message}`, response.status);
-    }
-    const match = db
-      .query("SELECT target FROM project_volumes WHERE project_id = ? AND name = ?")
-      .get(projectId, volume.name) as { target: string } | null;
-    if (!match) {
-      return errorResponse(
-        `[volumes] conflict adding ${volume.name}: ${message} (no existing volume by that name; check for target collision)`,
-        409,
-      );
-    }
-    if (match.target !== volume.target) {
-      return errorResponse(
-        `[volumes] conflict adding ${volume.name}: existing target "${match.target}" differs from requested "${volume.target}". moor_deploy does not change mount targets; use moor_volume_remove + moor_volume_add explicitly.`,
-        409,
-      );
-    }
-  }
-
-  for (const file of input.files ?? []) {
-    const response = setProjectFile(projectId, file);
-    if (!response.ok) {
-      return errorResponse(
-        `[files] failed to set ${file.path}: ${await responseErrorMessage(response)}`,
-        response.status,
-      );
-    }
-  }
-
-  const envEntries = Object.entries(input.env ?? {});
-  if (envEntries.length > 0) {
-    const merged = new Map(listProjectEnvs(projectId).map(({ key, value }) => [key, value]));
-    for (const [key, value] of envEntries) merged.set(key, value);
-    replaceProjectEnvs(
-      projectId,
-      Array.from(merged, ([key, value]) => ({ key, value })),
-    );
-  }
-
-  const summary: DeploySummary = {
-    action,
-    project_id: projectId,
-    project_name: projectName,
-    env_keys: envEntries.map(([key]) => key),
-    run: shouldRun,
-    env_changes_pending_restart:
-      !shouldRun && envEntries.length > 0 && existing?.status === "running",
+  const releaseNameLock = await acquireProjectNameLifecycleLock(input.name);
+  let releaseIdLock: (() => void) | undefined;
+  let streamOwnsLocks = false;
+  const releaseLocks = () => {
+    releaseIdLock?.();
+    releaseNameLock();
   };
 
-  if (!shouldRun) return deployStreamResponse(summary);
+  try {
+    const existing = db
+      .query("SELECT * FROM projects WHERE name = ?")
+      .get(input.name) as Project | null;
+    if (existing && !input.update_existing) {
+      return errorResponse(
+        `Project "${input.name}" already exists. Pass update_existing: true to update it.`,
+        409,
+      );
+    }
+    if (!existing) {
+      const sources = (input.github_url ? 1 : 0) + (input.docker_image ? 1 : 0);
+      if (sources !== 1) {
+        return errorResponse("Provide exactly one of github_url or docker_image", 400);
+      }
+    }
 
-  const project = db.query("SELECT * FROM projects WHERE id = ?").get(projectId) as Project | null;
-  if (!project) return errorResponse("[run] Project not found after configuration", 500);
-  const result = await deps.runProject(project, { noCache: false });
-  if (result.kind === "response") return await stepError("run", result.response);
-  if (result.kind === "json" && result.status !== undefined && result.status >= 400) {
-    const error = `[run] ${JSON.stringify(result.body) ?? String(result.body)}`;
-    return isObject(result.body)
-      ? Response.json({ ...result.body, error }, { status: result.status })
-      : errorResponse(error, result.status);
+    if (existing) releaseIdLock = await acquireProjectLifecycleLock(existing.id);
+    if (shouldRun) {
+      const drained = deps.requireNotDraining();
+      if (drained) return drained;
+    }
+
+    const normalizedDomain =
+      input.domain === undefined ? undefined : input.domain?.trim().toLowerCase() || null;
+    if (normalizedDomain) {
+      const conflict = db
+        .query("SELECT id, name FROM projects WHERE lower(trim(domain)) = ? AND id != ? LIMIT 1")
+        .get(normalizedDomain, existing?.id ?? -1) as { id: number; name: string } | null;
+      if (conflict) {
+        return errorResponse(
+          `Domain "${normalizedDomain}" is already used by project "${conflict.name}" (id=${conflict.id}). Refusing before Caddy reload.`,
+          409,
+        );
+      }
+    }
+
+    let projectId: number;
+    let projectName: string;
+    let action: DeploySummary["action"];
+    if (existing) {
+      const updateBody: Record<string, unknown> = {};
+      for (const key of METADATA_KEYS) {
+        if (key in input) updateBody[key] = input[key];
+      }
+      if (normalizedDomain !== undefined) updateBody.domain = normalizedDomain;
+      if (Object.keys(updateBody).length > 0) {
+        const response = await updateProject(existing.id, updateBody as UpdateProjectRequest);
+        if (!response.ok) return await stepError("update", response);
+      }
+      projectId = existing.id;
+      projectName = existing.name;
+      action = "updated";
+    } else {
+      const createBody: Record<string, unknown> = { name: input.name };
+      for (const key of METADATA_KEYS) {
+        if (key in input) createBody[key] = input[key];
+      }
+      if (normalizedDomain !== undefined) createBody.domain = normalizedDomain;
+      const response = await createProject(createBody as CreateProjectRequest);
+      if (!response.ok) return await stepError("create", response);
+      const created = (await response.json()) as { id: number; name: string };
+      projectId = created.id;
+      projectName = created.name;
+      action = "created";
+      releaseIdLock = await acquireProjectLifecycleLock(projectId);
+    }
+
+    for (const volume of input.volumes ?? []) {
+      const response = addProjectVolume({ id: projectId, name: projectName }, volume);
+      if (response.ok) continue;
+      const message = await responseErrorMessage(response);
+      if (response.status !== 409) {
+        return errorResponse(`[volumes] failed to add ${volume.name}: ${message}`, response.status);
+      }
+      const match = db
+        .query("SELECT target FROM project_volumes WHERE project_id = ? AND name = ?")
+        .get(projectId, volume.name) as { target: string } | null;
+      if (!match) {
+        return errorResponse(
+          `[volumes] conflict adding ${volume.name}: ${message} (no existing volume by that name; check for target collision)`,
+          409,
+        );
+      }
+      if (match.target !== volume.target) {
+        return errorResponse(
+          `[volumes] conflict adding ${volume.name}: existing target "${match.target}" differs from requested "${volume.target}". moor_deploy does not change mount targets; use moor_volume_remove + moor_volume_add explicitly.`,
+          409,
+        );
+      }
+    }
+
+    for (const file of input.files ?? []) {
+      const response = setProjectFile(projectId, file);
+      if (!response.ok) {
+        return errorResponse(
+          `[files] failed to set ${file.path}: ${await responseErrorMessage(response)}`,
+          response.status,
+        );
+      }
+    }
+
+    const envEntries = Object.entries(input.env ?? {});
+    if (envEntries.length > 0) {
+      const merged = new Map(listProjectEnvs(projectId).map(({ key, value }) => [key, value]));
+      for (const [key, value] of envEntries) merged.set(key, value);
+      replaceProjectEnvs(
+        projectId,
+        Array.from(merged, ([key, value]) => ({ key, value })),
+      );
+    }
+
+    const summary: DeploySummary = {
+      action,
+      project_id: projectId,
+      project_name: projectName,
+      env_keys: envEntries.map(([key]) => key),
+      run: shouldRun,
+      env_changes_pending_restart:
+        !shouldRun && envEntries.length > 0 && existing?.status === "running",
+    };
+
+    if (!shouldRun) return deployStreamResponse(summary);
+
+    const project = db
+      .query("SELECT * FROM projects WHERE id = ?")
+      .get(projectId) as Project | null;
+    if (!project) return errorResponse("[run] Project not found after configuration", 500);
+    const result = await deps.runProject(project, { noCache: false, lifecycleLockHeld: true });
+    if (result.kind === "response") return await stepError("run", result.response);
+    if (result.kind === "json" && result.status !== undefined && result.status >= 400) {
+      const error = `[run] ${JSON.stringify(result.body) ?? String(result.body)}`;
+      return isObject(result.body)
+        ? Response.json({ ...result.body, error }, { status: result.status })
+        : errorResponse(error, result.status);
+    }
+    if (result.kind === "json") {
+      return deployStreamResponse(summary, eventStream("done", result.body));
+    }
+    const response = deployStreamResponse(summary, result.stream, result.completion, releaseLocks);
+    streamOwnsLocks = true;
+    return response;
+  } finally {
+    if (!streamOwnsLocks) releaseLocks();
   }
-  if (result.kind === "json") {
-    return deployStreamResponse(summary, eventStream("done", result.body));
-  }
-  return deployStreamResponse(summary, result.stream);
 }
 
 function validateDeployInput(input: Record<string, unknown>): string | null {
@@ -265,12 +295,26 @@ function validateDeployInput(input: Record<string, unknown>): string | null {
     return "volumes must be an array";
   }
   if (Array.isArray(input.volumes)) {
+    const targetsByName = new Map<string, string>();
+    const namesByTarget = new Map<string, string>();
     for (const volume of input.volumes) {
       if (!isObject(volume)) return "each volume must be an object";
       const nameError = validateVolumeName(volume.name);
       if (nameError) return nameError;
       const targetError = validateVolumeTarget(volume.target);
       if (targetError) return targetError;
+      const name = volume.name as string;
+      const target = volume.target as string;
+      const previousTarget = targetsByName.get(name);
+      if (previousTarget !== undefined && previousTarget !== target) {
+        return `volume "${name}" has conflicting targets "${previousTarget}" and "${target}"`;
+      }
+      const previousName = namesByTarget.get(target);
+      if (previousName !== undefined && previousName !== name) {
+        return `volume target "${target}" is used by both "${previousName}" and "${name}"`;
+      }
+      targetsByName.set(name, target);
+      namesByTarget.set(target, name);
     }
   }
   if (input.files !== undefined && !Array.isArray(input.files)) {
@@ -301,33 +345,53 @@ async function stepError(step: string, response: Response): Promise<Response> {
 function deployStreamResponse(
   summary: DeploySummary,
   inner?: ReadableStream<Uint8Array>,
+  completion?: Promise<void>,
+  finalize: () => void = () => {},
 ): Response {
   const encoder = new TextEncoder();
   let innerReader: ReadableStreamDefaultReader<Uint8Array> | undefined;
   let cancelled = false;
+  let finalized = false;
+  const finalizeOnce = () => {
+    if (finalized) return;
+    finalized = true;
+    finalize();
+  };
+  const finish = async () => {
+    try {
+      await completion;
+    } finally {
+      finalizeOnce();
+    }
+  };
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
-      controller.enqueue(encoder.encode(`event: deploy\ndata: ${JSON.stringify(summary)}\n\n`));
-      if (inner) {
-        innerReader = inner.getReader();
-        try {
+      try {
+        controller.enqueue(encoder.encode(`event: deploy\ndata: ${JSON.stringify(summary)}\n\n`));
+        if (inner) {
+          innerReader = inner.getReader();
           while (!cancelled) {
             const { done, value } = await innerReader.read();
             if (done) break;
             if (!cancelled) controller.enqueue(value);
           }
-        } finally {
-          innerReader.releaseLock();
-          innerReader = undefined;
+        } else {
+          controller.enqueue(encoder.encode('event: done\ndata: "Configuration saved"\n\n'));
         }
-      } else {
-        controller.enqueue(encoder.encode('event: done\ndata: "Configuration saved"\n\n'));
+        if (!cancelled) controller.close();
+      } finally {
+        innerReader?.releaseLock();
+        innerReader = undefined;
+        await finish();
       }
-      if (!cancelled) controller.close();
     },
     async cancel(reason) {
       cancelled = true;
-      await innerReader?.cancel(reason);
+      try {
+        await innerReader?.cancel(reason);
+      } finally {
+        await finish();
+      }
     },
   });
   return new Response(stream, {

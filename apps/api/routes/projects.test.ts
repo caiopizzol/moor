@@ -8,7 +8,7 @@ process.env.MOOR_DB_PATH = ":memory:";
 import { beforeEach, describe, expect, test } from "bun:test";
 
 const { default: db } = await import("../db");
-const { withProjectLifecycleLock } = await import("../deploy");
+const { acquireProjectNameLifecycleLock, withProjectLifecycleLock } = await import("../deploy");
 const { handleProjects } = await import("./projects");
 
 const CREDENTIALED = "https://x-access-token:TOKEN_AAAA@github.com/owner/repo";
@@ -77,6 +77,24 @@ describe("project deletion lifecycle serialization", () => {
     const response = await deletion;
     await activeLifecycle;
     expect(finishedBeforeRelease).toBe(false);
+    expect(response.status).toBe(204);
+    expect(db.query("SELECT id FROM projects WHERE id = ?").get(project.id)).toBeNull();
+  });
+
+  test("waits for active project-name lifecycle work before deleting the project", async () => {
+    const project = insertProject("name-locked-delete", null);
+    const releaseNameLock = await acquireProjectNameLifecycleLock("name-locked-delete");
+
+    let deletionFinished = false;
+    const deletion = call("DELETE", `/api/projects/${project.id}`).then((response) => {
+      deletionFinished = true;
+      return response;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(deletionFinished).toBe(false);
+
+    releaseNameLock();
+    const response = await deletion;
     expect(response.status).toBe(204);
     expect(db.query("SELECT id FROM projects WHERE id = ?").get(project.id)).toBeNull();
   });
