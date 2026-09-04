@@ -4,12 +4,11 @@ This doc is the map: what moor does, how the pieces fit, and where a new feature
 
 ## Surface hierarchy
 
-Moor has one product with four ways in. They are not peers.
+Moor has one product with four ways in, grouped into three levels.
 
 1. **HTTP API (`apps/api`) is the source of truth.** Every capability is an API route. It owns the SQLite state, the Docker socket, and all business logic. Nothing else in the repo does work the API cannot do.
-2. **MCP (`packages/mcp`) is the complete agent and operator surface.** It mirrors the full API: every lane below has MCP tools, including the API-only ones the web UI never shows. An agent driving moor should be able to do anything through MCP. When you add an API capability, add the matching MCP tool.
+2. **CLI (`packages/cli`) and MCP (`packages/mcp`) are thin agent and operator interfaces.** Both call the HTTP API and format its results; neither owns business logic or multi-request workflows. MCP currently has broader coverage while the CLI grows toward the same operator surface.
 3. **Web UI (`apps/web`) is a monitoring and happy-path console, partial by design.** It covers projects, builds, logs, terminal, env, cron, ports, and domains. Volumes, file injection, command/entrypoint overrides, credentials, drain, self-update, backups, and cleanup are deliberately not in the UI. Do not treat UI parity as a goal.
-4. **CLI (`packages/cli`) is a small utility surface and stays small.** A handful of one-shot commands (status, logs, rebuild, restart, exec, env, stats, history) plus MCP config generation. It is a convenience layer, not a second full client. Resist growing it toward API parity.
 
 ## Lanes
 
@@ -39,8 +38,8 @@ There is a real tension here, recorded on purpose. `brand.md` scopes moor as "on
 
 **packages**
 - `contract`: shared TypeScript types, a thin `fetch`-based API client, and request validators. The typed contract between the API and its clients; consumed by `web`, `mcp`, and `cli`.
-- `mcp`: the MCP server. The complete agent/operator surface, one tool module per lane under `src/tools/` (projects, env, exec, runs, cleanup, credentials, server, update, context).
-- `cli`: the small CLI utility. One file per command under `src/commands/`.
+- `mcp`: an MCP adapter over the API, with one tool module per lane under `src/tools/` (projects, env, exec, runs, cleanup, credentials, server, update, context).
+- `cli`: a command-line adapter over the API. Commands live under `src/commands/` and expose machine-readable output for agents where needed.
 
 ## Where a new feature goes
 
@@ -48,12 +47,11 @@ Start in the API; everything else follows from it.
 
 1. **Add the capability to `apps/api`.** New route handler in `apps/api/routes/`, domain logic in a sibling module, schema migrations in `db-migrations.ts`. This is non-optional: if it is not in the API, it does not exist.
 2. **Add types, client changes, and validators to `packages/contract`** so clients share one definition.
-3. **Add the matching MCP tool** in the lane's module under `packages/mcp/src/tools/`. MCP mirrors the full API, so this is expected for every capability, not just user-facing ones.
-4. **Add web UI only if it belongs to the happy path** (deploy/observe basics). Operate-lane and advanced deploy features stay API/MCP-only by design; do not add UI for them without a reason.
-5. **Add a CLI command only if it is a common one-shot** an operator wants from a shell. The default is no: the CLI stays small.
+3. **Expose the capability through the relevant programmatic interfaces.** CLI and MCP are adapters over the same route. Keep request semantics and orchestration in the API; adapters only parse input and render output.
+4. **Add web UI only if it belongs to the happy path** (deploy/observe basics). Operate-lane and advanced deploy features stay API/agent-interface-only by design; do not add UI for them without a reason.
 
-By lane: deploy and observe features land in the project/stats/history/runs API modules and their MCP counterparts, and usually get UI. Operate features land in the `drain`, `db-backup`, `cleanup`, and `update-*` API modules plus `respawner`, with MCP tools but no UI.
+By lane: deploy and observe features land in the project/stats/history/runs API modules and their CLI/MCP adapters, and usually get UI. Operate features land in the `drain`, `db-backup`, `cleanup`, and `update-*` API modules plus `respawner`, with agent interfaces but no UI.
 
 ## Acceptance bar
 
-A new contributor should be able to answer, before writing code: which lane is this, does it belong in the API (always yes), which MCP tool module gets it, and does it earn a place in the web UI or CLI (usually no). If those answers are clear from this doc, it has done its job.
+A new contributor should be able to answer, before writing code: which lane is this, does it belong in the API (always yes), which CLI/MCP adapters expose it, and whether it earns a place in the web UI. If those answers are clear from this doc, it has done its job.

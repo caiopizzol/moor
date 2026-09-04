@@ -73,6 +73,7 @@ export async function resolveProject(nameOrId: string): Promise<Project> {
 export async function streamSSE(
   res: Response,
   handlers: {
+    onEvent?: (event: { event: string; data: unknown }) => void;
     onLog?: (text: string) => void;
     onError?: (text: string) => void;
     onDone?: (text: string) => void;
@@ -97,10 +98,12 @@ export async function streamSSE(
       if (line.startsWith("event: ")) {
         currentEvent = line.slice(7).trim();
       } else if (line.startsWith("data: ")) {
-        const data = JSON.parse(line.slice(6)) as string;
-        if (currentEvent === "log") handlers.onLog?.(data);
-        else if (currentEvent === "error") handlers.onError?.(data);
-        else if (currentEvent === "done") handlers.onDone?.(data);
+        const event = currentEvent;
+        const data: unknown = JSON.parse(line.slice(6));
+        handlers.onEvent?.({ event, data });
+        if (event === "log" && typeof data === "string") handlers.onLog?.(data);
+        else if (event === "error" && typeof data === "string") handlers.onError?.(data);
+        else if (event === "done" && typeof data === "string") handlers.onDone?.(data);
         currentEvent = "";
       }
       // Ignore keepalive comments starting with ":"

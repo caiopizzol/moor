@@ -48,8 +48,36 @@ moor exec <project> <command>        # run a command in the container
 moor env list <project>              # list environment variables
 moor env set <project> KEY=VALUE     # set environment variables and restart
 moor stats                           # server resource usage
+moor history <project> [--hours N]   # stored resource history and events
+moor project deploy <name> [options] # create or update and optionally run a project
 moor mcp config --client <name>      # generate MCP client config snippet
 ```
+
+## `moor project deploy`
+
+Deploy from GitHub or a registry image through the same API operation used by MCP:
+
+```bash
+moor project deploy api --github-url https://github.com/example/api
+moor project deploy web --docker-image nginx:alpine --domain web.example.com --domain-port 80
+moor project deploy private --github-url https://github.com/example/private --source-credential-id 42
+```
+
+Pass `--update-existing` to update a project with the same name, or `--no-run` to save its configuration without rebuilding or starting it. Environment values are read from a JSON object so secrets do not appear in the command line:
+
+```bash
+printf '%s' '{"DATABASE_URL":"..."}' | \
+  moor project deploy api --github-url https://github.com/example/api --env-file -
+```
+
+Agents should pass `--json`. Each streamed API event is emitted as one JSON object per line:
+
+```json
+{"event":"deploy","data":{"action":"created","project_id":1,"project_name":"api","env_keys":[],"run":true,"env_changes_pending_restart":false}}
+{"event":"done","data":"Container started"}
+```
+
+Failures return a non-zero exit status. Pre-stream errors are written to stderr and, in JSON mode, preserve the API's structured fields plus the HTTP `status`. Errors received after streaming begins remain ordered with the other JSONL events on stdout.
 
 ## `moor mcp config`
 
