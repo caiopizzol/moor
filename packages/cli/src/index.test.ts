@@ -127,7 +127,7 @@ test("project list sends bearer auth and emits one JSON document", async () => {
   }
 });
 
-test("status remains the human-readable project-list alias", async () => {
+test("status forwards project-list arguments while preserving its human alias", async () => {
   const requests: Array<{
     method: string;
     path: string;
@@ -142,7 +142,7 @@ test("status remains the human-readable project-list alias", async () => {
         path: new URL(incoming.url).pathname,
         authorization: incoming.headers.get("Authorization"),
       });
-      if (requests.length > 1) {
+      if (requests.length > 2) {
         return Response.json({ error: "Unavailable" }, { status: 503 });
       }
       return Response.json([
@@ -159,9 +159,9 @@ test("status remains the human-readable project-list alias", async () => {
     },
   });
 
-  async function runStatus() {
+  async function runStatus(args: string[] = []) {
     const child = Bun.spawn({
-      cmd: [globalThis.process.execPath, join(import.meta.dir, "index.ts"), "status"],
+      cmd: [globalThis.process.execPath, join(import.meta.dir, "index.ts"), "status", ...args],
       env: {
         ...globalThis.process.env,
         MOOR_URL: server.url.origin,
@@ -192,9 +192,25 @@ test("status remains the human-readable project-list alias", async () => {
     );
     expect(success.stderr).toBe("");
 
+    const json = await runStatus(["--json"]);
+    expect(json.exitCode).toBe(0);
+    expect(JSON.parse(json.stdout)).toEqual([
+      {
+        id: 7,
+        name: "api",
+        status: "running",
+        live_status: "running",
+        github_url: null,
+        docker_image: "nginx:alpine",
+        domain: null,
+      },
+    ]);
+    expect(json.stderr).toBe("");
+
     const failure = await runStatus();
     expect(failure).toEqual({ exitCode: 1, stdout: "", stderr: "Error: Unavailable\n" });
     expect(requests).toEqual([
+      { method: "GET", path: "/api/projects", authorization: "Bearer test-key" },
       { method: "GET", path: "/api/projects", authorization: "Bearer test-key" },
       { method: "GET", path: "/api/projects", authorization: "Bearer test-key" },
     ]);

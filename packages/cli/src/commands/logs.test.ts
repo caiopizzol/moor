@@ -124,6 +124,17 @@ describe("logs command", () => {
     });
   });
 
+  test("returns a structured nonzero error when the project is not found", async () => {
+    configureClient(() => Response.json([{ id: 7, name: "api" }]));
+    const capture = captureOutput();
+
+    const exitCode = await logsCommand(["missing", "--json"], capture.output);
+
+    expect(exitCode).toBe(1);
+    expect(capture.stdout).toEqual([]);
+    expect(capture.stderr).toEqual(['{"error":"Project \\"missing\\" not found"}\n']);
+  });
+
   test("rejects JSON follow mode before making a request", async () => {
     const requests = configureClient(() => Response.json([]));
     const capture = captureOutput();

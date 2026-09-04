@@ -53,7 +53,7 @@ const command = args[0];
 
 switch (command) {
   case "status":
-    process.exitCode = await statusCommand();
+    process.exitCode = await statusCommand(args.slice(1));
     break;
   case "logs":
     process.exitCode = await logsCommand(args.slice(1));
