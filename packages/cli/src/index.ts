@@ -35,7 +35,7 @@ Commands:
   restart <project>               Stop and start a container
   exec <project> <command>        Run a command in a container
   env list <project>              List environment variables
-  env set <project> K=V [K=V ...] Set environment variables
+  env set <project> [options]     Set environment variables
   stats                           Show server resource usage
   history <project> [--hours N]   Stored resource history + events (default 24h)
   project list [--json]           List projects
@@ -68,7 +68,7 @@ switch (command) {
     await execCommand(args.slice(1));
     break;
   case "env":
-    await envCommand(args.slice(1));
+    process.exitCode = await envCommand(args.slice(1));
     break;
   case "stats":
     await statsCommand();
