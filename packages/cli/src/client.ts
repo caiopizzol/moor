@@ -6,15 +6,17 @@ import {
   parseErrorMessage,
 } from "../../contract/src/index";
 
+export function clientConfigError(): string | undefined {
+  if (!process.env.MOOR_URL) return "MOOR_URL is not set";
+  if (!process.env.MOOR_API_KEY) return "MOOR_API_KEY is not set";
+}
+
 function getConfig(): { baseUrl: string; apiKey: string } {
   const baseUrl = process.env.MOOR_URL;
   const apiKey = process.env.MOOR_API_KEY;
-  if (!baseUrl) {
-    console.error("Error: MOOR_URL is not set");
-    process.exit(1);
-  }
-  if (!apiKey) {
-    console.error("Error: MOOR_API_KEY is not set");
+  const error = clientConfigError();
+  if (error || !baseUrl || !apiKey) {
+    console.error(`Error: ${error ?? "Moor client configuration is invalid"}`);
     process.exit(1);
   }
   return { baseUrl: baseUrl.replace(/\/$/, ""), apiKey };

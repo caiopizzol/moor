@@ -40,7 +40,9 @@ export MOOR_URL=http://127.0.0.1:8080
 ## Commands
 
 ```
-moor status                          # list all projects
+moor status                          # list all projects (human-readable alias)
+moor project list [--json]           # list projects
+moor project get <name|id> [--json]  # get one project
 moor logs <project> [-f] [-n 100]    # view container logs
 moor rebuild <project>               # rebuild from source
 moor restart <project>               # stop + start
@@ -52,6 +54,20 @@ moor history <project> [--hours N]   # stored resource history and events
 moor project deploy <name> [options] # create or update and optionally run a project
 moor mcp config --client <name>      # generate MCP client config snippet
 ```
+
+## Project inspection
+
+Use the project commands to verify a deploy or inspect current configuration:
+
+```bash
+moor project list --json
+moor project get api --json
+moor project get 7 --json
+```
+
+Both commands print one JSON document to stdout in `--json` mode. Failures print a JSON error to stderr and exit nonzero. Without `--json`, `project list` uses the same table as the existing `moor status` alias and `project get` prints readable, indented JSON.
+
+Project selectors accept a name or numeric ID. If a numeric selector matches both, an exact project name takes precedence.
 
 ## `moor project deploy`
 
