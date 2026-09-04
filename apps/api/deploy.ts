@@ -12,7 +12,7 @@ import {
 } from "./docker";
 import { requireNotDraining } from "./drain";
 import { validateGithubUrl } from "./github-url";
-import { errorResponse } from "./http";
+import { errorResponse, responseErrorMessage } from "./http";
 import { autoDetectPorts, getProjectPorts } from "./ports";
 import { redactCredentials, redactCredentialsInText } from "./redact";
 import { getResolvedProjectFiles } from "./routes/files";
@@ -361,6 +361,12 @@ export async function deployProject(
       }, 5000);
 
       await withProjectLifecycleLock(project.id, async () => {
+        const drained = deps.requireNotDraining();
+        if (drained) {
+          send("error", await responseErrorMessage(drained));
+          return;
+        }
+
         const currentProject = refreshProjectLifecycleState(project, deps);
         if (!currentProject) {
           send("error", "Not found");

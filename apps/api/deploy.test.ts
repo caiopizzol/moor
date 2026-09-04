@@ -3,9 +3,14 @@ process.env.MOOR_DB_PATH = ":memory:";
 import { describe, expect, test } from "bun:test";
 import type { BuildRunLike, DeployDeps, Project, ProjectActionResult } from "./deploy";
 
-const { buildProject, deployProject, restartProject, startProject, stopProject } = await import(
-  "./deploy"
-);
+const {
+  buildProject,
+  deployProject,
+  restartProject,
+  startProject,
+  stopProject,
+  withProjectLifecycleLock,
+} = await import("./deploy");
 
 function makeProject(overrides: Partial<Project> = {}): Project {
   return {
@@ -180,6 +185,7 @@ describe("deployProject orchestration", () => {
     expect(ops).toEqual([
       "drain",
       "resolve:https://github.com/owner/repo:none",
+      "drain",
       "status:building:null",
       "run:create:1",
       "build:https://github.com/owner/repo.git:main:Dockerfile:moor/app:latest:nocache=true:aborted=false",
@@ -224,6 +230,7 @@ describe("deployProject orchestration", () => {
     expect(ops).toEqual([
       "drain",
       "resolve:https://github.com/owner/repo:none",
+      "drain",
       "status:building:null",
       "run:create:1",
       "build:throw",
@@ -424,6 +431,42 @@ describe("restartProject orchestration", () => {
 });
 
 describe("project lifecycle serialization", () => {
+  test("rejects a deploy when drain starts while it waits for the lifecycle lock", async () => {
+    const ops: string[] = [];
+    let draining = false;
+    let markLockHeld: () => void = () => {};
+    let releaseLock: () => void = () => {};
+    const lockHeld = new Promise<void>((resolve) => {
+      markLockHeld = resolve;
+    });
+    const lockGate = new Promise<void>((resolve) => {
+      releaseLock = resolve;
+    });
+    const project = makeProject();
+    const activeLifecycle = withProjectLifecycleLock(project.id, async () => {
+      markLockHeld();
+      await lockGate;
+    });
+    await lockHeld;
+    const deps = makeDeps(ops, {
+      requireNotDraining: () => {
+        ops.push("drain");
+        return draining ? Response.json({ error: "moor is draining" }, { status: 503 }) : null;
+      },
+    });
+
+    const deployed = await deployProject(project, { noCache: false }, deps);
+    expect(deployed.kind).toBe("stream");
+    if (deployed.kind !== "stream") return;
+    draining = true;
+    releaseLock();
+    await activeLifecycle;
+    const sse = await readStream(deployed.stream);
+
+    expect(ops).toEqual(["drain", "resolve:https://github.com/owner/repo:none", "drain"]);
+    expect(sse).toContain('event: error\ndata: "moor is draining"');
+  });
+
   test("serializes overlapping restarts for the same project", async () => {
     const ops: string[] = [];
     let stopCalls = 0;
