@@ -75,7 +75,7 @@ export function parseDeployArgs(args: string[]): ParsedDeployArgs {
       return { json, error: `Unknown option: ${arg}` };
     }
     const value = args[index + 1];
-    if (!value || (value.startsWith("-") && !(arg === "--env-file" && value === "-"))) {
+    if (!value || value.startsWith("--")) {
       return { json, error: `${arg} requires a value` };
     }
     index += 1;

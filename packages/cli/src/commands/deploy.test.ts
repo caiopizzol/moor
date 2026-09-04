@@ -108,6 +108,7 @@ describe("project deploy command", () => {
       error: "--docker-image requires a value",
     });
     expect(parseDeployArgs(["app", "--env-file", "-"]).envFile).toBe("-");
+    expect(parseDeployArgs(["app", "--branch", "-feature"]).input?.branch).toBe("-feature");
   });
 
   test("requires a positive integer source credential ID", () => {
