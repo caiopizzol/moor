@@ -17,22 +17,20 @@ export async function handleEnvs(req: Request, url: URL): Promise<Response | nul
   const projectId = Number(match[1]);
 
   if (req.method === "GET") {
-    const rows = db
-      .query("SELECT * FROM env_vars WHERE project_id = ? ORDER BY key")
-      .all(projectId);
-    return Response.json(rows);
+    return Response.json(listProjectEnvs(projectId));
   }
 
   if (req.method === "PUT") {
-    return await handleBulkSet(req, projectId);
+    return Response.json(replaceProjectEnvs(projectId, await req.json()));
   }
 
   return null;
 }
 
-async function handleBulkSet(req: Request, projectId: number): Promise<Response> {
-  const vars: { key: string; value: string }[] = await req.json();
-
+export function replaceProjectEnvs(
+  projectId: number,
+  vars: Array<{ key: string; value: string }>,
+): Array<{ id: number; project_id: number; key: string; value: string }> {
   // Use db.transaction for safe concurrent access
   const updateEnvs = db.transaction(() => {
     db.query("DELETE FROM env_vars WHERE project_id = ?").run(projectId);
@@ -43,6 +41,13 @@ async function handleBulkSet(req: Request, projectId: number): Promise<Response>
   });
   updateEnvs();
 
-  const rows = db.query("SELECT * FROM env_vars WHERE project_id = ? ORDER BY key").all(projectId);
-  return Response.json(rows);
+  return listProjectEnvs(projectId);
+}
+
+export function listProjectEnvs(
+  projectId: number,
+): Array<{ id: number; project_id: number; key: string; value: string }> {
+  return db
+    .query("SELECT * FROM env_vars WHERE project_id = ? ORDER BY key")
+    .all(projectId) as Array<{ id: number; project_id: number; key: string; value: string }>;
 }

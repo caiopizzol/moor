@@ -56,45 +56,7 @@ export async function handleFiles(req: Request, url: URL): Promise<Response | nu
     }
 
     if (req.method === "POST") {
-      const body = (await req.json()) as {
-        path?: string;
-        content?: string;
-        env_ref?: string;
-        mode?: string;
-      };
-
-      const pathErr = validateFilePath(body.path);
-      if (pathErr) return errorResponse(pathErr, 400);
-      const contentErr = validateFileContent(body.content, body.env_ref);
-      if (contentErr) return errorResponse(contentErr, 400);
-      const modeErr = validateFileMode(body.mode);
-      if (modeErr) return errorResponse(modeErr, 400);
-
-      const filePath = body.path as string;
-      const mode = body.mode ?? DEFAULT_FILE_MODE;
-      const content = body.content ?? null;
-      const envRef = body.env_ref ?? null;
-
-      // Upsert by (project_id, path): a file spec is identified by its
-      // destination, and content is mutable (e.g. rotating a TLS cert), so
-      // re-POSTing the same path updates intent rather than 409-ing — the
-      // behavior the UNIQUE(project_id, path) constraint was added to express
-      // (see db.ts). Idempotent re-adds also let moor_deploy carry files
-      // without a remove+add dance on every redeploy. 201 on create, 200 on
-      // update so callers can still tell the two apart.
-      const existing = db
-        .query("SELECT id FROM project_files WHERE project_id = ? AND path = ?")
-        .get(project.id, filePath) as { id: number } | null;
-      const row = db
-        .query(
-          `INSERT INTO project_files (project_id, path, content, env_ref, mode)
-           VALUES (?, ?, ?, ?, ?)
-           ON CONFLICT(project_id, path)
-           DO UPDATE SET content = excluded.content, env_ref = excluded.env_ref, mode = excluded.mode
-           RETURNING id, project_id, path, content, env_ref, mode`,
-        )
-        .get(project.id, filePath, content, envRef, mode) as FileRow;
-      return Response.json(presentFile(row), { status: existing ? 200 : 201 });
+      return setProjectFile(project.id, await req.json());
     }
 
     return null;
@@ -114,6 +76,37 @@ export async function handleFiles(req: Request, url: URL): Promise<Response | nu
   }
 
   return null;
+}
+
+export function setProjectFile(
+  projectId: number,
+  body: { path?: string; content?: string; env_ref?: string; mode?: string },
+): Response {
+  const pathErr = validateFilePath(body.path);
+  if (pathErr) return errorResponse(pathErr, 400);
+  const contentErr = validateFileContent(body.content, body.env_ref);
+  if (contentErr) return errorResponse(contentErr, 400);
+  const modeErr = validateFileMode(body.mode);
+  if (modeErr) return errorResponse(modeErr, 400);
+
+  const filePath = body.path as string;
+  const mode = body.mode ?? DEFAULT_FILE_MODE;
+  const content = body.content ?? null;
+  const envRef = body.env_ref ?? null;
+
+  const existing = db
+    .query("SELECT id FROM project_files WHERE project_id = ? AND path = ?")
+    .get(projectId, filePath) as { id: number } | null;
+  const row = db
+    .query(
+      `INSERT INTO project_files (project_id, path, content, env_ref, mode)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(project_id, path)
+       DO UPDATE SET content = excluded.content, env_ref = excluded.env_ref, mode = excluded.mode
+       RETURNING id, project_id, path, content, env_ref, mode`,
+    )
+    .get(projectId, filePath, content, envRef, mode) as FileRow;
+  return Response.json(presentFile(row), { status: existing ? 200 : 201 });
 }
 
 /** Raw file specs for a project (inline content + env_ref + octal mode text). */

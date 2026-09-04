@@ -1,4 +1,4 @@
-import type { Project } from "../../../contract/src/index";
+import type { DeploySummary, Project } from "../../../contract/src/index";
 
 export type ApiResponseClient = {
   get(path: string): Promise<Response>;
@@ -11,6 +11,7 @@ export type SseReadResult = {
   logs: string;
   error?: string;
   structuredError?: { code: string; message: string };
+  deploy?: DeploySummary;
 };
 
 export type ToolContext = {

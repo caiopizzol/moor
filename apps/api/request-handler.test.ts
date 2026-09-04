@@ -69,6 +69,30 @@ describe("HTTP authentication boundary", () => {
     expect(res?.status).toBe(200);
   });
 
+  test("the deploy endpoint is registered behind bearer authentication", async () => {
+    completeSetup();
+    process.env.MOOR_API_KEY = "test-api-key";
+    const unauthorized = await request("/api/deploy", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "-invalid", run: false }),
+    });
+    const authorized = await request("/api/deploy", {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer test-api-key",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ name: "-invalid", run: false }),
+    });
+
+    expect(unauthorized?.status).toBe(401);
+    expect(authorized?.status).toBe(400);
+    expect(await authorized?.json()).toEqual({
+      error: "name must start alphanumeric; allowed chars: a-z A-Z 0-9 _ -",
+    });
+  });
+
   test("only a valid session cookie reaches the protected route dispatcher", async () => {
     completeSetup();
     db.query(

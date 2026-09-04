@@ -12,6 +12,7 @@ import { handleCaddy } from "./routes/caddy";
 import { handleCleanup } from "./routes/cleanup";
 import { handleContainerStats } from "./routes/container-stats";
 import { handleCrons } from "./routes/crons";
+import { handleDeploy } from "./routes/deploy";
 import { handleDocker } from "./routes/docker";
 import { handleEnvs } from "./routes/envs";
 import { handleExec } from "./routes/exec";
@@ -86,6 +87,7 @@ export async function handleRequest(
       }
 
       const res =
+        (await handleDeploy(req, url)) ??
         (await handleProjects(req, url)) ??
         (await handleVolumes(req, url)) ??
         (await handleFiles(req, url)) ??
