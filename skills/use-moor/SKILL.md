@@ -9,7 +9,7 @@ Use the installed `moor` CLI to operate an existing Moor server. Do not use the 
 
 - Confirm `moor --version` works. The environment must already contain `MOOR_URL` and `MOOR_API_KEY`; never print the key or put it in command arguments.
 - Use only command paths shown by `moor --help`, then inspect the relevant command's `--help`. Do not infer commands from MCP tool names.
-- Use `--json` for agent-readable output and check the exit code. Finite commands return one JSON document on stdout. Deploy streams one `{ "event", "data" }` object per line. Failures are nonzero and write structured details to stderr.
+- Use `--json` only when the command's help lists it; otherwise expect human-readable output. Always check the exit code. Finite JSON commands return one document on stdout. Deploy streams one `{ "event", "data" }` object per line.
 - Pass deployment environment values through `--env-file -` on stdin, not through arguments.
 - Mutate a server only when the user's request authorizes the change.
 
