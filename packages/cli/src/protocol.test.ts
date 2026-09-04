@@ -28,6 +28,30 @@ function captureOutput() {
 }
 
 describe("CLI protocol", () => {
+  test("returns a contextual stderr error when a human response body is interrupted", async () => {
+    process.env.MOOR_URL = "https://moor.test";
+    process.env.MOOR_API_KEY = "test-key";
+    const capture = captureOutput();
+    const result = await requestJson(
+      async () =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.error(new Error("interrupted"));
+            },
+          }),
+          { status: 500 },
+        ),
+      false,
+      "Failed request",
+      capture.output,
+    );
+
+    expect(result).toEqual({ ok: false });
+    expect(capture.stdout).toEqual([]);
+    expect(capture.stderr).toEqual(["Error: Failed request: interrupted\n"]);
+  });
+
   test("preserves structured response fields and normalizes an error message", async () => {
     expect(
       JSON.parse(

@@ -24,16 +24,25 @@ export function writeError(
   output.stderr(`${formatError(message, status, json)}\n`);
 }
 
-export async function formatResponseError(response: Response, json: boolean): Promise<string> {
+export async function formatResponseError(
+  response: Response,
+  json: boolean,
+  humanContext?: string,
+): Promise<string> {
   const copy = response.clone();
   let message: string;
   try {
     message = await readErrorMessage(response);
   } catch (error) {
     message = error instanceof Error ? error.message : String(error);
-    return formatError(message, response.status, json);
   }
-  if (!json) return formatError(message, response.status, false);
+  if (!json) {
+    return formatError(
+      humanContext ? `${humanContext}: ${message}` : message,
+      response.status,
+      false,
+    );
+  }
 
   try {
     const body: unknown = await copy.json();
@@ -78,11 +87,7 @@ export async function requestJson<T>(
   }
 
   if (!response.ok) {
-    if (json) output.stderr(`${await formatResponseError(response, true)}\n`);
-    else {
-      const message = await readErrorMessage(response);
-      writeError(output, `${humanError}: ${message}`, false);
-    }
+    output.stderr(`${await formatResponseError(response, json, humanError)}\n`);
     return { ok: false };
   }
 
