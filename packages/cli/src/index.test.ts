@@ -127,6 +127,82 @@ test("project list sends bearer auth and emits one JSON document", async () => {
   }
 });
 
+test("status remains the human-readable project-list alias", async () => {
+  const requests: Array<{
+    method: string;
+    path: string;
+    authorization: string | null;
+  }> = [];
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: (incoming) => {
+      requests.push({
+        method: incoming.method,
+        path: new URL(incoming.url).pathname,
+        authorization: incoming.headers.get("Authorization"),
+      });
+      if (requests.length > 1) {
+        return Response.json({ error: "Unavailable" }, { status: 503 });
+      }
+      return Response.json([
+        {
+          id: 7,
+          name: "api",
+          status: "running",
+          live_status: "running",
+          github_url: null,
+          docker_image: "nginx:alpine",
+          domain: null,
+        },
+      ]);
+    },
+  });
+
+  async function runStatus() {
+    const child = Bun.spawn({
+      cmd: [globalThis.process.execPath, join(import.meta.dir, "index.ts"), "status"],
+      env: {
+        ...globalThis.process.env,
+        MOOR_URL: server.url.origin,
+        MOOR_API_KEY: "test-key",
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    if (typeof child.stdout === "number" || typeof child.stderr === "number") {
+      throw new Error("expected piped process output");
+    }
+
+    const [exitCode, stdout, stderr] = await Promise.all([
+      child.exited,
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+    ]);
+    return { exitCode, stdout, stderr };
+  }
+
+  try {
+    const success = await runStatus();
+    expect(success.exitCode).toBe(0);
+    expect(success.stdout).toBe(
+      "NAME  STATUS   SOURCE        DOMAIN\n" +
+        "-----------------------------------\n" +
+        "api   running  nginx:alpine  -     \n",
+    );
+    expect(success.stderr).toBe("");
+
+    const failure = await runStatus();
+    expect(failure).toEqual({ exitCode: 1, stdout: "", stderr: "Error: Unavailable\n" });
+    expect(requests).toEqual([
+      { method: "GET", path: "/api/projects", authorization: "Bearer test-key" },
+      { method: "GET", path: "/api/projects", authorization: "Bearer test-key" },
+    ]);
+  } finally {
+    await server.stop(true);
+  }
+});
+
 test("project get sends bearer auth and emits the API record as JSON", async () => {
   let request:
     | {
