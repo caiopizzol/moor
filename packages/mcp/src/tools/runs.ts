@@ -114,10 +114,8 @@ export function registerRunTools(server: McpServer, client: ToolContext): void {
     },
     async ({ project }) => {
       const p = await resolveProject(project);
-      const stopRes = await apiResponse.post(`/api/projects/${p.id}/stop`);
-      if (!stopRes.ok) throw new Error(`Failed to stop: ${await readErrorMessage(stopRes)}`);
-      const startRes = await apiResponse.post(`/api/projects/${p.id}/start`);
-      if (!startRes.ok) throw new Error(`Failed to start: ${await readErrorMessage(startRes)}`);
+      const res = await apiResponse.post(`/api/projects/${p.id}/restart`);
+      if (!res.ok) throw new Error(`Failed to restart: ${await readErrorMessage(res)}`);
       return { content: [{ type: "text", text: `${p.name} restarted.` }] };
     },
   );

@@ -86,10 +86,9 @@ async function envSet(args: string[]) {
   // Restart if container is running
   if (project.status === "running") {
     console.log(`Restarting ${project.name}...`);
-    await apiPost(`/api/projects/${project.id}/stop`);
-    const startRes = await apiPost(`/api/projects/${project.id}/start`);
-    if (!startRes.ok) {
-      console.error(`Warning: failed to restart: ${await readErrorMessage(startRes)}`);
+    const restartRes = await apiPost(`/api/projects/${project.id}/restart`);
+    if (!restartRes.ok) {
+      console.error(`Warning: failed to restart: ${await readErrorMessage(restartRes)}`);
       process.exit(1);
     }
     console.log(`${project.name} restarted.`);

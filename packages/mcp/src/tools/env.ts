@@ -65,10 +65,9 @@ export function registerEnvTools(server: McpServer, client: ToolContext): void {
 
       // Restart if running
       if (p.status === "running") {
-        await apiResponse.post(`/api/projects/${p.id}/stop`);
-        const startRes = await apiResponse.post(`/api/projects/${p.id}/start`);
-        if (!startRes.ok)
-          throw new Error(`Set vars but failed to restart: ${await readErrorMessage(startRes)}`);
+        const restartRes = await apiResponse.post(`/api/projects/${p.id}/restart`);
+        if (!restartRes.ok)
+          throw new Error(`Set vars but failed to restart: ${await readErrorMessage(restartRes)}`);
         text += " Container restarted.";
       }
 
@@ -238,11 +237,10 @@ export function registerEnvTools(server: McpServer, client: ToolContext): void {
       if (missing.length > 0) text += ` (Not present: ${missing.join(", ")}.)`;
 
       if (p.status === "running") {
-        await apiResponse.post(`/api/projects/${p.id}/stop`);
-        const startRes = await apiResponse.post(`/api/projects/${p.id}/start`);
-        if (!startRes.ok) {
+        const restartRes = await apiResponse.post(`/api/projects/${p.id}/restart`);
+        if (!restartRes.ok) {
           throw new Error(
-            `Deleted vars but failed to restart: ${await readErrorMessage(startRes)}`,
+            `Deleted vars but failed to restart: ${await readErrorMessage(restartRes)}`,
           );
         }
         text += " Container restarted.";

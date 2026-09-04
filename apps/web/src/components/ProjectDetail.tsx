@@ -135,18 +135,12 @@ export function ProjectDetail({ project, onUpdate, onEdit, onDelete }: Props) {
   const handleRestart = async () => {
     setAction("restarting");
     setTab("build");
-    setStreamingLines(["Stopping container...\n"]);
+    setStreamingLines(["Restarting container...\n"]);
     try {
-      await api.projects.stop(project.id);
-      setStreamingLines((prev) => [
-        ...(prev || []),
-        "Container stopped.\n\nStarting container...\n",
-      ]);
-      await api.projects.start(project.id);
-      setStreamingLines((prev) => [...(prev || []), "Container started.\n"]);
+      await api.projects.restart(project.id);
       await onUpdate();
     } catch (e) {
-      setStreamingLines((prev) => [...(prev || []), `\nError: ${e}\n`]);
+      alert(`Restart failed: ${e}`);
       await onUpdate();
     } finally {
       setAction(null);

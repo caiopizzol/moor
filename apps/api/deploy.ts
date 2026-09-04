@@ -536,6 +536,13 @@ export async function startProject(
   const drained = deps.requireNotDraining();
   if (drained) return { kind: "response", response: drained };
 
+  return startProjectAfterDrainCheck(project, deps);
+}
+
+async function startProjectAfterDrainCheck(
+  project: Project,
+  deps: DeployDeps,
+): Promise<ProjectActionResult> {
   console.log(`[start] project=${project.name} image=${project.image_tag}`);
   if (!project.image_tag) {
     console.log("[start] rejected — no image built");
@@ -576,6 +583,29 @@ export async function startProject(
     console.error(`[start] FAILED: ${message}`);
     return errorResult(message, 500);
   }
+}
+
+export async function restartProject(
+  project: Project,
+  partialDeps?: Partial<DeployDeps>,
+): Promise<ProjectActionResult> {
+  const deps = makeDeployDeps(partialDeps);
+
+  // A restart is new container work. Refuse it before stopping the current
+  // container so drain mode cannot turn a safe rejection into downtime.
+  const drained = deps.requireNotDraining();
+  if (drained) return { kind: "response", response: drained };
+
+  // startProject validates this too, but restart must validate before stop.
+  if (!project.image_tag) return errorResult("No image built yet", 400);
+
+  await stopProject(project, deps);
+  const started = await startProjectAfterDrainCheck(project, deps);
+  if (started.kind !== "json" || (started.status !== undefined && started.status >= 400)) {
+    return started;
+  }
+
+  return { kind: "json", body: { message: "Container restarted" } };
 }
 
 export async function stopProject(

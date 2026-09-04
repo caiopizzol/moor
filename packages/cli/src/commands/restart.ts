@@ -9,17 +9,10 @@ export async function restartCommand(args: string[]) {
 
   const project = await resolveProject(projectName);
 
-  console.log(`Stopping ${project.name}...`);
-  const stopRes = await apiPost(`/api/projects/${project.id}/stop`);
-  if (!stopRes.ok) {
-    console.error(`Failed to stop: ${await readErrorMessage(stopRes)}`);
-    process.exit(1);
-  }
-
-  console.log(`Starting ${project.name}...`);
-  const startRes = await apiPost(`/api/projects/${project.id}/start`);
-  if (!startRes.ok) {
-    console.error(`Failed to start: ${await readErrorMessage(startRes)}`);
+  console.log(`Restarting ${project.name}...`);
+  const res = await apiPost(`/api/projects/${project.id}/restart`);
+  if (!res.ok) {
+    console.error(`Failed to restart: ${await readErrorMessage(res)}`);
     process.exit(1);
   }
 

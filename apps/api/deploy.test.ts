@@ -3,7 +3,7 @@ process.env.MOOR_DB_PATH = ":memory:";
 import { describe, expect, test } from "bun:test";
 import type { BuildRunLike, DeployDeps, Project, ProjectActionResult } from "./deploy";
 
-const { buildProject, deployProject, startProject } = await import("./deploy");
+const { buildProject, deployProject, restartProject, startProject } = await import("./deploy");
 
 function makeProject(overrides: Partial<Project> = {}): Project {
   return {
@@ -307,5 +307,90 @@ describe("deployProject orchestration", () => {
       "create:throw",
       "status:error:null",
     ]);
+  });
+});
+
+describe("restartProject orchestration", () => {
+  test("rejects drain before stopping the container", async () => {
+    const ops: string[] = [];
+    const deps = makeDeps(ops, {
+      requireNotDraining: () => {
+        ops.push("drain");
+        return Response.json({ error: "moor is draining" }, { status: 503 });
+      },
+    });
+
+    const result = await restartProject(
+      makeProject({ image_tag: "moor/app:latest", container_id: "container-old" }),
+      deps,
+    );
+
+    expect(result.kind).toBe("response");
+    if (result.kind !== "response") return;
+    expect(result.response.status).toBe(503);
+    expect(ops).toEqual(["drain"]);
+  });
+
+  test("stops before starting and returns a restart result", async () => {
+    const ops: string[] = [];
+
+    const result = await restartProject(
+      makeProject({ image_tag: "moor/app:latest", container_id: "container-old" }),
+      makeDeps(ops),
+    );
+
+    expect(result).toEqual({ kind: "json", body: { message: "Container restarted" } });
+    expect(ops).toEqual([
+      "drain",
+      "stop:container-old",
+      "status:stopped:container-old",
+      "envs:1",
+      "ports:1",
+      "volumes:1",
+      "files:1:1",
+      "create:moor/app:latest:moor-app:envs=1:ports=1:restart=unless-stopped:mem=null:cpus=null:volumes=1:cmd=0:entrypoint=0:files=0",
+      "container:1:container-1",
+      "status:running:container-1",
+    ]);
+  });
+
+  test("returns the start failure after stopping", async () => {
+    const ops: string[] = [];
+    const deps = makeDeps(ops, {
+      createAndStartContainer: async () => {
+        ops.push("create:throw");
+        throw new Error("container failed");
+      },
+    });
+
+    const result = await restartProject(
+      makeProject({ image_tag: "moor/app:latest", container_id: "container-old" }),
+      deps,
+    );
+
+    await expectErrorResult(result, 500, "container failed");
+    expect(ops).toEqual([
+      "drain",
+      "stop:container-old",
+      "status:stopped:container-old",
+      "envs:1",
+      "ports:1",
+      "volumes:1",
+      "files:1:1",
+      "create:throw",
+      "status:error:container-old",
+    ]);
+  });
+
+  test("rejects a missing image before stopping", async () => {
+    const ops: string[] = [];
+
+    const result = await restartProject(
+      makeProject({ image_tag: null, container_id: "container-old" }),
+      makeDeps(ops),
+    );
+
+    await expectErrorResult(result, 400, "No image built yet");
+    expect(ops).toEqual(["drain"]);
   });
 });
