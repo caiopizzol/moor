@@ -3,7 +3,9 @@ process.env.MOOR_DB_PATH = ":memory:";
 import { describe, expect, test } from "bun:test";
 import type { BuildRunLike, DeployDeps, Project, ProjectActionResult } from "./deploy";
 
-const { buildProject, deployProject, restartProject, startProject } = await import("./deploy");
+const { buildProject, deployProject, restartProject, startProject, stopProject } = await import(
+  "./deploy"
+);
 
 function makeProject(overrides: Partial<Project> = {}): Project {
   return {
@@ -115,6 +117,7 @@ function makeDeps(ops: string[], overrides: Partial<DeployDeps> = {}): DeployDep
     stopContainer: async (containerId) => {
       ops.push(`stop:${containerId}`);
     },
+    getProjectLifecycleState: () => undefined,
     syncCaddyRoutes: async () => {
       ops.push("caddy");
     },
@@ -414,5 +417,226 @@ describe("restartProject orchestration", () => {
 
     await expectErrorResult(result, 400, "No image built yet");
     expect(ops).toEqual(["drain"]);
+  });
+});
+
+describe("project lifecycle serialization", () => {
+  test("serializes overlapping restarts for the same project", async () => {
+    const ops: string[] = [];
+    let stopCalls = 0;
+    let currentContainerId: string | null = "container-old";
+    let markFirstStopStarted: () => void = () => {};
+    let releaseFirstStop: () => void = () => {};
+    const firstStopStarted = new Promise<void>((resolve) => {
+      markFirstStopStarted = resolve;
+    });
+    const firstStopGate = new Promise<void>((resolve) => {
+      releaseFirstStop = resolve;
+    });
+    const deps = makeDeps(ops, {
+      stopContainer: async (containerId) => {
+        stopCalls += 1;
+        ops.push(`stop:${containerId}:${stopCalls}`);
+        if (stopCalls === 1) {
+          markFirstStopStarted();
+          await firstStopGate;
+        }
+      },
+      getProjectLifecycleState: () => ({
+        image_tag: "moor/app:latest",
+        container_id: currentContainerId,
+      }),
+      updateProjectContainerId: (_projectId, containerId) => {
+        currentContainerId = containerId;
+      },
+    });
+    const project = makeProject({
+      image_tag: "moor/app:latest",
+      container_id: "container-old",
+    });
+
+    const first = restartProject(project, deps);
+    await firstStopStarted;
+    const second = restartProject(project, deps);
+    await Promise.resolve();
+    const callsBeforeRelease = stopCalls;
+    releaseFirstStop();
+    await Promise.all([first, second]);
+
+    expect(callsBeforeRelease).toBe(1);
+    expect(stopCalls).toBe(2);
+    expect(ops.filter((op) => op.startsWith("stop:"))).toEqual([
+      "stop:container-old:1",
+      "stop:container-1:2",
+    ]);
+  });
+
+  test("serializes deploy container replacement against start", async () => {
+    const ops: string[] = [];
+    let createCalls = 0;
+    let markFirstCreateStarted: () => void = () => {};
+    let releaseFirstCreate: () => void = () => {};
+    const firstCreateStarted = new Promise<void>((resolve) => {
+      markFirstCreateStarted = resolve;
+    });
+    const firstCreateGate = new Promise<void>((resolve) => {
+      releaseFirstCreate = resolve;
+    });
+    const deps = makeDeps(ops, {
+      createAndStartContainer: async () => {
+        createCalls += 1;
+        if (createCalls === 1) {
+          markFirstCreateStarted();
+          await firstCreateGate;
+        }
+        return `container-${createCalls}`;
+      },
+    });
+    const project = makeProject({ image_tag: "moor/app:latest" });
+
+    const deployed = await deployProject(project, { noCache: false }, deps);
+    expect(deployed.kind).toBe("stream");
+    if (deployed.kind !== "stream") return;
+    await firstCreateStarted;
+    const started = startProject(project, deps);
+    await Promise.resolve();
+    const callsBeforeRelease = createCalls;
+    releaseFirstCreate();
+    await Promise.all([readStream(deployed.stream), started]);
+
+    expect(callsBeforeRelease).toBe(1);
+    expect(createCalls).toBe(2);
+  });
+
+  test("a stop queued behind restart uses the new container id", async () => {
+    const ops: string[] = [];
+    let currentContainerId: string | null = "container-old";
+    let markCreateStarted: () => void = () => {};
+    let releaseCreate: () => void = () => {};
+    const createStarted = new Promise<void>((resolve) => {
+      markCreateStarted = resolve;
+    });
+    const createGate = new Promise<void>((resolve) => {
+      releaseCreate = resolve;
+    });
+    const deps = makeDeps(ops, {
+      createAndStartContainer: async () => {
+        markCreateStarted();
+        await createGate;
+        return "container-new";
+      },
+      getProjectLifecycleState: () => ({
+        image_tag: "moor/app:latest",
+        container_id: currentContainerId,
+      }),
+      updateProjectContainerId: (_projectId, containerId) => {
+        currentContainerId = containerId;
+        ops.push(`container:1:${containerId}`);
+      },
+    });
+    const project = makeProject({
+      image_tag: "moor/app:latest",
+      container_id: "container-old",
+    });
+
+    const restarted = restartProject(project, deps);
+    await createStarted;
+    const stopped = stopProject(project, deps);
+    await Promise.resolve();
+    releaseCreate();
+    await Promise.all([restarted, stopped]);
+
+    expect(ops.filter((op) => op.startsWith("stop:"))).toEqual([
+      "stop:container-old",
+      "stop:container-new",
+    ]);
+    expect(currentContainerId).toBe("container-new");
+    expect(ops.at(-1)).toBe("status:stopped:container-new");
+  });
+
+  test("a start queued behind deploy uses the new image tag", async () => {
+    const ops: string[] = [];
+    const createdFrom: string[] = [];
+    let currentImageTag: string | null = "moor/app:old";
+    let currentContainerId: string | null = "container-old";
+    let markDeployCreateStarted: () => void = () => {};
+    let releaseDeployCreate: () => void = () => {};
+    const deployCreateStarted = new Promise<void>((resolve) => {
+      markDeployCreateStarted = resolve;
+    });
+    const deployCreateGate = new Promise<void>((resolve) => {
+      releaseDeployCreate = resolve;
+    });
+    const deps = makeDeps(ops, {
+      createAndStartContainer: async (imageTag) => {
+        createdFrom.push(imageTag);
+        if (createdFrom.length === 1) {
+          markDeployCreateStarted();
+          await deployCreateGate;
+        }
+        return `container-${createdFrom.length}`;
+      },
+      getProjectLifecycleState: () => ({
+        image_tag: currentImageTag,
+        container_id: currentContainerId,
+      }),
+      updateProjectImageTag: (_projectId, imageTag) => {
+        currentImageTag = imageTag;
+      },
+      updateProjectContainerId: (_projectId, containerId) => {
+        currentContainerId = containerId;
+      },
+    });
+    const project = makeProject({
+      image_tag: "moor/app:old",
+      container_id: "container-old",
+    });
+
+    const deployed = await deployProject(project, { noCache: false }, deps);
+    expect(deployed.kind).toBe("stream");
+    if (deployed.kind !== "stream") return;
+    await deployCreateStarted;
+    const started = startProject(project, deps);
+    releaseDeployCreate();
+    await Promise.all([readStream(deployed.stream), started]);
+
+    expect(createdFrom).toEqual(["moor/app:latest", "moor/app:latest"]);
+  });
+
+  test("does not serialize lifecycle work for different projects", async () => {
+    const ops: string[] = [];
+    let secondProjectStarted = false;
+    let markFirstCreateStarted: () => void = () => {};
+    let releaseFirstCreate: () => void = () => {};
+    const firstCreateStarted = new Promise<void>((resolve) => {
+      markFirstCreateStarted = resolve;
+    });
+    const firstCreateGate = new Promise<void>((resolve) => {
+      releaseFirstCreate = resolve;
+    });
+    const deps = makeDeps(ops, {
+      createAndStartContainer: async (_imageTag, name) => {
+        if (name === "moor-app") {
+          markFirstCreateStarted();
+          await firstCreateGate;
+          return "container-app";
+        }
+        secondProjectStarted = true;
+        return "container-other";
+      },
+    });
+
+    const first = startProject(makeProject({ image_tag: "moor/app:latest" }), deps);
+    await firstCreateStarted;
+    const second = startProject(
+      makeProject({ id: 2, name: "other", image_tag: "moor/other:latest" }),
+      deps,
+    );
+    await Promise.resolve();
+    const secondStartedBeforeRelease = secondProjectStarted;
+    releaseFirstCreate();
+    await Promise.all([first, second]);
+
+    expect(secondStartedBeforeRelease).toBe(true);
   });
 });
