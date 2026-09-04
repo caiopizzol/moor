@@ -169,6 +169,10 @@ describe("#79 drain server routes (GET /api/server/drain)", () => {
     db.query("DELETE FROM projects").run();
   });
 
+  afterEach(() => {
+    disableDrain();
+  });
+
   test("status returns disabled state + zero counts when drain is off", async () => {
     const res = await call(handleServer, "GET", "/api/server/drain");
     expect(res.status).toBe(200);
