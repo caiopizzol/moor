@@ -55,6 +55,9 @@ describe("env set command", () => {
     expect(parseEnvSetArgs(["app", "A=1", "--env-file", "-"]).error).toBe(
       "Use either --env-file or KEY=VALUE arguments, not both",
     );
+    const prototypeKey = parseEnvSetArgs(["app", "__proto__=secret"]);
+    expect(Object.hasOwn(prototypeKey.vars ?? {}, "__proto__")).toBe(true);
+    expect(JSON.stringify(prototypeKey.vars)).toBe('{"__proto__":"secret"}');
   });
 
   test("preserves human KEY=VALUE syntax while using one mutation request", async () => {

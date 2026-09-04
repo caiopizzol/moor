@@ -120,7 +120,12 @@ export function parseEnvSetArgs(args: string[]): ParsedEnvSetArgs {
     if (equals <= 0) {
       return { project, json, error: "Environment values must use KEY=VALUE" };
     }
-    vars[pair.slice(0, equals)] = pair.slice(equals + 1);
+    Object.defineProperty(vars, pair.slice(0, equals), {
+      value: pair.slice(equals + 1),
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
   }
   return { project, vars, envFile, json };
 }
