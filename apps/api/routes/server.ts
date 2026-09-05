@@ -12,6 +12,7 @@ import {
   parseSystemDf,
   type SystemDfResponse,
 } from "../server-stats";
+import type { ApplyInput, ApplyResult } from "../update-apply";
 
 function tryReadProc(path: string): string | null {
   try {
@@ -68,13 +69,37 @@ async function handleUpdateAudit(url: URL): Promise<Response> {
   return Response.json({ rows: listAudit(limit) });
 }
 
-async function handleUpdateApply(req: Request): Promise<Response> {
-  const { applyUpdate } = await import("../update-apply");
-  const body = (await req.json().catch(() => ({}))) as {
-    target_digest?: string;
-    bypass?: ("active_work" | "unknown_digest")[];
-  };
-  const result = await applyUpdate(body);
+export async function handleUpdateApply(
+  req: Request,
+  apply: (input: ApplyInput) => Promise<ApplyResult> = async (input) =>
+    (await import("../update-apply")).applyUpdate(input),
+): Promise<Response> {
+  const parsed = await readJsonObject(req, { allowEmpty: true });
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.value;
+  const input: ApplyInput = {};
+  if (body.target_digest !== undefined) {
+    if (
+      typeof body.target_digest !== "string" ||
+      !/^sha256:[0-9a-f]{64}$/.test(body.target_digest)
+    ) {
+      return errorResponse("target_digest must be sha256:<64 lowercase hex characters>", 400);
+    }
+    input.target_digest = body.target_digest;
+  }
+  if (body.bypass !== undefined) {
+    if (
+      !Array.isArray(body.bypass) ||
+      !body.bypass.every((value: unknown) => value === "active_work" || value === "unknown_digest")
+    ) {
+      return errorResponse(
+        "bypass must be an array containing only active_work or unknown_digest",
+        400,
+      );
+    }
+    input.bypass = body.bypass;
+  }
+  const result = await apply(input);
   if (result.ok) {
     return Response.json({ audit_id: result.audit_id }, { status: 202 });
   }
