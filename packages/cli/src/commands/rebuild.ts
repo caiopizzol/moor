@@ -1,5 +1,6 @@
 import type { Project } from "../../../contract/src/index";
 import { apiGet, apiPost, findProject, streamSSE } from "../client";
+import { parseProjectArguments } from "../project-arguments";
 import {
   type CommandOutput,
   defaultCommandOutput,
@@ -18,25 +19,10 @@ export async function rebuildCommand(
   args: string[],
   output: CommandOutput = defaultCommandOutput,
 ): Promise<number> {
-  if (args.includes("--help") || args.includes("-h")) {
-    output.stdout(`${USAGE}\n`);
-    return 0;
-  }
-  const json = args.includes("--json");
-  const noCache = args.includes("--no-cache");
-  const positional = args.filter((arg) => arg !== "--json" && arg !== "--no-cache");
-  const option = positional.find((arg) => arg.startsWith("-"));
-  const selector = positional[0];
-  const error = option
-    ? `Unknown option: ${option}`
-    : positional.length > 1
-      ? `Unexpected argument: ${positional[1]}`
-      : undefined;
-  if (error || !selector) {
-    writeError(output, error ?? "Project is required", json);
-    if (!json) output.stderr(`${USAGE}\n`);
-    return 1;
-  }
+  const parsed = parseProjectArguments(args, USAGE, output, ["--no-cache"]);
+  if (typeof parsed === "number") return parsed;
+  const { selector, json, flags } = parsed;
+  const noCache = flags.has("--no-cache");
 
   const projects = await requestJson<Project[]>(
     () => apiGet("/api/projects"),
