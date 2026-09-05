@@ -51,7 +51,7 @@ moor exec <project> [--json] -- <command> # run a shell command in the container
 moor env list <project> [--json]     # list environment variables
 moor env set <project> KEY=VALUE     # set environment variables (human mode)
 moor env set <project> --env-file - --json # set environment variables (agent mode)
-moor stats                           # server resource usage
+moor stats [--json]                  # server resource usage
 moor history <project> [--hours N]   # stored resource history and events
 moor project deploy <name> [options] # create or update and optionally run a project
 moor mcp config --client <name>      # generate MCP client config snippet
@@ -82,6 +82,10 @@ moor logs api -n 100 --json
 Success prints the API response as one JSON document with `logs`, `lastTimestamp`, and `state` (`ok`, `exited`, `no_container`, or `missing`). Failures print structured JSON to stderr and exit nonzero. Exact project names take precedence over numeric IDs, matching `moor project get`.
 
 `--json` cannot be combined with `--follow` yet. Use `moor logs api --follow` for the existing human-readable polling mode; a later streaming slice will define JSONL follow events.
+
+## Host stats
+
+`moor stats --json` returns the server's stats response as one JSON document, including host CPU, memory, disk, and container totals. Without `--json`, it retains the human-readable summary. Errors go to stderr and exit 1; unknown options and extra arguments are rejected before any request.
 
 ## Run inspection
 
