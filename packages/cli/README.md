@@ -46,7 +46,7 @@ moor project get <name|id> [--json]  # get one project
 moor logs <project> [-f] [-n 100] [--json] # view container logs
 moor rebuild <project> [--no-cache] [--json] # rebuild from source
 moor restart <project> [--json]      # stop + start
-moor exec <project> <command>        # run a command in the container
+moor exec <project> [--json] -- <command> # run a shell command in the container
 moor env list <project> [--json]     # list environment variables
 moor env set <project> KEY=VALUE     # set environment variables (human mode)
 moor env set <project> --env-file - --json # set environment variables (agent mode)
@@ -81,6 +81,14 @@ moor logs api -n 100 --json
 Success prints the API response as one JSON document with `logs`, `lastTimestamp`, and `state` (`ok`, `exited`, `no_container`, or `missing`). Failures print structured JSON to stderr and exit nonzero. Exact project names take precedence over numeric IDs, matching `moor project get`.
 
 `--json` cannot be combined with `--follow` yet. Use `moor logs api --follow` for the existing human-readable polling mode; a later streaming slice will define JSONL follow events.
+
+## Exec
+
+`moor exec api --json -- 'printf hello'` prints one JSON document with `exitCode`, `stdout`, and `stderr`. The CLI exits with the container command's exit code, including nonzero results. Request and argument failures instead print a JSON error to stderr and exit 1.
+
+Put Moor options before `--`; everything after it belongs to the container command. Arguments are joined with spaces into a shell command, not passed as an argv array. Quote shell expressions to prevent your local shell from expanding them. Do not put secrets in command arguments.
+
+Existing human calls such as `moor exec api ls -la` still work and print the container's stdout and stderr directly. One compatibility exception: a standalone `--json` token anywhere without a separator is rejected to avoid confusing Moor output options with remote options. For a remote JSON option, use `moor exec api -- gh pr list --json state`; Moor still prints human-mode output. This command runs synchronously; asynchronous exec is not included in this slice.
 
 ## Restart
 
