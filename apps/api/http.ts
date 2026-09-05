@@ -6,10 +6,19 @@ export type JsonObjectResult =
   | { ok: true; value: Record<string, unknown> }
   | { ok: false; response: Response };
 
-export async function readJsonObject(req: Request): Promise<JsonObjectResult> {
+export async function readJsonObject(
+  req: Request,
+  options: { allowEmpty?: boolean } = {},
+): Promise<JsonObjectResult> {
   let raw: unknown;
   try {
-    raw = await req.json();
+    if (options.allowEmpty) {
+      const text = await req.text();
+      if (text.length === 0) return { ok: true, value: {} };
+      raw = JSON.parse(text);
+    } else {
+      raw = await req.json();
+    }
   } catch {
     return { ok: false, response: errorResponse("invalid JSON body", 400) };
   }

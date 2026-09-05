@@ -12,9 +12,9 @@ export async function handleCleanup(
   operations = { plan: planCleanup, execute: executeCleanup },
 ): Promise<Response | null> {
   if (url.pathname === "/api/server/cleanup/plan" && req.method === "POST") {
-    const body = req.body === null ? { ok: true as const, value: {} } : await readJsonObject(req);
+    const body = await readJsonObject(req, { allowEmpty: true });
     if (!body.ok) return body.response;
-    const scope = validateScope((body.value as Record<string, unknown>).scope);
+    const scope = validateScope(body.value.scope);
     if (!scope.ok) return errorResponse(scope.error, 400);
     try {
       return Response.json(await operations.plan(scope.value));
@@ -25,11 +25,9 @@ export async function handleCleanup(
   }
 
   if (url.pathname === "/api/server/cleanup/execute" && req.method === "POST") {
-    const body = req.body === null ? { ok: true as const, value: {} } : await readJsonObject(req);
+    const body = await readJsonObject(req, { allowEmpty: true });
     if (!body.ok) return body.response;
-    const candidates = validateExecuteCandidates(
-      (body.value as Record<string, unknown>).candidates,
-    );
+    const candidates = validateExecuteCandidates(body.value.candidates);
     if (!candidates.ok) return errorResponse(candidates.error, 400);
     try {
       return Response.json(await operations.execute(candidates.value));
