@@ -5,7 +5,11 @@ import { errorResponse } from "../http";
 
 const PAGE_SIZE = 20;
 
-export async function handleRuns(req: Request, url: URL): Promise<Response | null> {
+export async function handleRuns(
+  req: Request,
+  url: URL,
+  stopCron = stopCronRun,
+): Promise<Response | null> {
   // /api/projects/:id/runs
   const projectMatch = url.pathname.match(/^\/api\/projects\/(\d+)\/runs$/);
   if (projectMatch && req.method === "GET") {
@@ -100,8 +104,10 @@ export async function handleRuns(req: Request, url: URL): Promise<Response | nul
   if (stopMatch && req.method === "POST") {
     const id = Number(stopMatch[1]);
 
-    const stoppedCron = await stopCronRun(id);
+    const stoppedCron = await stopCron(id);
     if (stoppedCron) {
+      if (!stoppedCron.ok)
+        return Response.json({ ...stoppedCron, result: "cron_kill_incomplete" }, { status: 409 });
       return Response.json({ ok: true, result: "cancelled_cron" });
     }
 
