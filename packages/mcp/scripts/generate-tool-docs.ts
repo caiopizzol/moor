@@ -14,6 +14,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { format } from "vite-plus/fmt";
 
 import { registerCleanupTools } from "../src/tools/cleanup";
 import type { ToolContext } from "../src/tools/context";
@@ -104,7 +105,11 @@ if (beginIdx === -1 || endIdx === -1 || endIdx < beginIdx) {
 
 const before = readme.slice(0, beginIdx + BEGIN.length);
 const after = readme.slice(endIdx);
-const next = `${before}\n${renderMarkdown()}\n\n${after}`;
+const formatted = await format(readmePath, `${before}\n${renderMarkdown()}\n\n${after}`);
+if (formatted.errors.length > 0) {
+  throw new Error(formatted.errors.map((error) => error.message).join("\n"));
+}
+const next = formatted.code;
 
 if (process.argv.includes("--check")) {
   if (next !== readme) {

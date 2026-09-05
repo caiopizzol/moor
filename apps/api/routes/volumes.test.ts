@@ -8,9 +8,8 @@ process.env.MOOR_DB_PATH = ":memory:";
 import { beforeEach, describe, expect, test } from "bun:test";
 
 const { default: db } = await import("../db");
-const { handleVolumes, getProjectVolumes, collectProjectVolumeDockerNames } = await import(
-  "./volumes"
-);
+const { handleVolumes, getProjectVolumes, collectProjectVolumeDockerNames } =
+  await import("./volumes");
 
 async function call(method: string, path: string, body?: unknown): Promise<Response> {
   const req = new Request(`http://localhost${path}`, {

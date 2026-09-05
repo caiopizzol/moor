@@ -15,4 +15,3 @@ Use:
 - `MOOR_API_KEY=<your-api-key>`
 
 Do not use the unrelated unscoped `moor` package.
-

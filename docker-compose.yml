@@ -18,7 +18,13 @@ services:
       # - /mnt/your-data-volume:/host/mnt/your-data-volume:ro
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "bun", "-e", "fetch('http://localhost:3000/api/health').then(r=>{if(!r.ok)process.exit(1)})"]
+      test:
+        [
+          "CMD",
+          "bun",
+          "-e",
+          "fetch('http://localhost:3000/api/health').then(r=>{if(!r.ok)process.exit(1)})",
+        ]
       interval: 30s
       timeout: 5s
       retries: 3

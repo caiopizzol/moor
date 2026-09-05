@@ -3,26 +3,26 @@
   "version": "0.0.0-development",
   "private": true,
   "description": "Shared HTTP API contract for moor clients. Internal workspace package, never published: consumers bundle its source at publish time (see the prepack scripts in packages/cli and packages/mcp).",
+  "keywords": [
+    "api",
+    "contract",
+    "moor",
+    "types"
+  ],
+  "homepage": "https://github.com/caiopizzol/moor/tree/main/packages/contract",
+  "bugs": "https://github.com/caiopizzol/moor/issues",
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/caiopizzol/moor.git",
     "directory": "packages/contract"
   },
-  "homepage": "https://github.com/caiopizzol/moor/tree/main/packages/contract",
-  "bugs": "https://github.com/caiopizzol/moor/issues",
-  "keywords": [
-    "moor",
-    "contract",
-    "api",
-    "types"
+  "files": [
+    "src/"
   ],
   "type": "module",
   "main": "src/index.ts",
   "types": "src/index.ts",
-  "files": [
-    "src/"
-  ],
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "bun test src"

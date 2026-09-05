@@ -1,0 +1,2 @@
+[ -d node_modules/vite-plus ] || exit 0
+vp staged

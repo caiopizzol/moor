@@ -2,20 +2,19 @@
   "name": "@moor-sh/cli",
   "version": "0.0.0-development",
   "description": "Command-line interface for moor - manage your moor server's projects, logs, env vars, and container lifecycle.",
+  "keywords": [
+    "cli",
+    "docker",
+    "moor"
+  ],
+  "homepage": "https://github.com/caiopizzol/moor/tree/main/packages/cli",
+  "bugs": "https://github.com/caiopizzol/moor/issues",
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/caiopizzol/moor.git",
     "directory": "packages/cli"
   },
-  "homepage": "https://github.com/caiopizzol/moor/tree/main/packages/cli",
-  "bugs": "https://github.com/caiopizzol/moor/issues",
-  "keywords": [
-    "moor",
-    "cli",
-    "docker"
-  ],
-  "type": "module",
   "bin": {
     "moor": "bin/moor.js"
   },
@@ -23,6 +22,7 @@
     "bin/",
     "dist/"
   ],
+  "type": "module",
   "publishConfig": {
     "access": "public"
   },

@@ -75,8 +75,16 @@ Prints a ready-to-paste config snippet for Claude Code or Codex that wires `@moo
 ```bash
 bun install
 bun run dev:api   # API with hot reload
-bun run dev:web   # Vite dev server
+bun run dev:web   # Vite+ dev server
 ```
+
+Static checks use Vite+ 0.3.0 (`bun run vp check`); `bun run check` also runs the
+workspace TypeScript checks and Bun tests. Keep Bun for `bun:test`, SQLite tests,
+and the CLI/MCP executable bundles. `vp test` is the Vitest runner and does not
+run these Bun suites.
+
+`bun install` enables Vite+ commit hooks. They run staged format/lint checks and
+typechecking; installs without development dependencies skip hook setup.
 
 ## Stack
 

@@ -183,8 +183,8 @@ Use `--files files.json` to read a JSON array of injected files, or `--files -` 
 
 ```json
 [
-  {"path":"/etc/app/config.json","content":"{\"debug\":false}","mode":"0644"},
-  {"path":"/etc/app/token","env_ref":"TOKEN","mode":"0600"}
+  { "path": "/etc/app/config.json", "content": "{\"debug\":false}", "mode": "0644" },
+  { "path": "/etc/app/token", "env_ref": "TOKEN", "mode": "0600" }
 ]
 ```
 
@@ -240,7 +240,7 @@ moor cron run 12 --json
 Create reads a JSON object with `name`, `schedule`, and `command`; `timeout_ms` and `enabled` are optional. For example, `job.json` can contain:
 
 ```json
-{"name":"daily","schedule":"0 3 * * *","command":"node /app/job.js","enabled":false}
+{ "name": "daily", "schedule": "0 3 * * *", "command": "node /app/job.js", "enabled": false }
 ```
 
 Jobs are enabled by default; `enabled: false` stages a disabled job without an active scheduling window. Update accepts a patch of the same fields, so `{"enabled":false}` disables an existing job. Both commands accept stdin with `--file -`; keep shell commands in the JSON input rather than expanding them in your local shell. The container interprets `command` through `sh -c` when the job runs.

@@ -78,7 +78,7 @@ export function ProjectDetail({ project, onUpdate, onEdit, onDelete }: Props) {
       .catch(() => {});
   }, [project.id]);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: reload ports when status changes (e.g. after build)
+  // Reload ports when status changes (e.g. after build).
   useEffect(() => {
     loadPorts();
   }, [loadPorts, project.status]);

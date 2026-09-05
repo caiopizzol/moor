@@ -1,13 +1,13 @@
 {
   "name": "@moor/web",
-  "private": true,
   "version": "0.1.0",
+  "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "bun run typecheck && vite build",
-    "preview": "vite preview",
-    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.test.json"
+    "dev": "vp dev",
+    "build": "bun run typecheck && vp build",
+    "preview": "vp preview",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p src/tsconfig.json"
   },
   "dependencies": {
     "@moor-sh/contract": "workspace:*",
@@ -21,6 +21,7 @@
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.1.4",
-    "vite": "^7.3.1"
+    "vite": "catalog:",
+    "vite-plus": "catalog:"
   }
 }
