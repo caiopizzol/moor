@@ -2,13 +2,11 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { restartCommand } from "./restart";
 
 const originalFetch = globalThis.fetch;
-const originalLog = console.log;
 const originalMoorUrl = process.env.MOOR_URL;
 const originalMoorApiKey = process.env.MOOR_API_KEY;
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
-  console.log = originalLog;
   restoreEnv("MOOR_URL", originalMoorUrl);
   restoreEnv("MOOR_API_KEY", originalMoorApiKey);
 });
@@ -25,7 +23,6 @@ describe("restart command", () => {
     const calls: Array<{ method: string; path: string }> = [];
     const output: string[] = [];
 
-    console.log = (...args: unknown[]) => output.push(args.join(" "));
     globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
       const url = new URL(typeof input === "string" || input instanceof URL ? input : input.url);
       const method = init?.method ?? "GET";
@@ -48,12 +45,19 @@ describe("restart command", () => {
       throw new Error(`Unexpected request: ${method} ${url.pathname}`);
     }) as typeof fetch;
 
-    await restartCommand(["app"]);
+    expect(
+      await restartCommand(["app"], {
+        stdout: (text) => output.push(text),
+        stderr: (text) => {
+          throw new Error(text);
+        },
+      }),
+    ).toBe(0);
 
     expect(calls).toEqual([
       { method: "GET", path: "/api/projects" },
       { method: "POST", path: "/api/projects/7/restart" },
     ]);
-    expect(output).toEqual(["Restarting app...", "app restarted."]);
+    expect(output).toEqual(["Restarting app...\n", "app restarted.\n"]);
   });
 });

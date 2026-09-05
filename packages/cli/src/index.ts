@@ -32,7 +32,7 @@ Commands:
   status                          List all projects (human-readable alias)
   logs <project> [-f] [-n <lines>] [--json] View container logs
   rebuild <project> [--no-cache]  Rebuild and restart from source
-  restart <project>               Stop and start a container
+  restart <project> [--json]      Stop and start a container
   exec <project> <command>        Run a command in a container
   env list <project> [--json]     List environment variables
   env set <project> [options]     Set environment variables
@@ -62,7 +62,7 @@ switch (command) {
     await rebuildCommand(args.slice(1));
     break;
   case "restart":
-    await restartCommand(args.slice(1));
+    process.exitCode = await restartCommand(args.slice(1));
     break;
   case "exec":
     await execCommand(args.slice(1));
