@@ -91,11 +91,10 @@ export type CreateCronRequest = {
   schedule: string;
   command: string;
   timeout_ms?: number;
+  enabled?: boolean | 0 | 1;
 };
 
-export type UpdateCronRequest = Partial<CreateCronRequest> & {
-  enabled?: number | boolean;
-};
+export type UpdateCronRequest = Partial<CreateCronRequest>;
 
 export type Run = {
   id: number;

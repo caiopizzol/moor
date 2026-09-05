@@ -101,12 +101,16 @@ async function handleCreate(req: Request, projectId: number): Promise<Response> 
   const timeoutError = validateCronTimeoutMs(requestedTimeout);
   if (timeoutError) return errorResponse(timeoutError, 400);
   const timeoutMs = requestedTimeout as number;
+  if ("enabled" in body && !isEnabledValue(body.enabled)) {
+    return errorResponse("enabled must be a boolean or 0 or 1", 400);
+  }
+  const enabled = "enabled" in body ? Number(body.enabled) : 1;
 
   const row = db
     .query(
-      "INSERT INTO crons (project_id, name, schedule, command, timeout_ms) VALUES (?, ?, ?, ?, ?) RETURNING *",
+      "INSERT INTO crons (project_id, name, schedule, command, timeout_ms, enabled) VALUES (?, ?, ?, ?, ?, ?) RETURNING *",
     )
-    .get(projectId, name, schedule, command, timeoutMs);
+    .get(projectId, name, schedule, command, timeoutMs, enabled);
 
   return Response.json(row, { status: 201 });
 }
@@ -114,6 +118,15 @@ async function handleCreate(req: Request, projectId: number): Promise<Response> 
 async function handleUpdate(req: Request, id: number): Promise<Response> {
   const body: unknown = await req.json();
   if (!isJsonObject(body)) return errorResponse("Request body must be an object", 400);
+
+  for (const key of ["name", "command"]) {
+    if (key in body && (typeof body[key] !== "string" || !body[key].trim())) {
+      return errorResponse(`${key} must be a non-empty string`, 400);
+    }
+  }
+  if ("enabled" in body && !isEnabledValue(body.enabled)) {
+    return errorResponse("enabled must be a boolean or 0 or 1", 400);
+  }
 
   if ("schedule" in body) {
     if (typeof body.schedule !== "string") return errorResponse("schedule must be a string", 400);
@@ -148,4 +161,8 @@ async function handleUpdate(req: Request, id: number): Promise<Response> {
   if (!row) return errorResponse("Not found", 404);
 
   return Response.json(row);
+}
+
+function isEnabledValue(value: unknown): value is boolean | 0 | 1 {
+  return typeof value === "boolean" || value === 0 || value === 1;
 }
