@@ -82,6 +82,14 @@ Success prints the API response as one JSON document with `logs`, `lastTimestamp
 
 `--json` cannot be combined with `--follow` yet. Use `moor logs api --follow` for the existing human-readable polling mode; a later streaming slice will define JSONL follow events.
 
+## Run inspection
+
+`moor run list api --page 1 --json` returns `{runs,total}` with 20 summaries per page and no stdout/stderr bodies. `moor run get 11 --json` returns the run metadata and the last 8192 bytes of each output stream. Use `--tail-bytes 0` for metadata only, or up to 65536 bytes per stream.
+
+Detail output includes `stdout_truncated` and `stderr_truncated` flags and preserves total byte counts. UTF-8 characters are not split. The CLI limits displayed output after fetching the stored run; it does not limit the API download. Server-side retention may already have removed older output.
+
+Exit 0 means the read succeeded, even if the recorded run has a nonzero `exit_code`. Argument and request failures exit 1 and put errors on stderr. Without `--json`, list shows summary lines and get shows indented JSON. These commands do not stop or retry runs.
+
 ## Exec
 
 `moor exec api --json -- 'printf hello'` prints one JSON document with `exitCode`, `stdout`, and `stderr`. The CLI exits with the container command's exit code, including nonzero results. Request and argument failures instead print a JSON error to stderr and exit 1.

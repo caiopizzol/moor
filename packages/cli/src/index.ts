@@ -10,6 +10,7 @@ import { mcpCommand } from "./commands/mcp";
 import { PROJECT_USAGE, projectGetCommand, projectListCommand } from "./commands/project";
 import { rebuildCommand } from "./commands/rebuild";
 import { restartCommand } from "./commands/restart";
+import { runCommand } from "./commands/run";
 import { statsCommand } from "./commands/stats";
 import { statusCommand } from "./commands/status";
 
@@ -38,6 +39,8 @@ Commands:
   env set <project> [options]     Set environment variables
   stats                           Show server resource usage
   history <project> [--hours N]   Stored resource history + events (default 24h)
+  run list <project> [--page N] [--json] List run summaries
+  run get <id> [--tail-bytes N] [--json] Inspect a run and its stored output
   project list [--json]           List projects
   project get <name|id> [--json]  Get one project
   project deploy <name> [options] Create or update and optionally run a project
@@ -75,6 +78,9 @@ switch (command) {
     break;
   case "history":
     await historyCommand(args.slice(1));
+    break;
+  case "run":
+    process.exitCode = await runCommand(args.slice(1));
     break;
   case "project":
     if (args[1] === "list") process.exitCode = await projectListCommand(args.slice(2));
