@@ -132,6 +132,18 @@ test("update audit returns all lifecycle states without treating remote failure 
   );
 });
 
+test("update audit preserves unfamiliar server states in both output modes", async () => {
+  const payload = { rows: [{ ...row, state: "awaiting_restart" }] };
+  response = () => Response.json(payload);
+  for (const json of [true, false]) {
+    expect(await run(["update", "audit", ...(json ? ["--json"] : [])])).toEqual({
+      exitCode: 0,
+      stdout: `${JSON.stringify(payload, null, json ? undefined : 2)}\n`,
+      stderr: "",
+    });
+  }
+});
+
 test("update audit forwards limit bounds and supports empty history", async () => {
   response = () => Response.json({ rows: [] });
   for (const limit of [1, 20, 200]) {
@@ -212,7 +224,7 @@ test("update rejects malformed readiness and audit documents without success out
         {},
         { rows: [null] },
         { rows: [{ ...row, id: 0 }] },
-        { rows: [{ ...row, state: "bogus" }] },
+        { rows: [{ ...row, state: 1 }] },
         { rows: [{ ...row, error_log: 3 }] },
       ],
     ],

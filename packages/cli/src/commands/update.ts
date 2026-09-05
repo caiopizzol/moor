@@ -72,9 +72,7 @@ function isAudit(value: unknown): boolean {
         nullableString(row.finished_at) &&
         (row.finished_at_ms === null || finite(row.finished_at_ms)) &&
         (row.duration_ms === null || finite(row.duration_ms)) &&
-        ["in_progress", "success", "rolled_back", "rollback_failed", "failed", "crashed"].includes(
-          row.state as string,
-        ) &&
+        typeof row.state === "string" &&
         [
           "from_digest",
           "to_digest",
