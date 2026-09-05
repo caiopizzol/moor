@@ -168,6 +168,14 @@ export async function runCron(
   containerId: string,
   execute: typeof execInContainer = execInContainer,
 ) {
+  await startCron(cron, containerId, execute).completion;
+}
+
+export function startCron(
+  cron: CronRow,
+  containerId: string,
+  execute: typeof execInContainer = execInContainer,
+): { runId: number; completion: Promise<void> } {
   // #73: set started_at_ms and finished_at_ms so moor_runs' ms-precision
   // ordering (COALESCE(started_at_ms,0) DESC, id DESC) sorts cron runs
   // alongside build runs correctly, and so duration_ms is precise.
@@ -194,25 +202,28 @@ export async function runCron(
     ).run(new Date(finish).toISOString(), finish, exitCode, stdout, stderr, finish - start, run.id);
   };
 
-  try {
-    const result = await execute(containerId, cron.command, {
-      signal: controller.signal,
-      timeout_ms: cron.timeout_ms,
-      onExecId: (id) => {
-        entry.execId = id;
-      },
-    });
-    finalize(result.exitCode, result.stdout, result.stderr);
-  } catch (e) {
-    if (controller.signal.aborted) {
-      finalize(-1, "", "Stopped by user");
-    } else {
-      const message = e instanceof Error ? e.message : "Unknown error";
-      finalize(-1, "", message);
+  const completion = (async () => {
+    try {
+      const result = await execute(containerId, cron.command, {
+        signal: controller.signal,
+        timeout_ms: cron.timeout_ms,
+        onExecId: (id) => {
+          entry.execId = id;
+        },
+      });
+      finalize(result.exitCode, result.stdout, result.stderr);
+    } catch (e) {
+      if (controller.signal.aborted) {
+        finalize(-1, "", "Stopped by user");
+      } else {
+        const message = e instanceof Error ? e.message : "Unknown error";
+        finalize(-1, "", message);
+      }
+    } finally {
+      activeRuns.delete(run.id);
     }
-  } finally {
-    activeRuns.delete(run.id);
-  }
+  })();
+  return { runId: run.id, completion };
 }
 
 export async function stopCronRun(runId: number): Promise<boolean> {

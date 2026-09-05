@@ -4,13 +4,17 @@ import {
   validateCronSchedule,
   validateCronTimeoutMs,
 } from "../../../packages/contract/src/index";
-import { runCron } from "../cron";
+import { startCron } from "../cron";
 import db from "../db";
 import { requireNotDraining } from "../drain";
 import { errorResponse } from "../http";
 import { liveRequireErrorResponse, requireLiveContainer } from "../status-reconciler";
 
-export async function handleCrons(req: Request, url: URL): Promise<Response | null> {
+export async function handleCrons(
+  req: Request,
+  url: URL,
+  dependencies = { requireLiveContainer, startCron },
+): Promise<Response | null> {
   // Project-scoped: /api/projects/:id/crons
   const projectMatch = url.pathname.match(/^\/api\/projects\/(\d+)\/crons$/);
   if (projectMatch) {
@@ -68,12 +72,12 @@ export async function handleCrons(req: Request, url: URL): Promise<Response | nu
 
     // #73: fresh inspect, not cached project.status — a manual cron
     // trigger is about to exec into the container.
-    const live = await requireLiveContainer(project);
+    const live = await dependencies.requireLiveContainer(project);
     const errorRes = liveRequireErrorResponse(live);
     if (errorRes) return errorRes;
 
-    runCron(cron, project.container_id as string);
-    return Response.json({ ok: true });
+    const { runId } = dependencies.startCron(cron, project.container_id as string);
+    return Response.json({ ok: true, run_id: runId });
   }
 
   return null;
