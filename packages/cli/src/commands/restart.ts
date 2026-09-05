@@ -1,5 +1,6 @@
 import type { Project } from "../../../contract/src/index";
 import { apiGet, apiPost, findProject } from "../client";
+import { parseProjectArguments } from "../project-arguments";
 import { type CommandOutput, defaultCommandOutput, requestJson, writeError } from "../protocol";
 
 const USAGE = "Usage: moor restart <project> [--json]";
@@ -8,26 +9,9 @@ export async function restartCommand(
   args: string[],
   output: CommandOutput = defaultCommandOutput,
 ): Promise<number> {
-  if (args.includes("--help") || args.includes("-h")) {
-    output.stdout(`${USAGE}\n`);
-    return 0;
-  }
-  const json = args.includes("--json");
-  const positional = args.filter((arg) => arg !== "--json");
-  const option = positional.find((arg) => arg.startsWith("-"));
-  const selector = positional[0];
-  const error = option
-    ? `Unknown option: ${option}`
-    : !selector
-      ? "Project is required"
-      : positional.length > 1
-        ? `Unexpected argument: ${positional[1]}`
-        : undefined;
-  if (error || !selector) {
-    writeError(output, error ?? "Project is required", json);
-    if (!json) output.stderr(`${USAGE}\n`);
-    return 1;
-  }
+  const parsed = parseProjectArguments(args, USAGE, output);
+  if (typeof parsed === "number") return parsed;
+  const { selector, json } = parsed;
   const projects = await requestJson<Project[]>(
     () => apiGet("/api/projects"),
     json,
