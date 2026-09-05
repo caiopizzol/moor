@@ -204,7 +204,7 @@ export function startCron(
     db.query(
       `UPDATE runs SET finished_at = ?, finished_at_ms = ?, exit_code = ?,
                        stdout = ?, stderr = ?, duration_ms = ?
-       WHERE id = ?`,
+       WHERE id = ? AND finished_at IS NULL`,
     ).run(new Date(finish).toISOString(), finish, exitCode, stdout, stderr, finish - start, run.id);
   };
 
