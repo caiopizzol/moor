@@ -20,6 +20,8 @@ Options:
   --source-credential-id <id> Select a stored credential for a private repository
   --env-file <path|->      Merge env from a JSON object; - reads stdin
   --files <path|->         Upsert files from a JSON array; - reads stdin
+  --command <JSON>        Command argv array, or null to restore image defaults
+  --entrypoint <JSON>     Entrypoint argv array, or null to restore image defaults
   --memory-limit-mb <N|unlimited> Set memory cap in MB, or clear it
   --cpus <N|unlimited>     Set CPU cap (fractional cores allowed), or clear it
   --volume <name>:<target> Add a named volume at an absolute container path (repeatable)
@@ -49,6 +51,7 @@ export function parseDeployArgs(args: string[]): ParsedDeployArgs {
   let envFile: string | undefined;
   let filesFile: string | undefined;
   const seenLimits = new Set<string>();
+  const seenProcess = new Set<string>();
   const json = args.includes("--json");
 
   for (let index = 0; index < args.length; index += 1) {
@@ -81,6 +84,8 @@ export function parseDeployArgs(args: string[]): ParsedDeployArgs {
         "--source-credential-id",
         "--env-file",
         "--files",
+        "--command",
+        "--entrypoint",
         "--memory-limit-mb",
         "--cpus",
         "--volume",
@@ -94,6 +99,23 @@ export function parseDeployArgs(args: string[]): ParsedDeployArgs {
     }
     index += 1;
     switch (arg) {
+      case "--command":
+      case "--entrypoint": {
+        if (seenProcess.has(arg)) return { json, error: `${arg} may be used only once` };
+        seenProcess.add(arg);
+        let argv: unknown;
+        try {
+          argv = JSON.parse(value);
+        } catch {
+          return { json, error: `${arg} must be a JSON array or null` };
+        }
+        if (argv !== null && !Array.isArray(argv)) {
+          return { json, error: `${arg} must be a JSON array or null` };
+        }
+        if (arg === "--command") input.command = argv;
+        else input.entrypoint = argv;
+        break;
+      }
       case "--memory-limit-mb":
       case "--cpus": {
         if (seenLimits.has(arg)) return { json, error: `${arg} may be used only once` };
