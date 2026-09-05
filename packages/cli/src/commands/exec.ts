@@ -15,7 +15,9 @@ export async function execCommand(
 ): Promise<number> {
   const boundary = args.indexOf("--");
   const separator =
-    boundary > 1 && !args[0]?.startsWith("-") && !args[1]?.startsWith("-") ? -1 : boundary;
+    boundary > 1 && !args[0]?.startsWith("-") && !args.slice(0, boundary).includes("--json")
+      ? -1
+      : boundary;
   const prefix = separator < 0 ? args.slice(0, 1) : args.slice(0, separator);
   const json = prefix.includes("--json") || (boundary < 0 && args.includes("--json"));
   if (separator < 0 && json) {
@@ -36,6 +38,19 @@ export async function execCommand(
     output,
   );
   if (!projects.ok) return 1;
+  if (
+    !Array.isArray(projects.value) ||
+    projects.value.some(
+      (candidate) =>
+        !candidate ||
+        !Number.isSafeInteger(candidate.id) ||
+        candidate.id <= 0 ||
+        typeof candidate.name !== "string",
+    )
+  ) {
+    writeError(output, "Invalid project response", json);
+    return 1;
+  }
   const project = findProject(projects.value, parsed.selector);
   if (!project) {
     writeError(output, `Project "${parsed.selector}" not found`, json);

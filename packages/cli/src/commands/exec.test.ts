@@ -8,6 +8,10 @@ async function fixture(
   ) => Promise<void>,
   result: unknown = { exitCode: 0, stdout: "hello\n", stderr: "warning\n" },
   status = 200,
+  projects: unknown = [
+    { id: 7, name: "worker" },
+    { id: 8, name: "7" },
+  ],
 ) {
   const requests: Array<{ path: string; method: string; auth: string | null; body: unknown }> = [];
   const server = Bun.serve({
@@ -21,11 +25,7 @@ async function fixture(
         auth: request.headers.get("Authorization"),
         body: request.method === "POST" ? await request.json() : null,
       });
-      if (path === "/api/projects")
-        return Response.json([
-          { id: 7, name: "worker" },
-          { id: 8, name: "7" },
-        ]);
+      if (path === "/api/projects") return Response.json(projects);
       if (path !== "/api/projects/8/exec")
         return Response.json({ error: "Wrong project" }, { status: 404 });
       return Response.json(result, { status });
@@ -94,6 +94,35 @@ test("exec preserves legacy human streams and command separators", async () => {
     }
   });
 });
+
+test("exec preserves a legacy shell command beginning with a dash", async () => {
+  await fixture(async (run, requests) => {
+    expect(await run(["7", "-l", "--", "echo"])).toEqual({
+      exitCode: 0,
+      stdout: "hello\n",
+      stderr: "warning\n",
+    });
+    expect(requests.at(-1)?.body).toEqual({ command: "-l -- echo" });
+  });
+});
+
+for (const projects of [{}, null, [null], [{ id: "8", name: "7" }]]) {
+  test(`exec rejects invalid project response ${JSON.stringify(projects)} without POST`, async () => {
+    await fixture(
+      async (run, requests) => {
+        expect(await run(["7", "--json", "--", "echo"])).toEqual({
+          exitCode: 1,
+          stdout: "",
+          stderr: '{"error":"Invalid project response"}\n',
+        });
+        expect(requests.map((r) => r.method)).toEqual(["GET"]);
+      },
+      undefined,
+      200,
+      projects,
+    );
+  });
+}
 
 for (const [args, error] of [
   [["7", "--json", "echo"], "--json requires -- before the command"],
