@@ -46,6 +46,7 @@ Commands:
   env delete <project> <keys...> [--json] Remove environment variables
   stats [--json]                  Show server resource usage
   server drain <verb> [--json]    Inspect, enable, or disable server drain (see --help)
+  server backup [--json]         Create a server-local database snapshot
   history <project> [--hours N] [--json] Stored resource history + events (default 24h)
   run list <project> [--page N] [--json] List run summaries
   run get <id> [--tail-bytes N] [--json] Inspect a run and its stored output
