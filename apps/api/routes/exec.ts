@@ -8,7 +8,7 @@ import {
   startAsyncExec,
   stopAsyncExec,
 } from "../exec-async";
-import { errorResponse } from "../http";
+import { errorResponse, readJsonObject } from "../http";
 import { liveRequireErrorResponse, requireLiveContainer } from "../status-reconciler";
 
 type Project = { id: number; container_id: string | null; status: string };
@@ -30,12 +30,17 @@ export async function handleExec(req: Request, url: URL): Promise<Response | nul
 
     // Validate cheap inputs first (no I/O); fresh live check after so
     // an operator with bad timeout_ms gets a useful 400, not a 503.
-    const body = (await req.json()) as { command?: string; timeout_ms?: number };
-    if (!body.command) return errorResponse("Missing command", 400);
+    const parsed = await readJsonObject(req);
+    if (!parsed.ok) return parsed.response;
+    const body = parsed.value;
+    if (typeof body.command !== "string" || !body.command.trim()) {
+      return errorResponse("command must be a non-empty string", 400);
+    }
 
     let timeoutMs = EXEC_ASYNC_TIMEOUT_DEFAULT_MS;
     if (body.timeout_ms !== undefined) {
       if (
+        typeof body.timeout_ms !== "number" ||
         !Number.isInteger(body.timeout_ms) ||
         body.timeout_ms < EXEC_ASYNC_TIMEOUT_MIN_MS ||
         body.timeout_ms > EXEC_ASYNC_TIMEOUT_MAX_MS
