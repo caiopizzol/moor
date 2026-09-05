@@ -46,6 +46,7 @@ moor project get <name|id> [--json]  # get one project
 moor logs <project> [-f] [-n 100] [--json] # view container logs
 moor rebuild <project> [--no-cache] [--json] # rebuild from source
 moor restart <project> [--json]      # stop + start
+moor stop <project> [--json]         # stop without deleting the project
 moor exec <project> [--json] -- <command> # run a shell command in the container
 moor env list <project> [--json]     # list environment variables
 moor env set <project> KEY=VALUE     # set environment variables (human mode)
@@ -102,6 +103,12 @@ Existing human calls such as `moor exec api ls -la` still work and print the con
 
 `moor restart api --json` returns the API response as one JSON document. Errors go to stderr with a non-zero exit code. Unknown options and extra arguments are rejected. Without `--json`, the existing progress messages are preserved.
 
+## Stop
+
+`moor stop api --json` stops the project's container without deleting its configuration or volumes. Success prints the API response as one JSON document; human mode prints a confirmation. Request failures go to stderr and exit 1. Missing projects, unknown options, and extra arguments fail without a stop request.
+
+The API treats already-stopped or absent containers as success. A Docker failure returns an error without marking the project stopped; a failed request does not prove the container's current state. Use project inspection to check its live state.
+
 ## Rebuild
 
 `moor rebuild api --json` emits one `{event,data}` JSON object per line as the API builds and starts the project. Use `--no-cache` to bypass the build cache. Human mode retains progress and log output.
@@ -112,7 +119,7 @@ Failures before streaming emit one JSON error document on stderr. Stream failure
 
 `moor env delete api OLD_KEY OTHER_KEY --json` removes matching keys in one server operation. The response lists `deleted_keys`, `missing_keys`, and `restarted`. Missing keys are a no-op; stopped projects are not started. Running projects restart only after an actual deletion. Drain rejects restart-requiring deletion before changing values.
 
-If restart fails after deletion, the command exits nonzero and reports the deleted keys with `env_updated: true`; it does not roll the deletion back. Keys are matched exactly. The legacy single-key API deletion remains configuration-only.
+If restart fails after deletion, the command exits nonzero and reports the deleted keys with `env_updated: true`; it does not roll the deletion back. Keys are trimmed and deduplicated before matching, consistent with environment writes. The legacy single-key API deletion remains configuration-only.
 
 List a project's environment values as one JSON document for agents:
 
