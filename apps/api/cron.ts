@@ -7,7 +7,13 @@ import { requireLiveContainer } from "./status-reconciler";
  *  tests can observe active cron runs without going through the
  *  full cron tick. stopCronRun() is the documented public API; this
  *  map is the underlying state. */
-export const activeRuns = new Map<number, { controller: AbortController; execId: string }>();
+type CronStopOutcome = { ok: boolean; live_remaining: number; message: string };
+type ActiveCron = {
+  controller: AbortController;
+  execId: string;
+  stopOutcome?: Promise<CronStopOutcome>;
+};
+export const activeRuns = new Map<number, ActiveCron>();
 
 type CronRow = {
   id: number;
@@ -190,7 +196,7 @@ export function startCron(
     .get(cron.id, cron.project_id, startedAt, start) as { id: number };
 
   const controller = new AbortController();
-  const entry = { controller, execId: "" };
+  const entry: ActiveCron = { controller, execId: "" };
   activeRuns.set(run.id, entry);
 
   const finalize = (exitCode: number, stdout: string, stderr: string): void => {
@@ -211,10 +217,12 @@ export function startCron(
           entry.execId = id;
         },
       });
+      if (controller.signal.aborted) throw new Error("Execution aborted");
       finalize(result.exitCode, result.stdout, result.stderr);
     } catch (e) {
       if (controller.signal.aborted) {
-        finalize(-1, "", "Stopped by user");
+        const outcome = await entry.stopOutcome;
+        finalize(-1, "", outcome?.message ?? "Stopped by user");
       } else {
         const message = e instanceof Error ? e.message : "Unknown error";
         finalize(-1, "", message);
@@ -226,18 +234,43 @@ export function startCron(
   return { runId: run.id, completion };
 }
 
-export async function stopCronRun(runId: number): Promise<boolean> {
+export async function stopCronRun(
+  runId: number,
+  kill: typeof killExec = killExec,
+): Promise<CronStopOutcome | undefined> {
   const active = activeRuns.get(runId);
-  if (!active) return false;
-
-  // Kill the process inside the container
-  if (active.execId) {
-    await killExec(active.execId);
-  }
-
-  // Abort the fetch (causes runCron to record "Stopped by user")
+  if (!active) return undefined;
+  if (active.stopOutcome) return active.stopOutcome;
+  active.stopOutcome = (async () => {
+    if (!active.execId)
+      return {
+        ok: false,
+        live_remaining: 0,
+        message: "Stop requested before exec ID was available; process state unknown",
+      };
+    try {
+      const result = await kill(active.execId);
+      if (result.ok)
+        return {
+          ok: true,
+          live_remaining: 0,
+          message: "Stopped by user; execution is no longer running",
+        };
+      return {
+        ok: false,
+        live_remaining: result.live,
+        message: `Kill incomplete: ${result.live} known survivor(s); process state unknown. Do not retry blindly`,
+      };
+    } catch {
+      return {
+        ok: false,
+        live_remaining: 0,
+        message: "Kill failed; process state unknown. Do not retry blindly",
+      };
+    }
+  })();
   active.controller.abort();
-  return true;
+  return active.stopOutcome;
 }
 
 let cronInterval: ReturnType<typeof setInterval> | null = null;

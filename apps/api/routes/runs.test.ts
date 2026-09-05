@@ -305,7 +305,7 @@ describe("#68 POST /api/runs/:id/stop dispatch", () => {
     expect(body).toEqual({ ok: false, result: "not_active" });
   });
 
-  test("active cron run → 200 { ok:true, result:'cancelled_cron' }", async () => {
+  test("cron without an exec ID reports uncertain cancellation", async () => {
     // cron.ts exports activeRuns; we populate it directly so stopCronRun()
     // takes the truthy path without setting up the full cron tick.
     // execId='' is falsy → stopCronRun skips killExec (no real Docker call).
@@ -330,9 +330,9 @@ describe("#68 POST /api/runs/:id/stop dispatch", () => {
     activeRuns.set(rid, { controller, execId: "" });
 
     const res = await call("POST", `/api/runs/${rid}/stop`);
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(409);
     const body = (await res.json()) as { ok: boolean; result: string };
-    expect(body).toEqual({ ok: true, result: "cancelled_cron" });
+    expect(body).toMatchObject({ ok: false, result: "cron_kill_incomplete", live_remaining: 0 });
     expect(controller.signal.aborted).toBe(true);
     activeRuns.delete(rid);
   });
