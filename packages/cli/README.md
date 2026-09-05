@@ -292,6 +292,19 @@ The update object accepts `username`, `secret`, `label`, and `expires_at`. Omitt
 
 These commands emit one JSON document with `--json`. Failures use stderr and exit 1. Human list/create output shows ID, hostname, label, and state; human check output shows the response as formatted JSON.
 
+## Server update inspection
+
+```sh
+moor server update status --json
+moor server update audit --limit 20 --json
+```
+
+These read-only commands make one request without polling, retries, drain changes, or starting an update. Status reports current and available versions, active work, backup recency, `safe_to_update`, and `unsafe_reasons`. Unknown registry comparisons remain `null`. The server's `recommended_command` is informational; the CLI does not execute it.
+
+Audit returns `{rows: [...]}` with recent update attempts (default 20; `--limit` accepts integers 1–200). Inspect each row's `state` and error fields. `crashed` means an old in-progress record had no completion marker, not necessarily an observed process crash. Full records are downloaded and displayed.
+
+Exit 0 means retrieval succeeded, including unsafe readiness or failed updates in audit history. Request or invalid-response failures use stderr and exit 1. Success prints one JSON document with `--json`, or formatted JSON otherwise. These commands do not apply updates.
+
 ## Guarded server cleanup
 
 ```bash
