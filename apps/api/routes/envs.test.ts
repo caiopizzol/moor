@@ -1,9 +1,10 @@
 process.env.MOOR_DB_PATH = ":memory:";
 
-import { beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { Project, ProjectActionResult, RestartProjectInput } from "../deploy";
 
 const { default: db } = await import("../db");
+const { disableDrain, enableDrain } = await import("../drain");
 const { handleEnvs } = await import("./envs");
 
 function insertProject(status: "running" | "stopped" = "stopped"): Project {
@@ -24,8 +25,9 @@ async function call(
   ) => Promise<ProjectActionResult> = async () => {
     throw new Error("restart was not expected");
   },
+  operation = "",
 ): Promise<Response> {
-  const request = new Request(`http://localhost/api/projects/${projectId}/envs`, {
+  const request = new Request(`http://localhost/api/projects/${projectId}/envs${operation}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -42,6 +44,11 @@ function envs(projectId: number): Array<{ key: string; value: string }> {
 }
 
 describe("POST /api/projects/:id/envs", () => {
+  afterEach(() => {
+    disableDrain();
+    db.query("DELETE FROM env_vars").run();
+    db.query("DELETE FROM projects").run();
+  });
   beforeEach(() => {
     db.query("DELETE FROM env_vars").run();
     db.query("DELETE FROM projects").run();
@@ -59,6 +66,110 @@ describe("POST /api/projects/:id/envs", () => {
       { key: "A", value: "1" },
       { key: "B", value: "2" },
     ]);
+  });
+
+  test("deletes matching keys once, preserves unrelated values, and does not start stopped projects", async () => {
+    const p = insertProject();
+    await call(p.id, { vars: { A: "1", B: "2" } });
+    const response = await call(p.id, { keys: [" A ", "A", " MISSING "] }, undefined, "/delete");
+    expect(await response.json()).toEqual({
+      deleted_keys: ["A"],
+      missing_keys: ["MISSING"],
+      restarted: false,
+    });
+    expect(envs(p.id)).toEqual([{ key: "B", value: "2" }]);
+  });
+
+  test("deletion restarts after writes under the lifecycle lock and serializes concurrent merge", async () => {
+    const p = insertProject("running");
+    db.query("INSERT INTO env_vars (project_id,key,value) VALUES (?, 'A', '1')").run(p.id);
+    let entered!: () => void;
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const deleting = call(
+      p.id,
+      { keys: ["A"] },
+      async (_p, options) => {
+        expect(options.lifecycleLockHeld).toBe(true);
+        expect(envs(p.id)).toEqual([]);
+        entered();
+        await gate;
+        expect(envs(p.id)).toEqual([]);
+        return { kind: "json", body: { message: "restarted" } };
+      },
+      "/delete",
+    );
+    await started;
+    let parsed!: () => void;
+    const parsedBody = new Promise<void>((resolve) => {
+      parsed = resolve;
+    });
+    const url = new URL(`http://localhost/api/projects/${p.id}/envs`);
+    const merging = handleEnvs(
+      {
+        method: "POST",
+        json: async () => {
+          parsed();
+          return { vars: { A: "new" } };
+        },
+      } as Request,
+      url,
+      { restartProject: async () => ({ kind: "json", body: {} }) },
+    );
+    await parsedBody;
+    release();
+    expect((await deleting).status).toBe(200);
+    expect((await merging)?.status).toBe(200);
+    expect(envs(p.id)).toEqual([{ key: "A", value: "new" }]);
+  });
+
+  test("missing deletion keys are a no-op even on a running project", async () => {
+    const p = insertProject("running");
+    expect(await (await call(p.id, { keys: ["missing"] }, undefined, "/delete")).json()).toEqual({
+      deleted_keys: [],
+      missing_keys: ["missing"],
+      restarted: false,
+    });
+  });
+
+  test("deletion reports partial success when restart fails", async () => {
+    const p = insertProject("running");
+    db.query("INSERT INTO env_vars (project_id,key,value) VALUES (?, 'A', '1')").run(p.id);
+    const response = await call(
+      p.id,
+      { keys: ["A"] },
+      async () => ({ kind: "json", status: 500, body: { error: "restart failed" } }),
+      "/delete",
+    );
+    expect(response.status).toBe(500);
+    expect(await response.json()).toMatchObject({
+      env_updated: true,
+      deleted_keys: ["A"],
+      restarted: false,
+    });
+    expect(envs(p.id)).toEqual([]);
+  });
+
+  test("deletion validates input and missing projects", async () => {
+    const p = insertProject();
+    for (const body of [{}, { keys: [] }, { keys: [1] }, { keys: [" "] }])
+      expect((await call(p.id, body, undefined, "/delete")).status).toBe(400);
+    expect((await call(999, { keys: ["A"] }, undefined, "/delete")).status).toBe(404);
+  });
+
+  test("drain rejects a running-project deletion before writes", async () => {
+    const p = insertProject("running");
+    db.query("INSERT INTO env_vars (project_id,key,value) VALUES (?, 'A', '1')").run(p.id);
+    enableDrain({ reason: "test" });
+    const response = await call(p.id, { keys: ["A"] }, undefined, "/delete");
+    expect(response.status).toBe(503);
+    expect(envs(p.id)).toEqual([{ key: "A", value: "1" }]);
+    expect((await call(p.id, { keys: ["missing"] }, undefined, "/delete")).status).toBe(200);
   });
 
   test("restarts a running project after merging values", async () => {

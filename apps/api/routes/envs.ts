@@ -11,6 +11,7 @@ import {
   withProjectLifecycleLock,
   withProjectLifecycleLocks,
 } from "../deploy";
+import { requireNotDraining } from "../drain";
 import { errorResponse, readJsonObject, responseErrorMessage } from "../http";
 
 type EnvRouteDeps = {
@@ -34,10 +35,68 @@ export async function handleEnvs(
   }
 
   // /api/projects/:id/envs
-  const match = url.pathname.match(/^\/api\/projects\/(\d+)\/envs$/);
+  const match = url.pathname.match(/^\/api\/projects\/(\d+)\/envs(\/delete)?$/);
   if (!match) return null;
 
   const projectId = Number(match[1]);
+
+  if (match[2] && req.method !== "POST") return null;
+  if (match[2] && req.method === "POST") {
+    const json = await readJsonObject(req);
+    if (!json.ok) return json.response;
+    const keys = json.value.keys;
+    if (
+      !Array.isArray(keys) ||
+      keys.length === 0 ||
+      keys.some((key) => typeof key !== "string" || !key.trim())
+    ) {
+      return errorResponse("keys must be a non-empty array of non-empty strings", 400);
+    }
+    const project = getProject(projectId);
+    if (!project) return errorResponse("Not found", 404);
+    return withProjectLifecycleLocks(project, async () => {
+      const current = getProject(projectId);
+      if (!current) return errorResponse("Not found", 404);
+      const existing = new Set(listProjectEnvs(projectId).map((row) => row.key));
+      const unique = [...new Set((keys as string[]).map((key) => key.trim()))];
+      const deleted_keys = unique.filter((key) => existing.has(key));
+      const missing_keys = unique.filter((key) => !existing.has(key));
+      const shouldRestart = current.status === "running" && deleted_keys.length > 0;
+      if (shouldRestart) {
+        const drained = requireNotDraining();
+        if (drained) return drained;
+      }
+      db.transaction(() => {
+        const remove = db.query("DELETE FROM env_vars WHERE project_id = ? AND key = ?");
+        for (const key of deleted_keys) remove.run(projectId, key);
+      })();
+      if (shouldRestart) {
+        try {
+          const restart =
+            partialDeps?.restartProject ??
+            ((target, options) => restartProject(target, undefined, options));
+          const failure = await restartFailure(
+            await restart(current, { lifecycleLockHeld: true }),
+            deleted_keys,
+            missing_keys,
+          );
+          if (failure) return failure;
+        } catch (error) {
+          return Response.json(
+            {
+              error: `Environment variables were deleted, but restart failed: ${error instanceof Error ? error.message : String(error)}`,
+              env_updated: true,
+              deleted_keys,
+              missing_keys,
+              restarted: false,
+            },
+            { status: 500 },
+          );
+        }
+      }
+      return Response.json({ deleted_keys, missing_keys, restarted: shouldRestart });
+    });
+  }
 
   if (req.method === "GET") {
     return Response.json(listProjectEnvs(projectId));
@@ -122,6 +181,7 @@ export function mergeProjectEnvs(projectId: number, vars: Record<string, string>
 async function restartFailure(
   result: ProjectActionResult,
   updatedKeys: string[],
+  missingKeys?: string[],
 ): Promise<Response | null> {
   if (result.kind === "json" && (result.status === undefined || result.status < 400)) return null;
 
@@ -142,9 +202,11 @@ async function restartFailure(
   }
   return Response.json(
     {
-      error: `Environment variables were updated, but restart failed: ${message}`,
+      error: `Environment variables were ${missingKeys === undefined ? "updated" : "deleted"}, but restart failed: ${message}`,
       env_updated: true,
-      updated_keys: updatedKeys,
+      ...(missingKeys === undefined
+        ? { updated_keys: updatedKeys }
+        : { deleted_keys: updatedKeys, missing_keys: missingKeys, restarted: false }),
     },
     { status },
   );

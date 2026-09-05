@@ -1,10 +1,16 @@
 import { readFile } from "node:fs/promises";
-import type { EnvVar, MergeEnvVarsResponse, Project } from "../../../contract/src/index";
+import type {
+  DeleteEnvVarsResponse,
+  EnvVar,
+  MergeEnvVarsResponse,
+  Project,
+} from "../../../contract/src/index";
 import { apiGet, apiPost, findProject } from "../client";
 import { type CommandOutput, defaultCommandOutput, requestJson, writeError } from "../protocol";
 
 export const ENV_USAGE = `Usage:
   moor env list <project> [--json]
+  moor env delete <project> <keys...> [--json]
   moor env set <project> KEY=VALUE [KEY=VALUE ...]
   moor env set <project> --env-file <path|-> [--json]
 
@@ -45,6 +51,7 @@ export async function envCommand(
 
   if (subcommand === "list") return envList(args.slice(1), output);
   if (subcommand === "set") return envSet(args.slice(1), output);
+  if (subcommand === "delete") return envDelete(args.slice(1), output);
   if (subcommand === "--help" || subcommand === "-h") {
     output.stdout(`${ENV_USAGE}\n`);
     return 0;
@@ -205,6 +212,37 @@ async function envSet(args: string[], output: EnvOutput): Promise<number> {
   return 0;
 }
 
+async function envDelete(args: string[], output: EnvOutput): Promise<number> {
+  if (args.includes("--help") || args.includes("-h")) {
+    output.stdout(`${ENV_USAGE}\n`);
+    return 0;
+  }
+  const json = args.includes("--json");
+  const positional = args.filter((arg) => arg !== "--json");
+  const invalid = positional.find((arg) => arg.startsWith("-") || !arg.trim());
+  if (invalid !== undefined || positional.length < 2) {
+    writeError(
+      output,
+      invalid !== undefined
+        ? "Unexpected option or empty key"
+        : "Project and at least one key are required",
+      json,
+    );
+    return 1;
+  }
+  const project = await getProject(positional[0], json, output);
+  if (!project) return 1;
+  const result = await requestJson<DeleteEnvVarsResponse>(
+    () => apiPost(`/api/projects/${project.id}/envs/delete`, { keys: positional.slice(1) }),
+    json,
+    "Failed to delete environment variables",
+    output,
+  );
+  if (!result.ok) return 1;
+  output.stdout(`${JSON.stringify(result.value, null, json ? undefined : 2)}\n`);
+  return 0;
+}
+
 async function getProject(
   selector: string,
   json: boolean,
@@ -217,6 +255,19 @@ async function getProject(
     output,
   );
   if (!projects.ok) return;
+  if (
+    !Array.isArray(projects.value) ||
+    projects.value.some(
+      (candidate) =>
+        !candidate ||
+        !Number.isSafeInteger(candidate.id) ||
+        candidate.id <= 0 ||
+        typeof candidate.name !== "string",
+    )
+  ) {
+    writeError(output, "Invalid project response", json);
+    return;
+  }
   const project = findProject(projects.value, selector);
   if (!project) writeError(output, `Project "${selector}" not found`, json);
   return project;

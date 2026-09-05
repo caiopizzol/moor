@@ -110,6 +110,10 @@ Failures before streaming emit one JSON error document on stderr. Stream failure
 
 ## Environment variables
 
+`moor env delete api OLD_KEY OTHER_KEY --json` removes matching keys in one server operation. The response lists `deleted_keys`, `missing_keys`, and `restarted`. Missing keys are a no-op; stopped projects are not started. Running projects restart only after an actual deletion. Drain rejects restart-requiring deletion before changing values.
+
+If restart fails after deletion, the command exits nonzero and reports the deleted keys with `env_updated: true`; it does not roll the deletion back. Keys are matched exactly. The legacy single-key API deletion remains configuration-only.
+
 List a project's environment values as one JSON document for agents:
 
 ```bash

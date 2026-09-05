@@ -37,6 +37,7 @@ Commands:
   exec <project> [--json] -- <command> Run a shell command in a container
   env list <project> [--json]     List environment variables
   env set <project> [options]     Set environment variables
+  env delete <project> <keys...> [--json] Remove environment variables
   stats                           Show server resource usage
   history <project> [--hours N]   Stored resource history + events (default 24h)
   run list <project> [--page N] [--json] List run summaries

@@ -187,45 +187,22 @@ export function registerEnvTools(server: McpServer, client: ToolContext): void {
     async ({ project, keys }) => {
       const p = await resolveProject(project);
 
-      const existingRes = await apiResponse.get(`/api/projects/${p.id}/envs`);
-      if (!existingRes.ok) throw new Error(`Failed to get envs: ${existingRes.status}`);
-      const existing = (await existingRes.json()) as { key: string; value: string }[];
-      const existingKeys = new Set(existing.map((v) => v.key));
-
-      const toDelete = keys.filter((k) => existingKeys.has(k));
-      const missing = keys.filter((k) => !existingKeys.has(k));
-
-      if (toDelete.length === 0) {
-        const existingList = [...existingKeys].sort().join(", ") || "(none)";
-        return {
-          content: [
-            {
-              type: "text",
-              text: `No matching keys on ${p.name}. Existing keys: ${existingList}`,
-            },
-          ],
-        };
+      const res = await apiResponse.post(`/api/projects/${p.id}/envs/delete`, { keys });
+      if (!res.ok) {
+        const detail = await res.text();
+        throw new Error(`Failed to delete envs: ${detail || `HTTP ${res.status}`}`);
       }
-
-      for (const key of toDelete) {
-        const res = await apiResponse.delete(
-          `/api/projects/${p.id}/envs/${encodeURIComponent(key)}`,
-        );
-        if (!res.ok) throw new Error(`Failed to delete ${key}: ${await readErrorMessage(res)}`);
-      }
-
-      let text = `Deleted ${toDelete.join(", ")} from ${p.name}.`;
+      const {
+        deleted_keys: toDelete,
+        missing_keys: missing,
+        restarted,
+      } = (await res.json()) as import("../../../contract/src/index").DeleteEnvVarsResponse;
+      let text = toDelete.length
+        ? `Deleted ${toDelete.join(", ")} from ${p.name}.`
+        : `No matching keys on ${p.name}.`;
       if (missing.length > 0) text += ` (Not present: ${missing.join(", ")}.)`;
 
-      if (p.status === "running") {
-        const restartRes = await apiResponse.post(`/api/projects/${p.id}/restart`);
-        if (!restartRes.ok) {
-          throw new Error(
-            `Deleted vars but failed to restart: ${await readErrorMessage(restartRes)}`,
-          );
-        }
-        text += " Container restarted.";
-      }
+      if (restarted) text += " Container restarted.";
 
       return { content: [{ type: "text", text }] };
     },
