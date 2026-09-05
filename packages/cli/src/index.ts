@@ -2,6 +2,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { credentialCommand } from "./commands/credential";
+import { cronCommand } from "./commands/cron";
 import { deployCommand } from "./commands/deploy";
 import { envCommand } from "./commands/env";
 import { execCommand } from "./commands/exec";
@@ -49,6 +50,7 @@ Commands:
   project get <name|id> [--json]  Get one project
   project deploy <name> [options] Create or update and optionally run a project
   credential <kind> <verb>        Manage source or registry credentials (see --help)
+  cron <verb>                     List, create, or update scheduled jobs
   mcp config --client <name>      Generate MCP client config snippet
 
 Environment:
@@ -60,6 +62,9 @@ const args = process.argv.slice(2);
 const command = args[0];
 
 switch (command) {
+  case "cron":
+    process.exitCode = await cronCommand(args.slice(1));
+    break;
   case "credential":
     process.exitCode = await credentialCommand(args.slice(1));
     break;

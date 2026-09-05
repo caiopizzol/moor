@@ -210,6 +210,26 @@ Arguments are passed as array elements, not split or expanded by the CLI. Quote 
 
 Omitted options preserve existing overrides on updates. `null` restores image defaults; the server treats `[]` the same way, not as “run nothing.” The API validates array entries. Overrides take effect on container recreation; `--no-run` saves them until a later restart or rebuild. `--json` controls output independently of the JSON input arrays.
 
+## Scheduled jobs
+
+```bash
+moor cron list worker --json
+moor cron create worker --file job.json --json
+moor cron update 12 --file patch.json --json
+```
+
+Create reads a JSON object with `name`, `schedule`, and `command`; `timeout_ms` and `enabled` are optional. For example, `job.json` can contain:
+
+```json
+{"name":"daily","schedule":"0 3 * * *","command":"node /app/job.js","enabled":false}
+```
+
+Jobs are enabled by default; `enabled: false` stages a disabled job without an active scheduling window. Update accepts a patch of the same fields, so `{"enabled":false}` disables an existing job. Both commands accept stdin with `--file -`; keep shell commands in the JSON input rather than expanding them in your local shell. The container interprets `command` through `sh -c` when the job runs.
+
+Schedules use five numeric cron fields in the API process's local timezone, with Sunday numbered 0. The API validates schedule and timeout values. Creating or updating configuration does not manually trigger a run, but an enabled job is eligible at its scheduled time. This requires a running project container.
+
+`--json` returns one document; human mode prints indented JSON. Exit 0 reports a successful configuration or retrieval request, not a successful job execution. Inspect results with `moor run list <project> --json` and `moor run get <id> --json`. Manual triggering and deletion are not exposed by these commands.
+
 ## Private-image registry credentials
 
 Store credentials from a protected JSON file, or pipe the object through stdin with `--file -`. Never put secrets in command-line arguments.
