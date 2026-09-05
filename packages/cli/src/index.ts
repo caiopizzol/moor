@@ -41,7 +41,7 @@ Commands:
   env set <project> [options]     Set environment variables
   env delete <project> <keys...> [--json] Remove environment variables
   stats [--json]                  Show server resource usage
-  history <project> [--hours N]   Stored resource history + events (default 24h)
+  history <project> [--hours N] [--json] Stored resource history + events (default 24h)
   run list <project> [--page N] [--json] List run summaries
   run get <id> [--tail-bytes N] [--json] Inspect a run and its stored output
   project list [--json]           List projects
@@ -83,7 +83,7 @@ switch (command) {
     process.exitCode = await statsCommand(args.slice(1));
     break;
   case "history":
-    await historyCommand(args.slice(1));
+    process.exitCode = await historyCommand(args.slice(1));
     break;
   case "run":
     process.exitCode = await runCommand(args.slice(1));

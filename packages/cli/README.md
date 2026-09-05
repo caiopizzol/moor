@@ -52,7 +52,7 @@ moor env list <project> [--json]     # list environment variables
 moor env set <project> KEY=VALUE     # set environment variables (human mode)
 moor env set <project> --env-file - --json # set environment variables (agent mode)
 moor stats [--json]                  # server resource usage
-moor history <project> [--hours N]   # stored resource history and events
+moor history <project> [--hours N] [--json] # stored resource history and events
 moor project deploy <name> [options] # create or update and optionally run a project
 moor mcp config --client <name>      # generate MCP client config snippet
 ```
@@ -86,6 +86,12 @@ Success prints the API response as one JSON document with `logs`, `lastTimestamp
 ## Host stats
 
 `moor stats --json` returns the server's stats response as one JSON document, including host CPU, memory, disk, and container totals. Without `--json`, it retains the human-readable summary. Errors go to stderr and exit 1; unknown options and extra arguments are rejected before any request.
+
+## Resource history
+
+`moor history api --hours 6 --json` returns the full API history document, including stored samples, events, and summary. The default window is 24 hours; `--hours=N` and fractional hours also work. Windows extending before the Unix epoch start at zero. Human mode retains the summary and ten most recent events.
+
+Errors go to stderr and exit 1. Unknown arguments, duplicate `--hours`, and invalid durations are rejected before requests. Exit 0 means history was retrieved, not that the workload is healthy.
 
 ## Run inspection
 
