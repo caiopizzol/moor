@@ -155,7 +155,10 @@ Deploy from GitHub or a registry image through the same API operation used by MC
 moor project deploy api --github-url https://github.com/example/api
 moor project deploy web --docker-image nginx:alpine --domain web.example.com --domain-port 80
 moor project deploy private --github-url https://github.com/example/private --source-credential-id 42
+moor project deploy db --docker-image postgres:17 --volume data:/var/lib/postgresql/data
 ```
+
+Repeat `--volume <name>:<target>` to add named persistent volumes. Targets are absolute container paths, not host paths. Mount modes such as `:ro` and colons in targets are not supported by this flag. With `--update-existing`, existing mounts are retained; an identical name and target is accepted, but changing a mount's target is rejected. Omitting `--volume` does not remove mounts. The server validates names, paths, and conflicts.
 
 Pass `--update-existing` to update a project with the same name, or `--no-run` to save its configuration without rebuilding or starting it. Environment values are read from a JSON object so secrets do not appear in the command line:
 
