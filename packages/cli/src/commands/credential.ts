@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import type { SourceCredential, SourceCredentialCheckRequest } from "../../../contract/src/index";
+import type { SourceCredentialCheckRequest } from "../../../contract/src/index";
 import { apiGet, apiPost } from "../client";
 import { type CommandOutput, defaultCommandOutput, requestJson, writeError } from "../protocol";
 
@@ -94,11 +94,9 @@ export async function credentialCommand(
     try {
       if (verb === "check") output.stdout(`${JSON.stringify(result.value, null, 2)}\n`);
       else {
-        const rows =
-          verb === "list"
-            ? (result.value as { rows: SourceCredential[] }).rows
-            : [result.value as SourceCredential];
-        const lines = rows.map((row) => `${row.id}\t${row.hostname}\t${row.label}\t${row.state}`);
+        const rows = verb === "list" ? (result.value as { rows: unknown }).rows : [result.value];
+        if (!Array.isArray(rows)) return fail("Invalid credential response");
+        const lines = rows.map(renderCredential);
         output.stdout(`${lines.length ? lines.join("\n") : "No source credentials."}\n`);
       }
     } catch {
@@ -106,4 +104,24 @@ export async function credentialCommand(
     }
   }
   return 0;
+}
+
+function renderCredential(value: unknown): string {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error("Invalid credential response");
+  }
+  const row = value as Record<string, unknown>;
+  if (
+    typeof row.id !== "number" ||
+    !Number.isSafeInteger(row.id) ||
+    row.id <= 0 ||
+    typeof row.hostname !== "string" ||
+    !row.hostname.trim() ||
+    typeof row.label !== "string" ||
+    !row.label.trim() ||
+    (row.state !== "active" && row.state !== "failed")
+  ) {
+    throw new Error("Invalid credential response");
+  }
+  return `${row.id}\t${row.hostname}\t${row.label}\t${row.state}`;
 }

@@ -104,6 +104,7 @@ test("source create reads a disk file and prints a minimal human summary", async
     stderr: "",
   });
   expect(requests[0]?.body).toEqual(input);
+  expect(requests).toHaveLength(1);
 });
 test("source list preserves metadata JSON and handles empty human output", async () => {
   respond = () => Response.json({ rows: [metadata] });
@@ -117,6 +118,7 @@ test("source list preserves metadata JSON and handles empty human output", async
   ]);
   respond = () => Response.json({ rows: [] });
   expect((await run(["source", "list"])).stdout).toBe("No source credentials.\n");
+  expect(requests).toHaveLength(2);
 });
 test("source check forwards explicit selection and preserves the selected credential response", async () => {
   const body = { ok: true, reachable: true, head_sha: "abc" };
@@ -153,6 +155,34 @@ test("source check forwards explicit selection and preserves the selected creden
     stderr: "",
   });
   expect(requests[1]?.body).toEqual({ github_url: "https://github.com/acme/app" });
+  expect(requests).toHaveLength(2);
+});
+
+test("human credential output rejects malformed metadata without partial stdout", async () => {
+  for (const row of [
+    {},
+    null,
+    { ...metadata, id: 0 },
+    { ...metadata, hostname: 42 },
+    { ...metadata, label: null },
+    { ...metadata, state: "unknown" },
+  ]) {
+    for (const verb of ["list", "create"]) {
+      requests.length = 0;
+      respond = () => Response.json(verb === "list" ? { rows: [metadata, row] } : row);
+      expect(
+        await run(
+          ["source", verb, ...(verb === "create" ? ["--file", "-"] : [])],
+          JSON.stringify(input),
+        ),
+      ).toEqual({
+        exitCode: 1,
+        stdout: "",
+        stderr: "Error: Invalid credential response\n",
+      });
+      expect(requests).toHaveLength(1);
+    }
+  }
 });
 test("source create parse failures never echo credential content", async () => {
   for (const value of [`{"secret":"${secret}"`, "[]", "null", '"value"']) {
