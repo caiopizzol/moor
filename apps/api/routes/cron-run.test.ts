@@ -2,7 +2,7 @@ process.env.MOOR_DB_PATH = ":memory:";
 
 import { beforeEach, expect, test } from "bun:test";
 
-const { activeRuns, startCron, stopCronRun } = await import("../cron");
+const { activeRuns, startCron, stopCronRun, interruptActiveRuns } = await import("../cron");
 const { default: db } = await import("../db");
 const { handleCrons } = await import("./crons");
 const { handleRuns } = await import("./runs");
@@ -23,6 +23,24 @@ function fixture() {
     )
     .get(project.id) as Parameters<typeof startCron>[0];
 }
+
+test("cron completion preserves the shutdown terminal record", async () => {
+  const gate = Promise.withResolvers<void>();
+  const handle = startCron(fixture(), "container", async () => {
+    await gate.promise;
+    return { exitCode: 0, stdout: "late output", stderr: "" };
+  });
+  interruptActiveRuns();
+  const terminal = db.query("SELECT * FROM runs WHERE id = ?").get(handle.runId);
+  gate.resolve();
+  await handle.completion;
+  expect(terminal).toMatchObject({
+    exit_code: -1,
+    stderr: "[moor shutting down; cron run aborted]",
+  });
+  expect(db.query("SELECT * FROM runs WHERE id = ?").get(handle.runId)).toEqual(terminal);
+  expect(activeRuns.has(handle.runId)).toBe(false);
+});
 
 test("cron cancellation preserves kill outcomes and shares concurrent stop attempts", async () => {
   for (const scenario of [
