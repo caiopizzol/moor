@@ -33,7 +33,7 @@ Commands:
   logs <project> [-f] [-n <lines>] [--json] View container logs
   rebuild <project> [--no-cache] [--json] Rebuild and restart from source
   restart <project> [--json]      Stop and start a container
-  exec <project> <command>        Run a command in a container
+  exec <project> [--json] -- <command> Run a shell command in a container
   env list <project> [--json]     List environment variables
   env set <project> [options]     Set environment variables
   stats                           Show server resource usage
@@ -65,7 +65,7 @@ switch (command) {
     process.exitCode = await restartCommand(args.slice(1));
     break;
   case "exec":
-    await execCommand(args.slice(1));
+    process.exitCode = await execCommand(args.slice(1));
     break;
   case "env":
     process.exitCode = await envCommand(args.slice(1));
