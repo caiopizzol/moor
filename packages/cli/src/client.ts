@@ -67,21 +67,6 @@ export function findProject(projects: Project[], selector: string): Project | un
   );
 }
 
-export async function resolveProject(nameOrId: string): Promise<Project> {
-  const res = await apiGet("/api/projects");
-  if (!res.ok) {
-    console.error(`Failed to list projects: ${res.status}`);
-    process.exit(1);
-  }
-  const projects = (await res.json()) as Project[];
-  const match = findProject(projects, nameOrId);
-  if (!match) {
-    console.error(`Project "${nameOrId}" not found`);
-    process.exit(1);
-  }
-  return match;
-}
-
 export async function streamSSE(
   res: Response,
   handlers: {

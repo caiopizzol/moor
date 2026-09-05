@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { Project } from "../../contract/src/index";
-import { apiGet, apiPost, apiPut, findProject, readErrorMessage, resolveProject } from "./client";
+import { apiGet, apiPost, apiPut, findProject, readErrorMessage } from "./client";
 
 const originalFetch = globalThis.fetch;
 const originalMoorUrl = process.env.MOOR_URL;
@@ -88,29 +88,6 @@ describe("client API helpers", () => {
     expect(put.init?.method).toBe("PUT");
     expect(put.init?.body).toBe(JSON.stringify([{ key: "A", value: "B" }]));
     expect(new Headers(put.init?.headers).get("Content-Type")).toBe("application/json");
-  });
-
-  test("resolveProject uses the shared Project type without changing CLI errors", async () => {
-    configureClientEnv();
-    captureFetch(
-      new Response(
-        JSON.stringify([
-          {
-            id: 7,
-            name: "api",
-            status: "running",
-            github_url: null,
-            docker_image: "ghcr.io/example/api",
-          },
-        ]),
-        { status: 200 },
-      ),
-    );
-
-    const project = await resolveProject("7");
-
-    expect(project.name).toBe("api");
-    expect(project.docker_image).toBe("ghcr.io/example/api");
   });
 
   test("readErrorMessage keeps existing response parsing behavior", async () => {
