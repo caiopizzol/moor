@@ -1,8 +1,10 @@
 import { apiGet, apiPost } from "../client";
 import { type CommandOutput, defaultCommandOutput, requestJson, writeError } from "../protocol";
 import { cleanupCommand } from "./cleanup";
+import { updateCommand } from "./update";
 
 const USAGE = `Usage:
+  moor server update <status|audit> [options] (see update --help)
   moor server cleanup <plan|execute> [options] (see cleanup --help)
   moor server backup [--json]
   moor server drain status [--json]
@@ -22,6 +24,12 @@ export async function serverCommand(
   output: CommandOutput = defaultCommandOutput,
 ): Promise<number> {
   const groupIndex = args.findIndex((arg) => arg !== "--json");
+  if (args[groupIndex] === "update") {
+    return updateCommand(
+      args.filter((_, index) => index !== groupIndex),
+      output,
+    );
+  }
   if (args[groupIndex] === "cleanup") {
     return cleanupCommand(
       args.filter((_, index) => index !== groupIndex),
