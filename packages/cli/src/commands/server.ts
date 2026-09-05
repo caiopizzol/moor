@@ -1,7 +1,9 @@
 import { apiGet, apiPost } from "../client";
 import { type CommandOutput, defaultCommandOutput, requestJson, writeError } from "../protocol";
+import { cleanupCommand } from "./cleanup";
 
 const USAGE = `Usage:
+  moor server cleanup <plan|execute> [options] (see cleanup --help)
   moor server backup [--json]
   moor server drain status [--json]
   moor server drain enable [--reason <text>] [--ttl-minutes N] [--json]
@@ -19,6 +21,13 @@ export async function serverCommand(
   args: string[],
   output: CommandOutput = defaultCommandOutput,
 ): Promise<number> {
+  const groupIndex = args.findIndex((arg) => arg !== "--json");
+  if (args[groupIndex] === "cleanup") {
+    return cleanupCommand(
+      args.filter((_, index) => index !== groupIndex),
+      output,
+    );
+  }
   for (let i = 0; i < args.length; i++) {
     if (args[i] === "--reason" || args[i] === "--ttl-minutes") {
       i++;
