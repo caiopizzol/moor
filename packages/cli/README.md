@@ -305,6 +305,19 @@ Audit returns `{rows: [...]}` with recent update attempts (default 20; `--limit`
 
 Exit 0 means retrieval succeeded, including unsafe readiness or failed updates in audit history. Request or invalid-response failures use stderr and exit 1. Success prints one JSON document with `--json`, or formatted JSON otherwise. These commands do not apply updates.
 
+## Request a server update
+
+```sh
+moor server update apply --json
+moor server update apply --target-digest 'sha256:<64-lowercase-hex-characters>' --json
+```
+
+Apply makes one request to replace the server, using the registry's latest digest unless one is supplied. The server performs preflight, drain, a database backup, and launch. The CLI exposes no bypass flags and does not poll or retry.
+
+Exit 0 and `{ "audit_id": N }` mean HTTP 202 acceptance, **not completion**. The server may disconnect. After reconnecting, use `moor server update audit --json` and inspect that audit ID's state and errors. Human mode prints formatted JSON.
+
+Failures use stderr and exit 1. Transport failures or unusable replies leave the outcome unverified; inspect audit before retrying. HTTP errors can follow side effects such as an audit record or backup and do not imply rollback. Structured API errors are retained in `error_details`, alongside the CLI's string `error` and HTTP `status`.
+
 ## Guarded server cleanup
 
 ```bash

@@ -4,7 +4,7 @@ import { cleanupCommand } from "./cleanup";
 import { updateCommand } from "./update";
 
 const USAGE = `Usage:
-  moor server update <status|audit> [options] (see update --help)
+  moor server update <status|audit|apply> [options] (see update --help)
   moor server cleanup <plan|execute> [options] (see cleanup --help)
   moor server backup [--json]
   moor server drain status [--json]

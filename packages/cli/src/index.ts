@@ -47,7 +47,7 @@ Commands:
   stats [--json]                  Show server resource usage
   server drain <verb> [--json]    Inspect, enable, or disable server drain (see --help)
   server backup [--json]         Create a server-local database snapshot
-  server update <status|audit>   Inspect update readiness and recent attempts
+  server update <status|audit|apply> Inspect or request a server self-update
   server cleanup <plan|execute>  Inspect or explicitly reclaim unused Docker resources
   history <project> [--hours N] [--json] Stored resource history + events (default 24h)
   run list <project> [--page N] [--json] List run summaries

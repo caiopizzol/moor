@@ -59,10 +59,10 @@ beforeEach(() => {
 afterEach(async () => {
   await server.stop(true);
 });
-async function run(args: string[]) {
+async function run(args: string[], env: Record<string, string | undefined> = {}) {
   const child = Bun.spawn({
     cmd: [process.execPath, join(import.meta.dir, "../index.ts"), "server", ...args],
-    env: { ...process.env, MOOR_URL: server.url.origin, MOOR_API_KEY: "test-key" },
+    env: { ...process.env, MOOR_URL: server.url.origin, MOOR_API_KEY: "test-key", ...env },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -90,6 +90,144 @@ test("update status preserves unsafe and unknown readiness in both modes with on
       body: "",
     }),
   );
+});
+
+test("update apply reports acceptance in both modes with one authenticated POST", async () => {
+  const payload = { audit_id: 7 };
+  response = () => Response.json(payload, { status: 202 });
+  for (const json of [true, false]) {
+    expect(await run(["update", "apply", ...(json ? ["--json"] : [])])).toEqual({
+      exitCode: 0,
+      stdout: `${JSON.stringify(payload, null, json ? undefined : 2)}\n`,
+      stderr: "",
+    });
+  }
+  expect(requests).toEqual(
+    Array(2).fill({
+      path: "/api/server/update/apply",
+      method: "POST",
+      auth: "Bearer test-key",
+      body: "{}",
+    }),
+  );
+});
+
+test("update apply forwards only the supplied digest", async () => {
+  const digest = `sha256:${"a".repeat(64)}`;
+  response = () => Response.json({ audit_id: 8 }, { status: 202 });
+  expect((await run(["--json", "update", "--target-digest", digest, "apply"])).exitCode).toBe(0);
+  expect(requests).toEqual([
+    {
+      path: "/api/server/update/apply",
+      method: "POST",
+      auth: "Bearer test-key",
+      body: JSON.stringify({ target_digest: digest }),
+    },
+  ]);
+});
+
+test("update apply syntax and configuration fail before any request", async () => {
+  const digest = `sha256:${"a".repeat(64)}`;
+  const invalid = [
+    ["apply", "extra"],
+    ["apply", "--bypass", "active_work"],
+    ["apply", "--limit", "1"],
+    ["audit", "--target-digest", digest],
+    ["status", "--target-digest", digest],
+    ["apply", "--target-digest", digest, "--target-digest", digest],
+    ...[
+      undefined,
+      "",
+      "latest",
+      `sha256:${"A".repeat(64)}`,
+      `sha256:${"a".repeat(63)}`,
+      `${digest} `,
+      "--help",
+      "-h",
+    ].map((value) => ["apply", "--target-digest", ...(value === undefined ? [] : [value])]),
+  ];
+  for (const args of invalid) {
+    const result = await run(["update", ...args, "--json"]);
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(typeof JSON.parse(result.stderr).error).toBe("string");
+  }
+  expect(await run(["update", "apply", "--json"], { MOOR_URL: "" })).toEqual({
+    exitCode: 1,
+    stdout: "",
+    stderr: '{"error":"MOOR_URL is not set"}\n',
+  });
+  const help = await run(["update", "apply", "--target-digest", "bad", "--help"]);
+  expect(help.exitCode).toBe(0);
+  expect(help.stdout).toContain("NOT completed");
+  expect(requests).toEqual([]);
+});
+
+test("update apply preserves structured refusal details without retrying", async () => {
+  const error = {
+    code: "preflight_failed",
+    reason: "active work",
+    unsafe_reasons: ["build in flight"],
+  };
+  response = () => Response.json({ error }, { status: 409 });
+  expect(await run(["update", "apply", "--json"])).toEqual({
+    exitCode: 1,
+    stdout: "",
+    stderr: `${JSON.stringify({ error: "HTTP 409", error_details: error, status: 409 })}\n`,
+  });
+  const human = await run(["update", "apply"]);
+  expect(human.exitCode).toBe(1);
+  expect(human.stdout).toBe("");
+  expect(human.stderr).toContain("active work");
+  expect(requests).toHaveLength(2);
+});
+
+test("update apply rejects non-202 successes without claiming acceptance", async () => {
+  for (const status of [200, 201, 204]) {
+    response = () =>
+      status === 204 ? new Response(null, { status }) : Response.json({ audit_id: 7 }, { status });
+    const result = await run(["update", "apply", "--json"]);
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(JSON.parse(result.stderr).error).toContain(
+      `Unexpected update response status ${status}`,
+    );
+  }
+  expect(requests).toHaveLength(3);
+});
+
+test("update apply reports unusable 202 replies without guessing outcome or retrying", async () => {
+  const payloads = [
+    null,
+    {},
+    { audit_id: 0 },
+    { audit_id: -1 },
+    { audit_id: "7" },
+    { audit_id: 1.5 },
+    { audit_id: Number.MAX_SAFE_INTEGER + 1 },
+  ];
+  for (const payload of payloads) {
+    response = () => Response.json(payload, { status: 202 });
+    const result = await run(["update", "apply", "--json"]);
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(JSON.parse(result.stderr).error).toContain("acceptance details are invalid");
+  }
+  response = () => new Response("broken", { status: 202 });
+  const result = await run(["update", "apply", "--json"]);
+  expect(result.exitCode).toBe(1);
+  expect(result.stdout).toBe("");
+  expect(JSON.parse(result.stderr).error).toContain("acceptance details are unreadable");
+  expect(requests).toHaveLength(payloads.length + 1);
+});
+
+test("update apply transport failure reports unknown outcome and an inspection path", async () => {
+  await server.stop(true);
+  const result = await run(["update", "apply", "--json"]);
+  expect(result.exitCode).toBe(1);
+  expect(result.stdout).toBe("");
+  expect(JSON.parse(result.stderr).error).toContain("outcome unknown");
+  expect(JSON.parse(result.stderr).error).toContain("update audit");
 });
 
 test("update status preserves safe readiness and extension fields", async () => {
@@ -169,7 +307,7 @@ test("update inspection preserves signed wall-clock differences from the API", a
 test("update rejects invalid syntax and limits before requests", async () => {
   const invalid = [
     [],
-    ["apply"],
+    ["bogus"],
     ["status", "extra"],
     ["audit", "extra"],
     ["status", "--unknown"],
