@@ -197,6 +197,22 @@ Agents should pass `--json`. Each streamed API event is emitted as one JSON obje
 
 Failures return a non-zero exit status. Pre-stream errors are written to stderr and, in JSON mode, preserve the API's structured fields plus the HTTP `status`. Errors received after streaming begins remain ordered with the other JSONL events on stdout.
 
+## Private-source credentials
+
+Use `moor credential source list --json` to discover stored credential IDs. Create one from a protected JSON file, or pipe the object through stdin with `--file -`; do not put its secret in command-line arguments.
+
+```bash
+moor credential source create --file credential.json --json
+moor credential source check --github-url https://github.com/acme/app --source-credential-id 8 --json
+moor project deploy app --github-url https://github.com/acme/app --source-credential-id 8 --json
+```
+
+The creation object has `hostname`, `label`, `username`, `secret`, and optional `expires_at` fields. Responses contain metadata, not the stored secret. The server validates credential fields. Rotation and deletion are not exposed in this CLI slice.
+
+`check` contacts the repository and may update the credential's stored state and last-check result. It is not a read-only operation. Add `--branch` to check a specific branch. Without an explicit ID, a successful check may return `auto_selected_credential_id`; pass that ID explicitly when deploying. Deploy does not automatically select a credential. If selection is ambiguous, JSON stderr preserves the server's `candidates` list and exits 1.
+
+These commands emit one JSON document with `--json`. Failures use stderr and exit 1. Human list/create output shows ID, hostname, label, and state; human check output shows the response as formatted JSON.
+
 ## `moor mcp config`
 
 Generates a ready-to-paste config snippet for an MCP-compatible AI client. Removes the "open a doc, copy a JSON block, fill in the blanks" step from MCP setup.

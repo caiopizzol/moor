@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { credentialCommand } from "./commands/credential";
 import { deployCommand } from "./commands/deploy";
 import { envCommand } from "./commands/env";
 import { execCommand } from "./commands/exec";
@@ -47,6 +48,7 @@ Commands:
   project list [--json]           List projects
   project get <name|id> [--json]  Get one project
   project deploy <name> [options] Create or update and optionally run a project
+  credential source <verb>        List, create, or check private-source credentials
   mcp config --client <name>      Generate MCP client config snippet
 
 Environment:
@@ -58,6 +60,9 @@ const args = process.argv.slice(2);
 const command = args[0];
 
 switch (command) {
+  case "credential":
+    process.exitCode = await credentialCommand(args.slice(1));
+    break;
   case "status":
     process.exitCode = await statusCommand(args.slice(1));
     break;
