@@ -219,8 +219,7 @@ describe("#79 drain server routes (GET /api/server/drain)", () => {
   });
 
   test("enable with no body uses defaults (default TTL, no reason)", async () => {
-    // Some callers may POST with empty body; routes/server.ts catches the
-    // json parse error and falls back to {}.
+    // A bodyless request explicitly selects defaults; malformed JSON does not.
     const req = new Request("http://localhost/api/server/drain/enable", { method: "POST" });
     const res = await handleServer(req, new URL(req.url));
     expect(res).not.toBeNull();

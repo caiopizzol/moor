@@ -1,6 +1,7 @@
 import { execSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { SOCKET as SOCKET_PATH } from "../docker";
+import { errorResponse, readJsonObject } from "../http";
 import {
   computeLoadPercent,
   type DockerDisk,
@@ -128,12 +129,22 @@ async function handleDrainStatus(): Promise<Response> {
 
 async function handleDrainEnable(req: Request): Promise<Response> {
   const { enableDrain } = await import("../drain");
-  const body = (await req.json().catch(() => ({}))) as {
-    reason?: string;
-    ttl_minutes?: number;
-    clear_after_version?: string;
-  };
-  const state = enableDrain(body);
+  const parsed =
+    req.body === null
+      ? { ok: true as const, value: {} as Record<string, unknown> }
+      : await readJsonObject(req);
+  if (!parsed.ok) return parsed.response;
+  const { reason, ttl_minutes, clear_after_version } = parsed.value;
+  if (reason !== undefined && typeof reason !== "string")
+    return errorResponse("reason must be a string", 400);
+  if (clear_after_version !== undefined && typeof clear_after_version !== "string")
+    return errorResponse("clear_after_version must be a string", 400);
+  if (
+    ttl_minutes !== undefined &&
+    (typeof ttl_minutes !== "number" || !Number.isFinite(ttl_minutes))
+  )
+    return errorResponse("ttl_minutes must be a finite number", 400);
+  const state = enableDrain({ reason, ttl_minutes, clear_after_version });
   return Response.json({ state });
 }
 
