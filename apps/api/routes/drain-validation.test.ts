@@ -1,12 +1,13 @@
 process.env.MOOR_DB_PATH = ":memory:";
 
-import { beforeEach, expect, test } from "bun:test";
+import { afterEach, beforeEach, expect, test } from "bun:test";
 
 const { default: db } = await import("../db");
 const { enableDrain, disableDrain } = await import("../drain");
 const { handleServer } = await import("./server");
 
 beforeEach(() => disableDrain());
+afterEach(() => disableDrain());
 
 async function enable(body: string) {
   const req = new Request("http://localhost/api/server/drain/enable", {
