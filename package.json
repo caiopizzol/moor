@@ -9,30 +9,38 @@
   "scripts": {
     "dev": "bun run dev:api & bun run dev:web",
     "dev:api": "bun run --hot apps/api/index.ts",
-    "dev:web": "cd apps/web && bun run dev",
-    "build": "cd apps/web && bun run build",
+    "dev:web": "vp dev",
+    "build": "bun run --cwd apps/web typecheck && vp build",
     "start": "bun run apps/api/index.ts",
     "test": "bun test",
-    "lint": "bunx biome check .",
-    "typecheck": "bun run --workspaces --if-present typecheck",
-    "check": "bun run lint && bun run typecheck && bun run test",
-    "lint:fix": "bunx biome check --write .",
-    "format": "bunx biome format --write .",
-    "prepare": "bunx lefthook install"
+    "lint": "vp lint",
+    "typecheck": "tsc --noEmit -p tsconfig.json && bun run --workspaces --if-present typecheck",
+    "check": "vp check && bun run typecheck && bun run test",
+    "lint:fix": "vp lint --fix",
+    "format": "vp fmt",
+    "prepare": "test ! -d node_modules/vite-plus || vp config --no-agent"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.4.5",
     "@cfworker/json-schema": "^4.1.1",
     "@modelcontextprotocol/server": "2.0.0-alpha.2",
     "@semantic-release/exec": "^7.1.0",
     "@semantic-release/git": "^10.0.1",
     "@types/bun": "latest",
-    "lefthook": "^2.1.2",
     "semantic-release": "^25.0.3",
     "semantic-release-ai-notes": "^0.2.3",
     "semantic-release-monorepo": "^8.0.2",
     "semantic-release-plugin-decorators": "^4.0.0",
     "typescript": "7.0.2",
+    "vite": "catalog:",
+    "vite-plus": "catalog:",
     "zod": "^4.3.6"
+  },
+  "overrides": {
+    "vite": "catalog:"
+  },
+  "packageManager": "bun@1.3.12",
+  "catalog": {
+    "vite": "npm:@voidzero-dev/vite-plus-core@0.3.0",
+    "vite-plus": "0.3.0"
   }
 }

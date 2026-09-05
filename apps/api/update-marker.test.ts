@@ -19,9 +19,8 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:tes
 
 const { default: db } = await import("./db");
 const { disableDrain, enableDrain, getDrainState } = await import("./drain");
-const { insertAuditInProgress, sweepStaleInProgress, STALE_IN_PROGRESS_MS } = await import(
-  "./update-audit"
-);
+const { insertAuditInProgress, sweepStaleInProgress, STALE_IN_PROGRESS_MS } =
+  await import("./update-audit");
 const {
   MARKER_PREFIX,
   MARKER_SUFFIX,

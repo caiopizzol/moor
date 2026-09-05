@@ -20,6 +20,7 @@ What moor really does is remove the SSH ceremony. You have a VPS. You have conta
 **The problem it solves:** Running containers on a single server requires either SSHing in every time or learning a platform that's heavier than the thing you're deploying. Moor eliminates both.
 
 **The transformation:**
+
 - **Before:** SSH into your server. `docker build`. `docker run`. Forget what's running. Lose terminal history. Can't check logs without connecting again.
 - **After:** Open a browser tab. See everything. Build, deploy, schedule, debug — all in one place. Then close the tab.
 
@@ -32,6 +33,7 @@ What moor really does is remove the SSH ceremony. You have a VPS. You have conta
 Not a PaaS. Not a Heroku alternative. Not a container orchestrator. Not a hosting platform. Moor is a control panel — a thin interface over Docker that shows you what's happening and lets you act on it.
 
 **What moor is NOT:**
+
 - Not a platform-as-a-service. It doesn't abstract Docker away — it surfaces it.
 - Not for teams. No RBAC, no multi-user workflows, no audit trails.
 - Not for multi-server. One server. That's the scope.
@@ -50,6 +52,7 @@ The self-hosted container management space is crowded and confused. Every tool o
 **Where moor sits:** Below all of them in scope. Above all of them in focus. These tools try to be a platform. Moor tries to be a control panel. The difference matters — a platform owns your workflow; a control panel shows you what's happening and gets out of the way.
 
 **Structural differentials:**
+
 - **Minimal footprint:** Bun + SQLite. No PHP, no PostgreSQL, no Redis, no multi-service stack eating your VPS resources.
 - **Zero abstraction:** Your Dockerfile is the build system. Your container is the runtime. Moor doesn't reinterpret either.
 - **Scoped by design:** Single server. Single user. No clustering, no scaling, no features that exist to check a comparison chart box.
@@ -66,6 +69,7 @@ A good instrument doesn't announce itself. It doesn't have a personality. It doe
 **Attributes:** Minimal. Transparent. Honest. Lightweight. Deliberate.
 
 **What moor is:**
+
 - A control panel, not a platform
 - Focused, not feature-rich
 - Transparent — you always see what Docker is doing
@@ -73,6 +77,7 @@ A good instrument doesn't announce itself. It doesn't have a personality. It doe
 - Opinionated about scope, not about your workflow
 
 **What moor is not:**
+
 - Ambitious — it doesn't want to be a platform
 - Clever — no magic, no abstractions, no surprises
 - Loud — it doesn't market itself as revolutionary
@@ -91,6 +96,7 @@ You stay in control. Docker is Docker. Moor just gives you eyes and hands.
 **Tone:** Direct, calm, technical, understated, confident.
 
 **What the brand cannot be:**
+
 - A vendor — moor doesn't sell anything
 - A platform — moor doesn't own your workflow
 - Aspirational — moor doesn't promise transformation
@@ -116,18 +122,20 @@ We're open source. We're not a company. We exist because the alternatives were e
 ### Tagline & Slogans
 
 **Primary tagline:** Docker control for a single server.
-*Use everywhere: site header, GitHub description, social bios, README.*
+_Use everywhere: site header, GitHub description, social bios, README._
 
 **Alternatives:**
+
 - Eyes and hands on your containers.
 - The Docker UI that doesn't get in the way.
 
 **Slogans for specific contexts:**
-- *README / Getting started:* One server. One dashboard. Full control.
-- *Feature comparison:* Everything you need. Nothing you don't.
-- *Problem statement:* Self-hosting shouldn't require another platform to learn.
-- *Install CTA:* Running in seconds.
-- *Why moor exists:* You shouldn't need to SSH in just to check on a container.
+
+- _README / Getting started:_ One server. One dashboard. Full control.
+- _Feature comparison:_ Everything you need. Nothing you don't.
+- _Problem statement:_ Self-hosting shouldn't require another platform to learn.
+- _Install CTA:_ Running in seconds.
+- _Why moor exists:_ You shouldn't need to SSH in just to check on a container.
 
 ### Message Pillars
 
@@ -190,15 +198,15 @@ moor — a self-hosted Docker control panel. Build from GitHub repos, stream log
 
 **We Say / We Never Say:**
 
-| We Say | We Never Say |
-|---|---|
-| "Control panel" | "Platform" |
-| "Single server" | "Scale to any size" |
-| "See what's running" | "Unlock visibility" |
-| "Open source" | "Free tier" |
-| "Your Dockerfile" | "Our build pipeline" |
-| "Moor shows you" | "Moor empowers you" |
-| "Install in two commands" | "Get started in minutes" |
+| We Say                    | We Never Say                    |
+| ------------------------- | ------------------------------- |
+| "Control panel"           | "Platform"                      |
+| "Single server"           | "Scale to any size"             |
+| "See what's running"      | "Unlock visibility"             |
+| "Open source"             | "Free tier"                     |
+| "Your Dockerfile"         | "Our build pipeline"            |
+| "Moor shows you"          | "Moor empowers you"             |
+| "Install in two commands" | "Get started in minutes"        |
 | "For containers on a VPS" | "For modern cloud-native teams" |
 
 ---
@@ -238,6 +246,7 @@ moor — a self-hosted Docker control panel. Build from GitHub repos, stream log
 `#505050` — Tertiary text, timestamps, disabled states. Present but quiet.
 
 **Colors to avoid:**
+
 - Bright blues, purples, or gradients — these signal "SaaS product" or "enterprise."
 - White backgrounds — moor is dark-first. There is no light mode.
 - Multiple accent colors — green is the only accent. Everything else is grayscale.

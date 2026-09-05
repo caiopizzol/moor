@@ -7,3 +7,5 @@ dev/
 .env
 .env.*
 .mcp.json
+.vite-hooks/_/
+.vite/

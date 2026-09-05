@@ -6,18 +6,18 @@ Confirm `moor --version` works, read `moor --help`, then read the relevant comma
 
 ## The core loop
 
-| Command | Use it to |
-| --- | --- |
-| `moor project list --json` | Find projects and their recorded and live status. |
-| `moor project get scraper --json` | Inspect configuration and confirm `live_status` after an action. |
-| `moor project deploy scraper … --json` | Create or explicitly update a project and build/start it. |
-| `moor logs scraper -n 100 --json` | Read recent container logs and log-source state. |
-| `moor exec scraper --json -- 'shell command'` | Run a diagnostic without local shell expansion. |
-| `moor env set scraper --env-file - --json` | Merge environment values from stdin and restart when applicable. |
-| `moor rebuild scraper --json` | Pull source, build a new image, and restart. |
-| `moor restart scraper --json` | Recreate the container from its existing image without building. |
-| `moor run list scraper --json` | Find build and cron run history. |
-| `moor run get 11 --json` | Inspect a returned run ID and its stored output. |
+| Command                                       | Use it to                                                        |
+| --------------------------------------------- | ---------------------------------------------------------------- |
+| `moor project list --json`                    | Find projects and their recorded and live status.                |
+| `moor project get scraper --json`             | Inspect configuration and confirm `live_status` after an action. |
+| `moor project deploy scraper … --json`        | Create or explicitly update a project and build/start it.        |
+| `moor logs scraper -n 100 --json`             | Read recent container logs and log-source state.                 |
+| `moor exec scraper --json -- 'shell command'` | Run a diagnostic without local shell expansion.                  |
+| `moor env set scraper --env-file - --json`    | Merge environment values from stdin and restart when applicable. |
+| `moor rebuild scraper --json`                 | Pull source, build a new image, and restart.                     |
+| `moor restart scraper --json`                 | Recreate the container from its existing image without building. |
+| `moor run list scraper --json`                | Find build and cron run history.                                 |
+| `moor run get 11 --json`                      | Inspect a returned run ID and its stored output.                 |
 
 Rebuild when source or the Dockerfile changed. Restart when the current image is still appropriate, such as after configuration changes or to recover a stopped container. Read the mutation's response before adding a restart: environment updates can already restart the container.
 

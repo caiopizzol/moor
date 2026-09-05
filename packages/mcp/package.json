@@ -2,22 +2,21 @@
   "name": "@moor-sh/mcp",
   "version": "0.0.0-development",
   "description": "MCP server for moor - lets AI agents (Claude Code, Cursor, etc.) manage your moor projects via the moor HTTP API.",
+  "keywords": [
+    "ai-agent",
+    "claude",
+    "docker",
+    "mcp",
+    "moor"
+  ],
+  "homepage": "https://github.com/caiopizzol/moor/tree/main/packages/mcp",
+  "bugs": "https://github.com/caiopizzol/moor/issues",
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/caiopizzol/moor.git",
     "directory": "packages/mcp"
   },
-  "homepage": "https://github.com/caiopizzol/moor/tree/main/packages/mcp",
-  "bugs": "https://github.com/caiopizzol/moor/issues",
-  "keywords": [
-    "moor",
-    "mcp",
-    "docker",
-    "claude",
-    "ai-agent"
-  ],
-  "type": "module",
   "bin": {
     "moor-mcp": "bin/moor-mcp.js"
   },
@@ -25,6 +24,7 @@
     "bin/",
     "dist/"
   ],
+  "type": "module",
   "publishConfig": {
     "access": "public"
   },

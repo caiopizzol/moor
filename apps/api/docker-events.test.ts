@@ -7,9 +7,8 @@ process.env.MOOR_DB_PATH = ":memory:";
 import { beforeEach, describe, expect, test } from "bun:test";
 
 const { default: db } = await import("./db");
-const { normalizeDockerEvent, ingestDockerEvent, shouldRecordGap } = await import(
-  "./docker-events"
-);
+const { normalizeDockerEvent, ingestDockerEvent, shouldRecordGap } =
+  await import("./docker-events");
 const { LABEL_PROJECT_ID } = await import("./docker");
 
 function makeProject(name: string, containerId: string | null): number {

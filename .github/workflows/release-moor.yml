@@ -21,7 +21,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
-      - run: bunx biome check .
+      - run: bun run --bun vp check
       - run: bun run typecheck
       # #80 PR #3: respawner image build + self-test. Fails the check
       # job (before publish) if the image can't even self-validate

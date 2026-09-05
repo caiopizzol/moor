@@ -6,9 +6,8 @@ process.env.MOOR_DB_PATH = ":memory:";
 
 import { describe, expect, test } from "bun:test";
 
-const { _setCycleRunningForTest, parseIntervalHours, runScheduledCleanup } = await import(
-  "./cleanup-scheduler"
-);
+const { _setCycleRunningForTest, parseIntervalHours, runScheduledCleanup } =
+  await import("./cleanup-scheduler");
 
 describe("#59 parseIntervalHours — env-driven, off by default", () => {
   test("returns null when the env var is unset or empty", () => {

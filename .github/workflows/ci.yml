@@ -13,7 +13,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
-      - run: bunx biome check .
+      - run: bun run --bun vp check
       - run: bun run typecheck
       - run: bun test
       # The MCP README tool table is generated from source; fail if stale.

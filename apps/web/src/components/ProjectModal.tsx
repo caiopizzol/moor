@@ -119,7 +119,6 @@ export function ProjectModal({ project, onClose, onSave }: Props) {
   const dnsMismatch = !!(dns.resolves && dns.ip && dns.serverIp && dns.ip !== dns.serverIp);
 
   return (
-    // biome-ignore lint/a11y/noStaticElementInteractions: overlay handles keyboard events
     <div
       className="modal-overlay"
       onKeyDown={(e) => {

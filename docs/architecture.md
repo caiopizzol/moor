@@ -31,12 +31,14 @@ There is a real tension here, recorded on purpose. `brand.md` scopes moor as "on
 ## Map: apps and packages
 
 **apps**
+
 - `api`: the HTTP API. Source of truth: SQLite state, Docker socket, all business logic. Route handlers in `routes/`, domain logic in the top-level modules beside them.
 - `web`: React + Vite admin console. The monitoring and happy-path UI.
 - `respawner`: transient container that performs a self-update (pull, retag, `compose up`, health-check, rollback) and then exits. No daemon, no open ports.
 - `site`: the static marketing/install site (`moor.sh`), including the install script.
 
 **packages**
+
 - `contract`: shared TypeScript types, a thin `fetch`-based API client, and request validators. The typed contract between the API and its clients; consumed by `web`, `mcp`, and `cli`.
 - `mcp`: an MCP adapter over the API, with one tool module per lane under `src/tools/` (projects, env, exec, runs, cleanup, credentials, server, update, context).
 - `cli`: a command-line adapter over the API. Commands live under `src/commands/` and expose machine-readable output for agents where needed.
