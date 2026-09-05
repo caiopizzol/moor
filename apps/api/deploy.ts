@@ -721,7 +721,10 @@ export async function restartProject(
     // startProject validates this too, but restart must validate before stop.
     if (!currentProject.image_tag) return errorResult("No image built yet", 400);
 
-    await stopProjectAfterLifecycleLock(currentProject, deps);
+    const stopped = await stopProjectAfterLifecycleLock(currentProject, deps);
+    if (stopped.kind !== "json" || (stopped.status !== undefined && stopped.status >= 400)) {
+      return stopped;
+    }
     const started = await startProjectAfterDrainCheck(currentProject, deps);
     if (started.kind !== "json" || (started.status !== undefined && started.status >= 400)) {
       return started;
@@ -764,7 +767,8 @@ async function stopProjectAfterLifecycleLock(
     console.log("[stop] container stopped");
   } catch (e) {
     const message = e instanceof Error ? e.message : "Unknown error";
-    console.error(`[stop] error during stop (marking as stopped anyway): ${message}`);
+    console.error(`[stop] FAILED: ${message}`);
+    return errorResult(message, 500);
   }
 
   deps.setProjectRecordedStatus(project.id, "stopped", containerId);

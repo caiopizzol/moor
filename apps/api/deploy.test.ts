@@ -146,6 +146,56 @@ function makeDeps(ops: string[], overrides: Partial<DeployDeps> = {}): DeployDep
   return { ...base, ...overrides };
 }
 
+describe("stop failure reporting", () => {
+  test("returns failure without claiming stopped when Docker stop fails", async () => {
+    const ops: string[] = [];
+    const result = await stopProject(
+      makeProject({ status: "running", container_id: "container-1" }),
+      makeDeps(ops, {
+        stopContainer: async () => {
+          throw new Error("Docker unavailable");
+        },
+      }),
+    );
+    expect(result.kind).toBe("response");
+    if (result.kind !== "response") throw new Error("Expected error response");
+    expect(result.response.status).toBe(500);
+    expect(await result.response.json()).toEqual({ error: "Docker unavailable" });
+    expect(ops.filter((op) => op.startsWith("status:"))).toEqual([]);
+  });
+
+  test("restart does not start a replacement after stop failure", async () => {
+    const ops: string[] = [];
+    const result = await restartProject(
+      makeProject({ status: "running", container_id: "container-1", image_tag: "app:latest" }),
+      makeDeps(ops, {
+        stopContainer: async () => {
+          throw new Error("Docker unavailable");
+        },
+      }),
+    );
+    expect(result.kind).toBe("response");
+    if (result.kind !== "response") throw new Error("Expected error response");
+    expect(result.response.status).toBe(500);
+    expect(await result.response.json()).toEqual({ error: "Docker unavailable" });
+    expect(ops).toEqual(["drain"]);
+  });
+
+  test("successful stop and no-container stop still record stopped", async () => {
+    for (const container_id of ["container-1", null]) {
+      const ops: string[] = [];
+      expect(await stopProject(makeProject({ container_id }), makeDeps(ops))).toEqual({
+        kind: "json",
+        body: { message: "Container stopped" },
+      });
+      expect(ops).toEqual([
+        ...(container_id ? [`stop:${container_id}`] : []),
+        `status:stopped:${container_id ?? "null"}`,
+      ]);
+    }
+  });
+});
+
 async function readStream(stream: ReadableStream<Uint8Array>): Promise<string> {
   const reader = stream.getReader();
   const decoder = new TextDecoder();
