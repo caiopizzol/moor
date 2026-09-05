@@ -13,6 +13,7 @@ import { restartCommand } from "./commands/restart";
 import { runCommand } from "./commands/run";
 import { statsCommand } from "./commands/stats";
 import { statusCommand } from "./commands/status";
+import { stopCommand } from "./commands/stop";
 
 // Read version from package.json at runtime so the binary always reports the
 // real shipped version. import.meta.dir resolves to packages/cli/src in this
@@ -34,6 +35,7 @@ Commands:
   logs <project> [-f] [-n <lines>] [--json] View container logs
   rebuild <project> [--no-cache] [--json] Rebuild and restart from source
   restart <project> [--json]      Stop and start a container
+  stop <project> [--json]         Stop a container without deleting the project
   exec <project> [--json] -- <command> Run a shell command in a container
   env list <project> [--json]     List environment variables
   env set <project> [options]     Set environment variables
@@ -70,6 +72,9 @@ switch (command) {
     break;
   case "exec":
     process.exitCode = await execCommand(args.slice(1));
+    break;
+  case "stop":
+    process.exitCode = await stopCommand(args.slice(1));
     break;
   case "env":
     process.exitCode = await envCommand(args.slice(1));
