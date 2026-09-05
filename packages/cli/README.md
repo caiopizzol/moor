@@ -292,6 +292,20 @@ The update object accepts `username`, `secret`, `label`, and `expires_at`. Omitt
 
 These commands emit one JSON document with `--json`. Failures use stderr and exit 1. Human list/create output shows ID, hostname, label, and state; human check output shows the response as formatted JSON.
 
+## Guarded server cleanup
+
+```bash
+moor server cleanup plan --json > cleanup-plan.json
+# Review the file and keep only candidates you intend to remove.
+moor server cleanup execute --file cleanup-plan.json --json
+```
+
+Plan inspects build cache and dangling images without deleting anything. Execute requires a JSON object with a nonempty `candidates` array; you can use the saved plan or an edited selection. `--file -` reads stdin. The server validates candidate categories and identifiers and ignores descriptive metadata. The file is not an immutable or authorized plan token.
+
+Execution is irreversible. Dangling images are rechecked by ID without force or parent-image pruning. A `build_cache` candidate prunes currently unused cache, not a fixed set or a byte cap from the plan. These commands do not remove volumes or containers. No automatic planning, retries, or polling occurs.
+
+JSON results go to stdout (formatted JSON without `--json`). Execute exits 1 if any candidate reports an error, preserving the full partial-result document and audit ID on stdout. Request and invalid-response errors go to stderr and exit 1. A failed request can occur after partial deletion, including an audit-write failure: inspect the server before retrying. Re-executing a saved file can report images as no longer dangling; it does not prove the first execution failed.
+
 ## Server database backup
 
 `moor server backup --json` creates a SQLite snapshot next to the database on the server. The server prunes older snapshots, keeping the seven most recent. This is not a volume or full-server backup, an offsite copy, or a download to your computer.
