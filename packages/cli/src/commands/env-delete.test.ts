@@ -4,6 +4,10 @@ import { join } from "node:path";
 test("env delete CLI sends one operation and preserves structured partial failures", async () => {
   const calls: Array<{ method: string; path: string; body: unknown; auth: string | null }> = [];
   let fail = false;
+  let projects: unknown = [
+    { id: 7, name: "worker" },
+    { id: 8, name: "7" },
+  ];
   const server = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
@@ -16,11 +20,7 @@ test("env delete CLI sends one operation and preserves structured partial failur
         body: raw ? JSON.parse(raw) : null,
         auth: req.headers.get("Authorization"),
       });
-      if (path === "/api/projects")
-        return Response.json([
-          { id: 7, name: "worker" },
-          { id: 8, name: "7" },
-        ]);
+      if (path === "/api/projects") return Response.json(projects);
       if (path !== "/api/projects/8/envs/delete" || req.method !== "POST")
         return Response.json({ error: "Wrong endpoint" }, { status: 404 });
       return fail
@@ -86,6 +86,17 @@ test("env delete CLI sends one operation and preserves structured partial failur
     const missing = await run(["nosuch", "A", "--json"]);
     expect(missing.exitCode).toBe(1);
     expect(calls.map((c) => c.method)).toEqual(["GET"]);
+    for (const malformed of [{}, null, [null], [{ id: "8", name: "7" }]]) {
+      projects = malformed;
+      calls.length = 0;
+      const result = await run(["7", "A", "--json"]);
+      expect(result).toEqual({
+        exitCode: 1,
+        stdout: "",
+        stderr: '{"error":"Invalid project response"}\n',
+      });
+      expect(calls.map((c) => c.method)).toEqual(["GET"]);
+    }
   } finally {
     await server.stop(true);
   }

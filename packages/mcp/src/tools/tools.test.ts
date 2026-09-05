@@ -688,6 +688,21 @@ describe("env, cron, volume, and file tools", () => {
     );
   });
 
+  test("moor_env_delete preserves partial deletion details when restart fails", async () => {
+    const { api, server } = createHarness(registerEnvTools);
+    const failure = {
+      error: "restart failed",
+      env_updated: true,
+      deleted_keys: ["A"],
+      missing_keys: ["MISSING"],
+      restarted: false,
+    };
+    api.on("POST", "/api/projects/7/envs/delete", () => json(failure, { status: 500 }));
+    await expect(
+      server.call("moor_env_delete", { project: "app", keys: ["A", "MISSING"] }),
+    ).rejects.toThrow(JSON.stringify(failure));
+  });
+
   test("moor_env_set surfaces JSON errors from the env write", async () => {
     const { api, server } = createHarness(registerEnvTools);
     api.on("POST", "/api/projects/7/envs", () => errorJson("env key is invalid", 400));

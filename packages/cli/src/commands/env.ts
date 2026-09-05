@@ -255,6 +255,19 @@ async function getProject(
     output,
   );
   if (!projects.ok) return;
+  if (
+    !Array.isArray(projects.value) ||
+    projects.value.some(
+      (candidate) =>
+        !candidate ||
+        !Number.isSafeInteger(candidate.id) ||
+        candidate.id <= 0 ||
+        typeof candidate.name !== "string",
+    )
+  ) {
+    writeError(output, "Invalid project response", json);
+    return;
+  }
   const project = findProject(projects.value, selector);
   if (!project) writeError(output, `Project "${selector}" not found`, json);
   return project;

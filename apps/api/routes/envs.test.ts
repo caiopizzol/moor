@@ -71,7 +71,7 @@ describe("POST /api/projects/:id/envs", () => {
   test("deletes matching keys once, preserves unrelated values, and does not start stopped projects", async () => {
     const p = insertProject();
     await call(p.id, { vars: { A: "1", B: "2" } });
-    const response = await call(p.id, { keys: ["A", "A", "MISSING"] }, undefined, "/delete");
+    const response = await call(p.id, { keys: [" A ", "A", " MISSING "] }, undefined, "/delete");
     expect(await response.json()).toEqual({
       deleted_keys: ["A"],
       missing_keys: ["MISSING"],

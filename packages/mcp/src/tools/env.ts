@@ -188,7 +188,10 @@ export function registerEnvTools(server: McpServer, client: ToolContext): void {
       const p = await resolveProject(project);
 
       const res = await apiResponse.post(`/api/projects/${p.id}/envs/delete`, { keys });
-      if (!res.ok) throw new Error(`Failed to delete envs: ${await readErrorMessage(res)}`);
+      if (!res.ok) {
+        const detail = await res.text();
+        throw new Error(`Failed to delete envs: ${detail || `HTTP ${res.status}`}`);
+      }
       const {
         deleted_keys: toDelete,
         missing_keys: missing,

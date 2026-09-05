@@ -58,7 +58,7 @@ export async function handleEnvs(
       const current = getProject(projectId);
       if (!current) return errorResponse("Not found", 404);
       const existing = new Set(listProjectEnvs(projectId).map((row) => row.key));
-      const unique = [...new Set(keys as string[])];
+      const unique = [...new Set((keys as string[]).map((key) => key.trim()))];
       const deleted_keys = unique.filter((key) => existing.has(key));
       const missing_keys = unique.filter((key) => !existing.has(key));
       const shouldRestart = current.status === "running" && deleted_keys.length > 0;
