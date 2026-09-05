@@ -173,6 +173,8 @@ printf '%s' '{"DATABASE_URL":"..."}' | \
   moor project deploy api --github-url https://github.com/example/api --env-file -
 ```
 
+Set resource caps with `--memory-limit-mb 256 --cpus 0.5`. Memory uses integer MB and allows no extra swap; CPU counts may be fractional. The server enforces minimums (6 MB and 0.001 CPUs) and host capacity. Pass `unlimited` to either option to clear that cap; zero is not a clearing value. Omitted limits remain unchanged with `--update-existing`. With `--no-run`, new limits take effect on the next container recreation, such as a restart.
+
 Use `--files files.json` to read a JSON array of injected files, or `--files -` for stdin:
 
 ```json
