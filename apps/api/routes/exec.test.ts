@@ -65,4 +65,41 @@ describe("#73 POST /api/projects/:id/exec/async live-check wiring", () => {
     expect(res.status).toBe(400);
     expect(await errorMessage(res)).toContain("timeout_ms must be an integer between");
   });
+  test("rejects non-object bodies and invalid commands before checking the container", async () => {
+    const project = db
+      .query("INSERT INTO projects (name) VALUES ('invalid-exec') RETURNING id")
+      .get() as { id: number };
+    const path = `/api/projects/${project.id}/exec/async`;
+    for (const body of [null, [], 42, "echo hi"]) {
+      const response = await call("POST", path, body);
+      expect(response.status).toBe(400);
+      expect(await errorMessage(response)).toBe("request body must be a JSON object");
+    }
+    for (const command of [null, false, true, 42, ["ls"], {}, "", " \n\t"]) {
+      const response = await call("POST", path, { command });
+      expect(response.status).toBe(400);
+      expect(await errorMessage(response)).toBe("command must be a non-empty string");
+    }
+    const missing = await call("POST", path, {});
+    expect(await errorMessage(missing)).toBe("command must be a non-empty string");
+    expect(
+      db.query("SELECT COUNT(*) AS n FROM exec_runs WHERE project_id = ?").get(project.id),
+    ).toEqual({ n: 0 });
+  });
+  test("malformed JSON gets a fixed error without echoing command content", async () => {
+    const project = db
+      .query("INSERT INTO projects (name) VALUES ('malformed-exec') RETURNING id")
+      .get() as { id: number };
+    const request = new Request(`http://localhost/api/projects/${project.id}/exec/async`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: '{"command":"private-marker"',
+    });
+    const response = await handleExec(request, new URL(request.url));
+    expect(response?.status).toBe(400);
+    expect(await response?.text()).toBe('{"error":"invalid JSON body"}');
+    expect(
+      db.query("SELECT COUNT(*) AS n FROM exec_runs WHERE project_id = ?").get(project.id),
+    ).toEqual({ n: 0 });
+  });
 });
