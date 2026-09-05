@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { apiGet, apiPost, apiPut, findProject } from "../client";
+import { apiGet, apiPost, apiPut, clientConfigError, findProject } from "../client";
 import { requestProjects } from "../project-response";
 import { type CommandOutput, defaultCommandOutput, requestJson, writeError } from "../protocol";
 
@@ -55,8 +55,18 @@ export async function cronCommand(
   if (byId && (!/^\d+$/.test(selector) || !Number.isSafeInteger(id) || id <= 0))
     return fail("Cron ID must be a positive safe integer");
   let body: unknown;
-  if (verb === "create" || verb === "update") {
-    if (file === undefined) return fail("--file is required");
+  if ((verb === "create" || verb === "update") && file === undefined)
+    return fail("--file is required");
+  const configError = clientConfigError();
+  if (configError) return fail(configError);
+  if (!byId) {
+    const projects = await requestProjects(json, output);
+    if (!projects.ok) return 1;
+    const project = findProject(projects.value, selector);
+    if (!project) return fail(`Project "${selector}" not found`);
+    id = project.id;
+  }
+  if (file !== undefined) {
     let text: string;
     try {
       text = file === "-" ? await Bun.stdin.text() : await readFile(file, "utf8");
@@ -70,13 +80,6 @@ export async function cronCommand(
     }
     if (!body || typeof body !== "object" || Array.isArray(body))
       return fail("Cron file must contain a JSON object");
-  }
-  if (!byId) {
-    const projects = await requestProjects(json, output);
-    if (!projects.ok) return 1;
-    const project = findProject(projects.value, selector);
-    if (!project) return fail(`Project "${selector}" not found`);
-    id = project.id;
   }
   const response = await requestJson<unknown>(
     () =>

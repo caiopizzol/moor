@@ -45,10 +45,10 @@ afterEach(async () => {
   await server.stop(true);
   await rm(directory, { recursive: true, force: true });
 });
-async function run(args: string[], input = "") {
+async function run(args: string[], input = "", env: Record<string, string> = {}) {
   const child = Bun.spawn({
     cmd: [process.execPath, join(import.meta.dir, "../index.ts"), "cron", ...args],
-    env: { ...process.env, MOOR_URL: server.url.origin, MOOR_API_KEY: "test-key" },
+    env: { ...process.env, MOOR_URL: server.url.origin, MOOR_API_KEY: "test-key", ...env },
     stdin: new Blob([input]),
     stdout: "pipe",
     stderr: "pipe",
@@ -167,7 +167,7 @@ test("cron human mode renders formatted JSON without claiming execution success"
   });
   expect(requests).toHaveLength(1);
 });
-test("cron invalid syntax and file input fail before any HTTP request", async () => {
+test("cron invalid syntax makes no requests and invalid files never mutate", async () => {
   for (const args of [
     [],
     ["run"],
@@ -187,6 +187,7 @@ test("cron invalid syntax and file input fail before any HTTP request", async ()
     expect(result.stdout).toBe("");
     expect(typeof JSON.parse(result.stderr).error).toBe("string");
   }
+  expect(requests).toEqual([]);
   for (const input of ['{"private":"do-not-echo"', "null", "[]", "42"]) {
     expect(await run(["create", "7", "--file", "-", "--json"], input)).toEqual({
       exitCode: 1,
@@ -200,6 +201,27 @@ test("cron invalid syntax and file input fail before any HTTP request", async ()
     stderr: '{"error":"Unable to read cron file"}\n',
   });
   expect((await run(["create", "--bad", "--help"])).exitCode).toBe(0);
+  expect(requests).toEqual([lookup, lookup, lookup, lookup]);
+});
+test("cron create resolves the project before reading its input file", async () => {
+  projects = [];
+  const result = await run(["create", "missing", "--file", join(directory, "absent"), "--json"]);
+  expect(result.exitCode).toBe(1);
+  expect(result.stdout).toBe("");
+  expect(JSON.parse(result.stderr)).toEqual({ error: 'Project "missing" not found' });
+  expect(requests).toEqual([lookup]);
+});
+test("cron create and update check configuration before reading input", async () => {
+  for (const verb of ["create", "update"]) {
+    for (const key of ["MOOR_URL", "MOOR_API_KEY"]) {
+      const result = await run([verb, "12", "--file", join(directory, "absent"), "--json"], "", {
+        [key]: "",
+      });
+      expect(result.exitCode).toBe(1);
+      expect(result.stdout).toBe("");
+      expect(JSON.parse(result.stderr)).toEqual({ error: `${key} is not set` });
+    }
+  }
   expect(requests).toEqual([]);
 });
 test("cron missing or malformed projects cannot reach a mutation", async () => {
