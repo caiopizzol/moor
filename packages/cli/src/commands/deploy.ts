@@ -19,6 +19,7 @@ Options:
   --domain-port <port>     Container port for the public domain
   --source-credential-id <id> Select a stored credential for a private repository
   --env-file <path|->      Merge env from a JSON object; - reads stdin
+  --files <path|->         Upsert files from a JSON array; - reads stdin
   --volume <name>:<target> Add a named volume at an absolute container path (repeatable)
   --update-existing        Update a project with the same name
   --no-run                 Save configuration without building or starting
@@ -31,6 +32,7 @@ type DeployOutput = CommandOutput & {
 type ParsedDeployArgs = {
   input?: DeployRequest;
   envFile?: string;
+  filesFile?: string;
   json: boolean;
   error?: string;
 };
@@ -43,6 +45,7 @@ const defaultOutput: DeployOutput = {
 export function parseDeployArgs(args: string[]): ParsedDeployArgs {
   const input: DeployRequest = { name: "" };
   let envFile: string | undefined;
+  let filesFile: string | undefined;
   const json = args.includes("--json");
 
   for (let index = 0; index < args.length; index += 1) {
@@ -74,6 +77,7 @@ export function parseDeployArgs(args: string[]): ParsedDeployArgs {
         "--domain-port",
         "--source-credential-id",
         "--env-file",
+        "--files",
         "--volume",
       ].includes(arg)
     ) {
@@ -85,6 +89,10 @@ export function parseDeployArgs(args: string[]): ParsedDeployArgs {
     }
     index += 1;
     switch (arg) {
+      case "--files":
+        if (filesFile !== undefined) return { json, error: "--files may be used only once" };
+        filesFile = value;
+        break;
       case "--volume": {
         const separator = value.indexOf(":");
         if (separator <= 0 || !value.slice(separator + 1).startsWith("/")) {
@@ -138,10 +146,13 @@ export function parseDeployArgs(args: string[]): ParsedDeployArgs {
   }
 
   if (!input.name) return { json, error: "Project name is required" };
+  if (envFile === "-" && filesFile === "-") {
+    return { json, error: "--env-file and --files cannot both read stdin" };
+  }
   if (input.github_url && input.docker_image) {
     return { json, error: "Use only one of --github-url or --docker-image" };
   }
-  return { input, envFile, json };
+  return { input, envFile, ...(filesFile === undefined ? {} : { filesFile }), json };
 }
 
 export async function deployCommand(
@@ -167,6 +178,26 @@ export async function deployCommand(
       const message = error instanceof Error ? error.message : String(error);
       output.stderr(
         `${formatError(`Failed to read --env-file: ${message}`, undefined, parsed.json)}\n`,
+      );
+      return 1;
+    }
+  }
+
+  if (parsed.filesFile) {
+    try {
+      const text = await output.readText(parsed.filesFile);
+      let value: unknown;
+      try {
+        value = JSON.parse(text);
+      } catch {
+        throw new Error("expected a JSON array of file entries");
+      }
+      if (!Array.isArray(value)) throw new Error("expected a JSON array of file entries");
+      parsed.input.files = value;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      output.stderr(
+        `${formatError(`Failed to read --files: ${message}`, undefined, parsed.json)}\n`,
       );
       return 1;
     }

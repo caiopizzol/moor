@@ -167,6 +167,19 @@ printf '%s' '{"DATABASE_URL":"..."}' | \
   moor project deploy api --github-url https://github.com/example/api --env-file -
 ```
 
+Use `--files files.json` to read a JSON array of injected files, or `--files -` for stdin:
+
+```json
+[
+  {"path":"/etc/app/config.json","content":"{\"debug\":false}","mode":"0644"},
+  {"path":"/etc/app/token","env_ref":"TOKEN","mode":"0600"}
+]
+```
+
+Each entry supplies exactly one of `content` or `env_ref`; the server validates paths and modes. Referenced env keys must exist when the container starts, either already stored or supplied with `--env-file` in this deploy. File contents stay out of command-line arguments. Only one of `--files` and `--env-file` can read stdin.
+
+With `--update-existing`, entries replace file configuration at matching paths; omitted files are retained. `--no-run` saves configuration without injecting files until the next container creation, such as a restart.
+
 Agents should pass `--json`. Each streamed API event is emitted as one JSON object per line:
 
 ```json
