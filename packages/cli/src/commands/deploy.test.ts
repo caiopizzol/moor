@@ -102,6 +102,19 @@ describe("project deploy command", () => {
     );
   });
 
+  test("rejects conflicting stdin options before reading either input", async () => {
+    const readPaths: string[] = [];
+    const capture = captureOutput(async (path) => {
+      readPaths.push(path);
+      return "[]";
+    });
+    expect(
+      await deployCommand(["app", "--env-file", "-", "--files", "-", "--json"], capture.output),
+    ).toBe(1);
+    expect(readPaths).toEqual([]);
+    expect(capture.stderr.join("")).toContain("cannot both read stdin");
+  });
+
   test("rejects a flag used as a missing option value", () => {
     expect(parseDeployArgs(["app", "--docker-image", "--json", "--update-existing"])).toEqual({
       json: true,
