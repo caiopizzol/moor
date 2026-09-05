@@ -79,6 +79,18 @@ test("history JSON preserves API payload, exact name precedence, auth and reques
     expect(Number(query.get("to")) - Number(query.get("from"))).toBe(expectedHours * 3600000);
   }
 });
+test("history treats repeated JSON flags as idempotent like the shared project parser", async () => {
+  expect(await run(["--json", "7", "--json"])).toEqual({
+    exitCode: 0,
+    stdout: `${JSON.stringify(history)}\n`,
+    stderr: "",
+  });
+  expect(requests.map((request) => request.url.pathname)).toEqual([
+    "/api/projects",
+    "/api/projects/8/stats/history",
+  ]);
+});
+
 test("history human summary remains readable with no stored samples", async () => {
   expect(await run(["7"])).toEqual({
     exitCode: 0,
