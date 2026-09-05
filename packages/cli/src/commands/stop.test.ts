@@ -116,4 +116,17 @@ describe("stop CLI", () => {
       expect(calls.map((call) => call.method)).toEqual(["GET"]);
     }
   });
+  test("blank names are rejected before numeric ID lookup can stop a project", async () => {
+    for (const name of ["", "   "]) {
+      projects = [{ id: 8, name }];
+      calls.length = 0;
+      const result = await run(["8", "--json"]);
+      expect(result).toEqual({
+        exitCode: 1,
+        stdout: "",
+        stderr: '{"error":"Invalid project response"}\n',
+      });
+      expect(calls.map((call) => call.method)).toEqual(["GET"]);
+    }
+  });
 });

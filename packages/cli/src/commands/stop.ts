@@ -26,7 +26,8 @@ export async function stopCommand(
         !candidate ||
         !Number.isSafeInteger(candidate.id) ||
         candidate.id <= 0 ||
-        typeof candidate.name !== "string",
+        typeof candidate.name !== "string" ||
+        !candidate.name.trim(),
     )
   ) {
     writeError(output, "Invalid project response", json);
