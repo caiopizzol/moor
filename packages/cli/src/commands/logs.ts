@@ -1,5 +1,6 @@
-import type { LogsResponse, Project } from "../../../contract/src/index";
+import type { LogsResponse } from "../../../contract/src/index";
 import { apiGet, findProject } from "../client";
+import { requestProjects } from "../project-response";
 import { type CommandOutput, defaultCommandOutput, requestJson, writeError } from "../protocol";
 
 const USAGE = "Usage: moor logs <project> [-f] [-n <lines>] [--json]";
@@ -76,12 +77,7 @@ export async function logsCommand(
     return 1;
   }
 
-  const projects = await requestJson<Project[]>(
-    () => apiGet("/api/projects"),
-    parsed.json,
-    "Failed to list projects",
-    output,
-  );
+  const projects = await requestProjects(parsed.json, output);
   if (!projects.ok) return 1;
   const project = findProject(projects.value, parsed.project);
   if (!project) {

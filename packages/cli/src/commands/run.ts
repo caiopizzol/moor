@@ -1,5 +1,5 @@
-import type { Project } from "../../../contract/src/index";
 import { apiGet, findProject } from "../client";
+import { requestProjects } from "../project-response";
 import { type CommandOutput, defaultCommandOutput, requestJson, writeError } from "../protocol";
 
 export const RUN_USAGE = `Usage:
@@ -73,20 +73,8 @@ export async function runCommand(
   if (!selector) return fail(action === "list" ? "Project is required" : "Run ID is required");
   let path: string;
   if (action === "list") {
-    const projects = await requestJson<Project[]>(
-      () => apiGet("/api/projects"),
-      json,
-      "Failed to list projects",
-      output,
-    );
+    const projects = await requestProjects(json, output);
     if (!projects.ok) return 1;
-    if (
-      !Array.isArray(projects.value) ||
-      projects.value.some(
-        (p) => !p || !Number.isSafeInteger(p.id) || p.id <= 0 || typeof p.name !== "string",
-      )
-    )
-      return fail("Invalid project response");
     const project = findProject(projects.value, selector);
     if (!project) return fail(`Project "${selector}" not found`);
     path = `/api/projects/${project.id}/runs?include_output=false&page=${amount}`;

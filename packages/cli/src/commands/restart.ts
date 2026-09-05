@@ -1,6 +1,6 @@
-import type { Project } from "../../../contract/src/index";
-import { apiGet, apiPost, findProject } from "../client";
+import { apiPost, findProject } from "../client";
 import { parseProjectArguments } from "../project-arguments";
+import { requestProjects } from "../project-response";
 import { type CommandOutput, defaultCommandOutput, requestJson, writeError } from "../protocol";
 
 const USAGE = "Usage: moor restart <project> [--json]";
@@ -12,12 +12,7 @@ export async function restartCommand(
   const parsed = parseProjectArguments(args, USAGE, output);
   if (typeof parsed === "number") return parsed;
   const { selector, json } = parsed;
-  const projects = await requestJson<Project[]>(
-    () => apiGet("/api/projects"),
-    json,
-    "Failed to list projects",
-    output,
-  );
+  const projects = await requestProjects(json, output);
   if (!projects.ok) return 1;
   const project = findProject(projects.value, selector);
   if (!project) {
