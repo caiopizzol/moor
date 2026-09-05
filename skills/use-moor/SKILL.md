@@ -13,4 +13,4 @@ Use the installed `moor` CLI to operate an existing Moor server. Do not use the 
 - Pass environment values through `--env-file -` on stdin, not through arguments.
 - Mutate a server only when the user's request authorizes the change.
 
-The supported agent surface is project listing, project inspection, project deployment, secure environment updates, and finite logs. `moor logs --json --follow` is unsupported. If the requested capability is absent from the CLI help, report that gap instead of falling back to MCP, direct API calls, or guessed commands.
+The installed CLI help defines the available capabilities. `moor logs --json --follow` is unsupported. If the requested capability is absent from the CLI help, report that gap instead of falling back to MCP, direct API calls, or guessed commands.
