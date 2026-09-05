@@ -36,10 +36,10 @@ afterEach(async () => {
   await server.stop(true);
   await rm(directory, { recursive: true, force: true });
 });
-async function run(args: string[], input = "") {
+async function run(args: string[], input = "", env: Record<string, string> = {}) {
   const child = Bun.spawn({
     cmd: [process.execPath, join(import.meta.dir, "../index.ts"), "job", ...args],
-    env: { ...process.env, MOOR_URL: server.url.origin, MOOR_API_KEY: "test-key" },
+    env: { ...process.env, MOOR_URL: server.url.origin, MOOR_API_KEY: "test-key", ...env },
     stdin: new Blob([input]),
     stdout: "pipe",
     stderr: "pipe",
@@ -120,7 +120,7 @@ test("job human output is formatted outcome JSON including unsuccessful cancella
   });
   expect(requests).toHaveLength(1);
 });
-test("job syntax and invalid file data fail before HTTP", async () => {
+test("job syntax fails before HTTP and invalid files never start execution", async () => {
   for (const args of [
     [],
     ["get", "12"],
@@ -137,6 +137,7 @@ test("job syntax and invalid file data fail before HTTP", async () => {
     expect(result.stdout).toBe("");
     expect(typeof JSON.parse(result.stderr).error).toBe("string");
   }
+  expect(requests).toEqual([]);
   for (const body of ['{"command":"private-marker"', "[]", "null"]) {
     expect(await run(["start", "7", "--file", "-", "--json"], body)).toEqual({
       exitCode: 1,
@@ -150,6 +151,27 @@ test("job syntax and invalid file data fail before HTTP", async () => {
     stderr: '{"error":"Unable to read job file"}\n',
   });
   expect((await run(["--bad", "--help"])).exitCode).toBe(0);
+  expect(requests).toEqual([lookup, lookup, lookup, lookup]);
+});
+test("job start resolves the project before reading its file", async () => {
+  projects = [];
+  expect(await run(["start", "missing", "--file", join(directory, "absent"), "--json"])).toEqual({
+    exitCode: 1,
+    stdout: "",
+    stderr: '{"error":"Project \\"missing\\" not found"}\n',
+  });
+  expect(requests).toEqual([lookup]);
+});
+test("job start checks configuration before reading its file", async () => {
+  for (const key of ["MOOR_URL", "MOOR_API_KEY"]) {
+    expect(
+      await run(["start", "7", "--file", join(directory, "absent"), "--json"], "", { [key]: "" }),
+    ).toEqual({
+      exitCode: 1,
+      stdout: "",
+      stderr: `${JSON.stringify({ error: `${key} is not set` })}\n`,
+    });
+  }
   expect(requests).toEqual([]);
 });
 test("job missing/malformed project lookup never starts execution", async () => {

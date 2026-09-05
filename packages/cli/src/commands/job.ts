@@ -53,6 +53,11 @@ export async function jobCommand(
   let body: unknown;
   if (verb === "start") {
     if (file === undefined) return fail("--file is required");
+    const projects = await requestProjects(json, output);
+    if (!projects.ok) return 1;
+    const project = findProject(projects.value, selector);
+    if (!project) return fail(`Project "${selector}" not found`);
+    id = project.id;
     let text: string;
     try {
       text = file === "-" ? await Bun.stdin.text() : await readFile(file, "utf8");
@@ -65,11 +70,6 @@ export async function jobCommand(
       return fail("Job file must contain a JSON object");
     }
     if (!isRecord(body)) return fail("Job file must contain a JSON object");
-    const projects = await requestProjects(json, output);
-    if (!projects.ok) return 1;
-    const project = findProject(projects.value, selector);
-    if (!project) return fail(`Project "${selector}" not found`);
-    id = project.id;
   } else if (!/^\d+$/.test(selector) || !Number.isSafeInteger(id) || id <= 0)
     return fail("Job ID must be a positive safe integer");
   const response = await requestJson<unknown>(
