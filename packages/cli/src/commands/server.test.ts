@@ -172,6 +172,18 @@ test("drain help wins over invalid arguments without requests", async () => {
   expect(requests).toEqual([]);
 });
 
+test("drain does not treat reason values as successful help requests", async () => {
+  const short = await run(["drain", "enable", "--reason", "-h", "--json"]);
+  expect(short.exitCode).toBe(0);
+  expect(JSON.parse(short.stdout)).toEqual({ state });
+  expect(JSON.parse(requests.at(-1)?.body ?? "null")).toEqual({ reason: "-h" });
+  const long = await run(["drain", "enable", "--reason", "--help", "--json"]);
+  expect(long.exitCode).toBe(1);
+  expect(long.stdout).toBe("");
+  expect(JSON.parse(long.stderr).error).toContain("Missing value");
+  expect(requests).toHaveLength(1);
+});
+
 test("all drain actions preserve API failure details and exit nonzero in both modes", async () => {
   response = () => Response.json({ error: "unavailable", hint: "try later" }, { status: 503 });
   for (const action of ["status", "enable", "disable"]) {

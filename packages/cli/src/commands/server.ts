@@ -16,9 +16,13 @@ export async function serverCommand(
   args: string[],
   output: CommandOutput = defaultCommandOutput,
 ): Promise<number> {
-  if (args.includes("--help") || args.includes("-h")) {
-    output.stdout(USAGE);
-    return 0;
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "--reason" || args[i] === "--ttl-minutes") {
+      i++;
+    } else if (args[i] === "--help" || args[i] === "-h") {
+      output.stdout(USAGE);
+      return 0;
+    }
   }
   const json = args.includes("--json");
   const positional: string[] = [];
