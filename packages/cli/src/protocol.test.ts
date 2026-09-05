@@ -73,7 +73,7 @@ describe("CLI protocol", () => {
           true,
         ),
       ),
-    ).toEqual({ error: "HTTP 500", status: 500 });
+    ).toEqual({ error: "HTTP 500", error_details: { detail: "bad shape" }, status: 500 });
   });
 
   test("keeps configuration failures machine-readable without making a request", async () => {

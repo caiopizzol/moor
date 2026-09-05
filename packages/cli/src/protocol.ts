@@ -48,6 +48,10 @@ export async function formatResponseError(
     const body: unknown = await copy.json();
     if (typeof body === "object" && body !== null && !Array.isArray(body)) {
       const fields = body as Record<string, unknown>;
+      const structuredError =
+        typeof fields.error === "object" && fields.error !== null && !Array.isArray(fields.error)
+          ? fields.error
+          : undefined;
       const error =
         typeof fields.error === "string"
           ? undefined
@@ -56,6 +60,7 @@ export async function formatResponseError(
             : `HTTP ${response.status}`;
       return JSON.stringify({
         ...fields,
+        ...(structuredError === undefined ? {} : { error_details: structuredError }),
         ...(error === undefined ? {} : { error }),
         status: response.status,
       });
