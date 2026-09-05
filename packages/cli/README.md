@@ -230,6 +230,7 @@ Stop attempts cancellation once. Inspect `ok`, `state`, `live_remaining`, and `m
 moor cron list worker --json
 moor cron create worker --file job.json --json
 moor cron update 12 --file patch.json --json
+moor cron run 12 --json
 ```
 
 Create reads a JSON object with `name`, `schedule`, and `command`; `timeout_ms` and `enabled` are optional. For example, `job.json` can contain:
@@ -242,7 +243,9 @@ Jobs are enabled by default; `enabled: false` stages a disabled job without an a
 
 Schedules use five numeric cron fields in the API process's local timezone, with Sunday numbered 0. The API validates schedule and timeout values. Creating or updating configuration does not manually trigger a run, but an enabled job is eligible at its scheduled time. This requires a running project container.
 
-`--json` returns one document; human mode prints indented JSON. Exit 0 reports a successful configuration or retrieval request, not a successful job execution. Inspect results with `moor run list <project> --json` and `moor run get <id> --json`. Manual triggering and deletion are not exposed by these commands.
+`cron run` triggers one execution immediately, even for a disabled schedule. It returns `{ok:true,run_id}` without waiting; exit 0 means acceptance, not workload success. Inspect the returned ID with `moor run get <run_id> --json`, not `job status`. No automatic retries or polling occur. A failed request or unusable response may leave the outcome uncertain; do not blindly repeat a trigger.
+
+`--json` returns one document; human mode prints indented JSON. Exit 0 reports a successful request, not a successful job execution. Inspect results with `moor run list <project> --json` and `moor run get <id> --json`. Deletion is not exposed by these commands.
 
 ## Private-image registry credentials
 

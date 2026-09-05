@@ -60,6 +60,66 @@ async function run(args: string[], input = "") {
   ]);
   return { exitCode, stdout, stderr };
 }
+test("cron run returns acceptance with one direct trigger request in either output mode", async () => {
+  const body = { ok: true, run_id: 99 };
+  respond = () => Response.json(body);
+  for (const flags of [[], ["--json"]]) {
+    requests.length = 0;
+    expect(await run(["run", ...flags, "12"])).toEqual({
+      exitCode: 0,
+      stdout: `${JSON.stringify(body, null, flags.length ? undefined : 2)}\n`,
+      stderr: "",
+    });
+    expect(requests).toEqual([
+      { path: "/api/crons/12/run", method: "POST", auth: "Bearer test-key", body: {} },
+    ]);
+  }
+});
+test("cron run rejects invalid IDs and extra arguments before any request", async () => {
+  for (const args of [
+    ["12", "extra"],
+    ["12", "--file", "-"],
+    ["12", "--unknown"],
+    ...["0", "-1", "1.5", "9007199254740992", "nope"].map((id) => [id]),
+  ]) {
+    const result = await run(["run", ...args, "--json"]);
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(typeof JSON.parse(result.stderr).error).toBe("string");
+  }
+  expect(requests).toEqual([]);
+});
+test("cron run fails on HTTP errors without retrying", async () => {
+  for (const status of [400, 404, 503]) {
+    requests.length = 0;
+    respond = () => Response.json({ error: "rejected" }, { status });
+    expect(await run(["run", "12", "--json"])).toEqual({
+      exitCode: 1,
+      stdout: "",
+      stderr: `${JSON.stringify({ error: "rejected", status })}\n`,
+    });
+    expect(requests).toHaveLength(1);
+  }
+});
+test("cron run rejects unusable acceptance without guessing an ID or retrying", async () => {
+  for (const body of [
+    null,
+    [],
+    {},
+    { ok: false, run_id: 99 },
+    ...[0, -1, 1.5, "99", 9007199254740992].map((run_id) => ({ ok: true, run_id })),
+  ]) {
+    requests.length = 0;
+    respond = () => Response.json(body);
+    const result = await run(["run", "12", "--json"]);
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(JSON.parse(result.stderr).error).toContain(
+      "request may have started a run, do not retry blindly",
+    );
+    expect(requests).toHaveLength(1);
+  }
+});
 test("cron list uses exact name before numeric ID and preserves JSON results", async () => {
   respond = () => Response.json([row]);
   expect(await run(["list", "--json", "7"])).toEqual({
@@ -110,7 +170,7 @@ test("cron human mode renders formatted JSON without claiming execution success"
 test("cron invalid syntax and file input fail before any HTTP request", async () => {
   for (const args of [
     [],
-    ["run", "12"],
+    ["run"],
     ["delete", "12"],
     ["list"],
     ["list", "7", "extra"],
