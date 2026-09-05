@@ -95,6 +95,130 @@ test("source create reads stdin and returns only server metadata", async () => {
     { path: endpoint, method: "POST", auth: "Bearer test-key", body: input },
   ]);
 });
+test("source update rotates through one PUT without checking or changing failed metadata", async () => {
+  const failed = { ...metadata, state: "failed" };
+  respond = () => Response.json(failed);
+  const body = { secret, expires_at: null };
+  expect(
+    await run(
+      ["source", "update", "--source-credential-id", "8", "--file", "-", "--json"],
+      JSON.stringify(body),
+    ),
+  ).toEqual({
+    exitCode: 0,
+    stdout: `${JSON.stringify(failed)}\n`,
+    stderr: "",
+  });
+  expect(requests).toEqual([
+    { path: `${endpoint}/8`, method: "PUT", auth: "Bearer test-key", body },
+  ]);
+  const checked = { ok: true, reachable: true, head_sha: "abc" };
+  respond = () => Response.json(checked);
+  expect(
+    (
+      await run([
+        "source",
+        "check",
+        "--source-credential-id",
+        "8",
+        "--github-url",
+        "https://github.com/acme/app",
+        "--json",
+      ])
+    ).exitCode,
+  ).toBe(0);
+  expect(requests).toHaveLength(2);
+  expect(requests[1]).toEqual({
+    path: `${endpoint}/check`,
+    method: "POST",
+    auth: "Bearer test-key",
+    body: { github_url: "https://github.com/acme/app", source_credential_id: 8 },
+  });
+});
+test("source update reads disk patches without adding omitted fields", async () => {
+  const path = join(directory, "rotation.json");
+  const body = { username: "new-user", label: "renamed", secret };
+  await writeFile(path, JSON.stringify(body));
+  respond = () => Response.json({ ...metadata, label: "renamed" });
+  expect(await run(["source", "update", "--file", path, "--source-credential-id", "8"])).toEqual({
+    exitCode: 0,
+    stdout: "8\tgithub.com\trenamed\tactive\n",
+    stderr: "",
+  });
+  expect(requests).toEqual([
+    { path: `${endpoint}/8`, method: "PUT", auth: "Bearer test-key", body },
+  ]);
+});
+test("source update accepts an empty patch and renders failed metadata honestly", async () => {
+  respond = () => Response.json({ ...metadata, state: "failed" });
+  expect(
+    await run(["source", "update", "--source-credential-id", "8", "--file", "-"], "{}"),
+  ).toEqual({ exitCode: 0, stdout: "8\tgithub.com\twork\tfailed\n", stderr: "" });
+  expect(requests).toEqual([
+    { path: `${endpoint}/8`, method: "PUT", auth: "Bearer test-key", body: {} },
+  ]);
+});
+test("source update preserves API failures and leaves field validation to the server", async () => {
+  for (const status of [400, 404, 409, 500]) {
+    requests.length = 0;
+    respond = () => Response.json({ error: "update rejected", code: "fixture" }, { status });
+    expect(
+      await run(
+        ["source", "update", "--source-credential-id", "8", "--file", "-", "--json"],
+        JSON.stringify({ hostname: "other.host", secret }),
+      ),
+    ).toEqual({
+      exitCode: 1,
+      stdout: "",
+      stderr: `${JSON.stringify({ error: "update rejected", code: "fixture", status })}\n`,
+    });
+    expect(requests).toEqual([
+      {
+        path: `${endpoint}/8`,
+        method: "PUT",
+        auth: "Bearer test-key",
+        body: { hostname: "other.host", secret },
+      },
+    ]);
+  }
+});
+test("source update rejects invalid IDs, arguments and input before requesting", async () => {
+  for (const id of ["0", "-1", "1.5", "9007199254740992", "Infinity", "bad"]) {
+    const result = await run(
+      ["source", "update", "--source-credential-id", id, "--file", "-", "--json"],
+      JSON.stringify({ secret }),
+    );
+    expect(result).toEqual({
+      exitCode: 1,
+      stdout: "",
+      stderr: '{"error":"--source-credential-id must be a positive integer"}\n',
+    });
+  }
+  for (const args of [
+    [],
+    ["--file", "-"],
+    ["--source-credential-id", "8"],
+    ["--source-credential-id", "8", "--file", "-", "extra"],
+    ["--source-credential-id", "8", "--file", "-", "--secret", secret],
+    ["--source-credential-id", "8", "--source-credential-id", "9", "--file", "-"],
+  ]) {
+    const result = await run(["source", "update", ...args, "--json"], JSON.stringify({ secret }));
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(typeof JSON.parse(result.stderr).error).toBe("string");
+    expect(result.stderr).not.toContain(secret);
+  }
+  for (const body of [`{"secret":"${secret}"`, "[]", "null"]) {
+    expect(
+      await run(["source", "update", "--source-credential-id", "8", "--file", "-", "--json"], body),
+    ).toEqual({
+      exitCode: 1,
+      stdout: "",
+      stderr: '{"error":"Credential file must contain a JSON object"}\n',
+    });
+  }
+  expect(requests).toEqual([]);
+});
 test("source create reads a disk file and prints a minimal human summary", async () => {
   const path = join(directory, "credential.json");
   await writeFile(path, JSON.stringify(input));
@@ -167,12 +291,17 @@ test("human credential output rejects malformed metadata without partial stdout"
     { ...metadata, label: null },
     { ...metadata, state: "unknown" },
   ]) {
-    for (const verb of ["list", "create"]) {
+    for (const verb of ["list", "create", "update"]) {
       requests.length = 0;
       respond = () => Response.json(verb === "list" ? { rows: [metadata, row] } : row);
       expect(
         await run(
-          ["source", verb, ...(verb === "create" ? ["--file", "-"] : [])],
+          [
+            "source",
+            verb,
+            ...(verb !== "list" ? ["--file", "-"] : []),
+            ...(verb === "update" ? ["--source-credential-id", "8"] : []),
+          ],
           JSON.stringify(input),
         ),
       ).toEqual({

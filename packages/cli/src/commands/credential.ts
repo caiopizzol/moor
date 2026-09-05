@@ -1,14 +1,16 @@
 import { readFile } from "node:fs/promises";
 import type { SourceCredentialCheckRequest } from "../../../contract/src/index";
-import { apiGet, apiPost } from "../client";
+import { apiGet, apiPost, apiPut } from "../client";
 import { type CommandOutput, defaultCommandOutput, requestJson, writeError } from "../protocol";
 
 const USAGE = `Usage:
   moor credential source list [--json]
   moor credential source create --file <path|-> [--json]
+  moor credential source update --source-credential-id <id> --file <path|-> [--json]
   moor credential source check --github-url <url> [--branch <branch>] [--source-credential-id <id>] [--json]
 
-Create reads a JSON object from disk or stdin (-); never pass secrets in argv.
+Create/update read a JSON object from disk or stdin (-); never pass secrets in argv.
+Update stores a patch without checking access or changing credential state.
 Check tests repository access and may update the credential's stored state.
 Finite JSON output goes to stdout; failures go to stderr and exit 1.`;
 const ENDPOINT = "/api/server/source-credentials";
@@ -27,15 +29,17 @@ export async function credentialCommand(
     return 1;
   };
   const [kind, verb] = args;
-  if (kind !== "source" || !["list", "create", "check"].includes(verb ?? "")) {
-    return fail("Use credential source list, create, or check; see --help");
+  if (kind !== "source" || !["list", "create", "update", "check"].includes(verb ?? "")) {
+    return fail("Use credential source list, create, update, or check; see --help");
   }
   const allowed =
-    verb === "create"
-      ? ["--file"]
-      : verb === "check"
-        ? ["--github-url", "--branch", "--source-credential-id"]
-        : [];
+    verb === "update"
+      ? ["--file", "--source-credential-id"]
+      : verb === "create"
+        ? ["--file"]
+        : verb === "check"
+          ? ["--github-url", "--branch", "--source-credential-id"]
+          : [];
   const options = new Map<string, string>();
   for (let index = 2; index < args.length; index++) {
     const option = args[index];
@@ -49,7 +53,16 @@ export async function credentialCommand(
 
   let request: () => Promise<Response>;
   if (verb === "list") request = () => apiGet(ENDPOINT);
-  else if (verb === "create") {
+  else if (verb === "create" || verb === "update") {
+    let id: number | undefined;
+    if (verb === "update") {
+      const value = options.get("--source-credential-id");
+      if (value === undefined) return fail("--source-credential-id is required");
+      id = Number(value);
+      if (!Number.isSafeInteger(id) || id <= 0) {
+        return fail("--source-credential-id must be a positive integer");
+      }
+    }
     const file = options.get("--file");
     if (!file) return fail("--file is required");
     let text: string;
@@ -67,7 +80,8 @@ export async function credentialCommand(
     if (typeof body !== "object" || body === null || Array.isArray(body)) {
       return fail("Credential file must contain a JSON object");
     }
-    request = () => apiPost(ENDPOINT, body);
+    request =
+      verb === "update" ? () => apiPut(`${ENDPOINT}/${id}`, body) : () => apiPost(ENDPOINT, body);
   } else {
     const url = options.get("--github-url");
     if (!url?.trim()) return fail("--github-url is required");
