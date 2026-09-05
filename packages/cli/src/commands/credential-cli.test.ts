@@ -331,7 +331,7 @@ test("source create parse failures never echo credential content", async () => {
 test("credential syntax errors and help make no requests", async () => {
   for (const args of [
     [],
-    ["registry", "list"],
+    ["unknown", "list"],
     ["source", "delete"],
     ["source", "list", "extra"],
     ["source", "create"],
@@ -367,4 +367,189 @@ test("source create leaves field validation on the server and preserves errors w
   });
   expect(requests[0]?.body).toEqual({ secret });
   expect(result.stdout + result.stderr).not.toContain(secret);
+});
+
+const registryEndpoint = "/api/server/registry-credentials";
+const registryMetadata = {
+  id: 9,
+  hostname: "ghcr.io",
+  username: "operator",
+  secret: { configured: true, kind: "unknown" },
+  created_at: "2026-09-05",
+  updated_at: "2026-09-05",
+};
+test("registry list uses its own endpoint and renders metadata in both modes", async () => {
+  respond = () => Response.json({ rows: [registryMetadata] });
+  expect(await run(["registry", "list", "--json"])).toEqual({
+    exitCode: 0,
+    stdout: `${JSON.stringify({ rows: [registryMetadata] })}\n`,
+    stderr: "",
+  });
+  expect(await run(["registry", "list"])).toEqual({
+    exitCode: 0,
+    stdout: "9\tghcr.io\toperator\n",
+    stderr: "",
+  });
+  respond = () => Response.json({ rows: [] });
+  expect((await run(["registry", "list"])).stdout).toBe("No registry credentials.\n");
+  expect(requests).toEqual(
+    Array.from({ length: 3 }, () => ({
+      path: registryEndpoint,
+      method: "GET",
+      auth: "Bearer test-key",
+      body: null,
+    })),
+  );
+});
+test("registry create reads disk and stdin without rewriting hostnames or echoing secrets", async () => {
+  for (const file of ["-", join(directory, "registry.json")]) {
+    requests.length = 0;
+    const body = { hostname: "REGISTRY.example.com:5000", username: "operator", secret };
+    if (file !== "-") await writeFile(file, JSON.stringify(body));
+    respond = () => Response.json(registryMetadata, { status: 201 });
+    expect(
+      await run(["registry", "create", "--file", file, "--json"], JSON.stringify(body)),
+    ).toEqual({ exitCode: 0, stdout: `${JSON.stringify(registryMetadata)}\n`, stderr: "" });
+    expect(requests).toEqual([
+      { path: registryEndpoint, method: "POST", auth: "Bearer test-key", body },
+    ]);
+  }
+});
+test("registry update sends one exact patch and no check or image pull", async () => {
+  for (const body of [{ secret }, { username: "new-user" }, {}]) {
+    requests.length = 0;
+    respond = () => Response.json(registryMetadata);
+    expect(
+      await run(
+        ["registry", "update", "--registry-credential-id", "9", "--file", "-", "--json"],
+        JSON.stringify(body),
+      ),
+    ).toEqual({ exitCode: 0, stdout: `${JSON.stringify(registryMetadata)}\n`, stderr: "" });
+    expect(requests).toEqual([
+      { path: `${registryEndpoint}/9`, method: "PUT", auth: "Bearer test-key", body },
+    ]);
+  }
+});
+test("registry human writes use registry metadata and buffer malformed rows", async () => {
+  for (const verb of ["create", "update"]) {
+    requests.length = 0;
+    respond = () => Response.json(registryMetadata);
+    const args = [
+      "registry",
+      verb,
+      "--file",
+      "-",
+      ...(verb === "update" ? ["--registry-credential-id", "9"] : []),
+    ];
+    expect(await run(args, JSON.stringify({ secret }))).toEqual({
+      exitCode: 0,
+      stdout: "9\tghcr.io\toperator\n",
+      stderr: "",
+    });
+    expect(requests).toHaveLength(1);
+  }
+  for (const row of [
+    null,
+    {},
+    { ...registryMetadata, id: 0 },
+    { ...registryMetadata, hostname: 12 },
+    { ...registryMetadata, username: " " },
+  ]) {
+    for (const verb of ["list", "create", "update"]) {
+      requests.length = 0;
+      respond = () => Response.json(verb === "list" ? { rows: [registryMetadata, row] } : row);
+      const args = [
+        "registry",
+        verb,
+        ...(verb !== "list" ? ["--file", "-"] : []),
+        ...(verb === "update" ? ["--registry-credential-id", "9"] : []),
+      ];
+      expect(await run(args, "{}")).toEqual({
+        exitCode: 1,
+        stdout: "",
+        stderr: "Error: Invalid credential response\n",
+      });
+      expect(requests).toHaveLength(1);
+    }
+  }
+});
+test("registry syntax, kind-specific options and invalid files fail without requests", async () => {
+  for (const args of [
+    ["registry", "check"],
+    ["registry", "delete"],
+    ["registry", "list", "extra"],
+    ["registry", "create"],
+    ["registry", "create", "--file"],
+    ["registry", "create", "--file", "-", "--file", "-"],
+    ["registry", "create", "--secret", secret],
+    ["registry", "update", "--file", "-"],
+    ["registry", "update", "--source-credential-id", "9", "--file", "-"],
+    ["source", "update", "--registry-credential-id", "9", "--file", "-"],
+    ...["0", "-1", "1.5", "9007199254740992", "no"].map((id) => [
+      "registry",
+      "update",
+      "--registry-credential-id",
+      id,
+      "--file",
+      "-",
+    ]),
+  ]) {
+    const result = await run([...args, "--json"], "{}");
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(typeof JSON.parse(result.stderr).error).toBe("string");
+    expect(result.stderr).not.toContain(secret);
+  }
+  for (const verb of ["create", "update"]) {
+    for (const value of [`{"secret":"${secret}"`, "null", "[]"]) {
+      expect(
+        await run(
+          [
+            "registry",
+            verb,
+            "--file",
+            "-",
+            ...(verb === "update" ? ["--registry-credential-id", "9"] : []),
+            "--json",
+          ],
+          value,
+        ),
+      ).toEqual({
+        exitCode: 1,
+        stdout: "",
+        stderr: '{"error":"Credential file must contain a JSON object"}\n',
+      });
+    }
+  }
+  expect(requests).toEqual([]);
+});
+test("registry request failures retain status and server validation details", async () => {
+  for (const verb of ["list", "create", "update"]) {
+    requests.length = 0;
+    respond = () => Response.json({ error: "rejected", code: "fixture" }, { status: 409 });
+    expect(
+      await run(
+        [
+          "registry",
+          verb,
+          ...(verb !== "list" ? ["--file", "-"] : []),
+          ...(verb === "update" ? ["--registry-credential-id", "9"] : []),
+          "--json",
+        ],
+        JSON.stringify({ hostname: "blocked-on-update", secret }),
+      ),
+    ).toEqual({
+      exitCode: 1,
+      stdout: "",
+      stderr: '{"error":"rejected","code":"fixture","status":409}\n',
+    });
+    expect(requests).toEqual([
+      {
+        path: verb === "update" ? `${registryEndpoint}/9` : registryEndpoint,
+        method: verb === "list" ? "GET" : verb === "create" ? "POST" : "PUT",
+        auth: "Bearer test-key",
+        body: verb === "list" ? null : { hostname: "blocked-on-update", secret },
+      },
+    ]);
+  }
 });

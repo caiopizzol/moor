@@ -197,6 +197,22 @@ Agents should pass `--json`. Each streamed API event is emitted as one JSON obje
 
 Failures return a non-zero exit status. Pre-stream errors are written to stderr and, in JSON mode, preserve the API's structured fields plus the HTTP `status`. Errors received after streaming begins remain ordered with the other JSONL events on stdout.
 
+## Private-image registry credentials
+
+Store credentials from a protected JSON file, or pipe the object through stdin with `--file -`. Never put secrets in command-line arguments.
+
+```bash
+moor credential registry list --json
+moor credential registry create --file registry.json --json
+moor credential registry update --registry-credential-id 9 --file rotation.json --json
+```
+
+Create accepts `hostname`, `username`, and `secret`. Update accepts only `username` and/or `secret`; omitted fields stay unchanged. The API validates fields and returns metadata, not the stored secret. Hostnames cannot be patched, and deletion is not exposed in the CLI.
+
+Use a bare hostname such as `ghcr.io` or `registry.example.com:5000`, with no scheme or path. For Docker Hub images such as `user/image`, use `docker.io`. The server selects credentials automatically by the image's registry hostname; there is no registry credential ID to pass when deploying.
+
+Create and update only store credentials: they do not test authentication or pull an image. There is no registry `check` command. Authentication is exercised on the next image pull. When diagnosing a failed pull, the API server's logs report `auth=anonymous` if no matching credential was found, or `auth=host=<hostname>` when one was selected. These credentials cover `docker_image` pulls, not private `FROM` images inside Dockerfile builds.
+
 ## Private-source credentials
 
 Use `moor credential source list --json` to discover stored credential IDs. Create one from a protected JSON file, or pipe the object through stdin with `--file -`; do not put its secret in command-line arguments.

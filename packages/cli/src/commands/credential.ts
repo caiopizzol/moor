@@ -8,12 +8,15 @@ const USAGE = `Usage:
   moor credential source create --file <path|-> [--json]
   moor credential source update --source-credential-id <id> --file <path|-> [--json]
   moor credential source check --github-url <url> [--branch <branch>] [--source-credential-id <id>] [--json]
+  moor credential registry list [--json]
+  moor credential registry create --file <path|-> [--json]
+  moor credential registry update --registry-credential-id <id> --file <path|-> [--json]
 
 Create/update read a JSON object from disk or stdin (-); never pass secrets in argv.
 Update stores a patch without checking access or changing credential state.
-Check tests repository access and may update the credential's stored state.
+Source check tests repository access and may update the credential's stored state.
+Registry storage does not test authentication or pull images; there is no registry check command.
 Finite JSON output goes to stdout; failures go to stderr and exit 1.`;
-const ENDPOINT = "/api/server/source-credentials";
 
 export async function credentialCommand(
   args: string[],
@@ -29,12 +32,17 @@ export async function credentialCommand(
     return 1;
   };
   const [kind, verb] = args;
-  if (kind !== "source" || !["list", "create", "update", "check"].includes(verb ?? "")) {
-    return fail("Use credential source list, create, update, or check; see --help");
+  if (
+    (kind !== "source" && kind !== "registry") ||
+    !["list", "create", "update", ...(kind === "source" ? ["check"] : [])].includes(verb ?? "")
+  ) {
+    return fail("Unsupported credential command; see --help");
   }
+  const endpoint = `/api/server/${kind}-credentials`;
+  const idOption = `--${kind}-credential-id`;
   const allowed =
     verb === "update"
-      ? ["--file", "--source-credential-id"]
+      ? ["--file", idOption]
       : verb === "create"
         ? ["--file"]
         : verb === "check"
@@ -52,15 +60,15 @@ export async function credentialCommand(
   }
 
   let request: () => Promise<Response>;
-  if (verb === "list") request = () => apiGet(ENDPOINT);
+  if (verb === "list") request = () => apiGet(endpoint);
   else if (verb === "create" || verb === "update") {
     let id: number | undefined;
     if (verb === "update") {
-      const value = options.get("--source-credential-id");
-      if (value === undefined) return fail("--source-credential-id is required");
+      const value = options.get(idOption);
+      if (value === undefined) return fail(`${idOption} is required`);
       id = Number(value);
       if (!Number.isSafeInteger(id) || id <= 0) {
-        return fail("--source-credential-id must be a positive integer");
+        return fail(`${idOption} must be a positive integer`);
       }
     }
     const file = options.get("--file");
@@ -81,7 +89,7 @@ export async function credentialCommand(
       return fail("Credential file must contain a JSON object");
     }
     request =
-      verb === "update" ? () => apiPut(`${ENDPOINT}/${id}`, body) : () => apiPost(ENDPOINT, body);
+      verb === "update" ? () => apiPut(`${endpoint}/${id}`, body) : () => apiPost(endpoint, body);
   } else {
     const url = options.get("--github-url");
     if (!url?.trim()) return fail("--github-url is required");
@@ -99,7 +107,7 @@ export async function credentialCommand(
       }
       body.source_credential_id = number;
     }
-    request = () => apiPost(`${ENDPOINT}/check`, body);
+    request = () => apiPost(`${endpoint}/check`, body);
   }
   const result = await requestJson<unknown>(request, json, "Credential request failed", output);
   if (!result.ok) return 1;
@@ -110,8 +118,8 @@ export async function credentialCommand(
       else {
         const rows = verb === "list" ? (result.value as { rows: unknown }).rows : [result.value];
         if (!Array.isArray(rows)) return fail("Invalid credential response");
-        const lines = rows.map(renderCredential);
-        output.stdout(`${lines.length ? lines.join("\n") : "No source credentials."}\n`);
+        const lines = rows.map((row) => renderCredential(row, kind));
+        output.stdout(`${lines.length ? lines.join("\n") : `No ${kind} credentials.`}\n`);
       }
     } catch {
       return fail("Invalid credential response");
@@ -120,7 +128,7 @@ export async function credentialCommand(
   return 0;
 }
 
-function renderCredential(value: unknown): string {
+function renderCredential(value: unknown, kind: "source" | "registry"): string {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new Error("Invalid credential response");
   }
@@ -130,7 +138,17 @@ function renderCredential(value: unknown): string {
     !Number.isSafeInteger(row.id) ||
     row.id <= 0 ||
     typeof row.hostname !== "string" ||
-    !row.hostname.trim() ||
+    !row.hostname.trim()
+  ) {
+    throw new Error("Invalid credential response");
+  }
+  if (kind === "registry") {
+    if (typeof row.username !== "string" || !row.username.trim()) {
+      throw new Error("Invalid credential response");
+    }
+    return `${row.id}\t${row.hostname}\t${row.username}`;
+  }
+  if (
     typeof row.label !== "string" ||
     !row.label.trim() ||
     (row.state !== "active" && row.state !== "failed")
