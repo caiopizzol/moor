@@ -20,6 +20,8 @@ Options:
   --source-credential-id <id> Select a stored credential for a private repository
   --env-file <path|->      Merge env from a JSON object; - reads stdin
   --files <path|->         Upsert files from a JSON array; - reads stdin
+  --memory-limit-mb <N|unlimited> Set memory cap in MB, or clear it
+  --cpus <N|unlimited>     Set CPU cap (fractional cores allowed), or clear it
   --volume <name>:<target> Add a named volume at an absolute container path (repeatable)
   --update-existing        Update a project with the same name
   --no-run                 Save configuration without building or starting
@@ -46,6 +48,7 @@ export function parseDeployArgs(args: string[]): ParsedDeployArgs {
   const input: DeployRequest = { name: "" };
   let envFile: string | undefined;
   let filesFile: string | undefined;
+  const seenLimits = new Set<string>();
   const json = args.includes("--json");
 
   for (let index = 0; index < args.length; index += 1) {
@@ -78,6 +81,8 @@ export function parseDeployArgs(args: string[]): ParsedDeployArgs {
         "--source-credential-id",
         "--env-file",
         "--files",
+        "--memory-limit-mb",
+        "--cpus",
         "--volume",
       ].includes(arg)
     ) {
@@ -89,6 +94,26 @@ export function parseDeployArgs(args: string[]): ParsedDeployArgs {
     }
     index += 1;
     switch (arg) {
+      case "--memory-limit-mb":
+      case "--cpus": {
+        if (seenLimits.has(arg)) return { json, error: `${arg} may be used only once` };
+        seenLimits.add(arg);
+        const limit = value === "unlimited" ? null : Number(value);
+        if (
+          limit !== null &&
+          (!Number.isFinite(limit) ||
+            limit <= 0 ||
+            (arg === "--memory-limit-mb" && !Number.isSafeInteger(limit)))
+        ) {
+          return {
+            json,
+            error: `${arg} must be a positive ${arg === "--cpus" ? "number" : "integer"} or unlimited`,
+          };
+        }
+        if (arg === "--cpus") input.cpus = limit;
+        else input.memory_limit_mb = limit;
+        break;
+      }
       case "--files":
         if (filesFile !== undefined) return { json, error: "--files may be used only once" };
         filesFile = value;
