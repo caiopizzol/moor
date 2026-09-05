@@ -17,7 +17,7 @@ export async function execCommand(
   const separator =
     boundary > 1 && !args[0]?.startsWith("-") && !args[1]?.startsWith("-") ? -1 : boundary;
   const prefix = separator < 0 ? args.slice(0, 1) : args.slice(0, separator);
-  const json = prefix.includes("--json") || (separator < 0 && args[1] === "--json");
+  const json = prefix.includes("--json") || (boundary < 0 && args.includes("--json"));
   if (separator < 0 && json) {
     writeError(output, "--json requires -- before the command", true);
     return 1;

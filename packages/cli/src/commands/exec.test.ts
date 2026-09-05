@@ -97,12 +97,13 @@ test("exec preserves legacy human streams and command separators", async () => {
 
 for (const [args, error] of [
   [["7", "--json", "echo"], "--json requires -- before the command"],
+  [["7", "ls", "--json"], "--json requires -- before the command"],
   [["--json", "--", "echo"], "Project is required"],
   [["7", "--json", "--"], "Command is required"],
   [["7", "--json", "extra", "--", "echo"], "Unexpected argument: extra"],
   [["7", "--json", "--bad", "--", "echo"], "Unknown option: --bad"],
 ] as const) {
-  test(`exec rejects ${error} before requests`, async () => {
+  test(`exec rejects ${args.join(" ")} before requests`, async () => {
     await fixture(async (run, requests) => {
       expect(await run([...args])).toEqual({
         exitCode: 1,
