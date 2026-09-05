@@ -101,10 +101,6 @@ function errorJson(message: string, status = 400): Response {
   return json({ error: message }, { status });
 }
 
-function noContent(): Response {
-  return new Response(null, { status: 204 });
-}
-
 async function readErrorMessage(res: Response): Promise<string> {
   const text = await res.text();
   if (!text) return `HTTP ${res.status}`;
@@ -675,14 +671,9 @@ describe("env, cron, volume, and file tools", () => {
 
   test("moor_env_delete delegates a running-project restart to the API", async () => {
     const { api, server } = createHarness(registerEnvTools);
-    api.on("GET", "/api/projects/7/envs", () =>
-      json([
-        { key: "A", value: "1" },
-        { key: "B", value: "2" },
-      ]),
+    api.on("POST", "/api/projects/7/envs/delete", () =>
+      json({ deleted_keys: ["B"], missing_keys: ["MISSING"], restarted: true }),
     );
-    api.on("DELETE", "/api/projects/7/envs/B", () => noContent());
-    api.on("POST", "/api/projects/7/restart", () => noContent());
 
     const result = await server.call("moor_env_delete", {
       project: "app",
@@ -690,9 +681,7 @@ describe("env, cron, volume, and file tools", () => {
     });
 
     expect(api.calls).toEqual([
-      { method: "GET", path: "/api/projects/7/envs" },
-      { method: "DELETE", path: "/api/projects/7/envs/B" },
-      { method: "POST", path: "/api/projects/7/restart" },
+      { method: "POST", path: "/api/projects/7/envs/delete", body: { keys: ["B", "MISSING"] } },
     ]);
     expect(toolText(result)).toBe(
       "Deleted B from app. (Not present: MISSING.) Container restarted.",

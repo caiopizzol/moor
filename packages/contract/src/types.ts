@@ -156,6 +156,12 @@ export type MergeEnvVarsRequest = {
   vars: Record<string, string>;
 };
 
+export type DeleteEnvVarsResponse = {
+  deleted_keys: string[];
+  missing_keys: string[];
+  restarted: boolean;
+};
+
 export type MergeEnvVarsResponse = {
   updated_keys: string[];
   restarted: boolean;
