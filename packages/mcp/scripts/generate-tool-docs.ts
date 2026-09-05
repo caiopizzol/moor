@@ -46,7 +46,7 @@ function makeCaptureServer(sink: CapturedTool[]) {
 const stubClient = {} as ToolContext;
 
 // Ordered so the table reads deploy-first, matching the recommended workflow.
-const domains: { name: string; register: (s: unknown, c: ToolContext) => void }[] = [
+const domains: { name: string; register: typeof registerProjectTools }[] = [
   { name: "Projects", register: registerProjectTools },
   { name: "Deployments & runs", register: registerRunTools },
   { name: "Exec & terminal", register: registerExecTools },

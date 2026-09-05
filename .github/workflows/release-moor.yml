@@ -22,8 +22,7 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
       - run: bunx biome check .
-      - run: bunx tsc --noEmit -p apps/api/tsconfig.json
-      - run: cd apps/web && bunx tsc -b
+      - run: bun run typecheck
       # #80 PR #3: respawner image build + self-test. Fails the check
       # job (before publish) if the image can't even self-validate
       # against the runner's mounted Docker socket.

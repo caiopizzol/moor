@@ -14,7 +14,7 @@
     "start": "bun run apps/api/index.ts",
     "test": "bun test",
     "lint": "bunx biome check .",
-    "typecheck": "bunx tsc --noEmit -p apps/api/tsconfig.json && (cd apps/web && bunx tsc -b) && bunx tsc --noEmit -p packages/contract/tsconfig.json && bunx tsc --noEmit -p packages/cli/tsconfig.json && bunx tsc --noEmit -p packages/mcp/tsconfig.json",
+    "typecheck": "bun run --workspaces --if-present typecheck",
     "check": "bun run lint && bun run typecheck && bun run test",
     "lint:fix": "bunx biome check --write .",
     "format": "bunx biome format --write .",
@@ -32,6 +32,7 @@
     "semantic-release-ai-notes": "^0.2.3",
     "semantic-release-monorepo": "^8.0.2",
     "semantic-release-plugin-decorators": "^4.0.0",
+    "typescript": "7.0.2",
     "zod": "^4.3.6"
   }
 }

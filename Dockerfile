@@ -4,6 +4,7 @@ WORKDIR /app
 # Install root deps
 COPY package.json bun.lock* ./
 COPY apps/api/package.json apps/api/
+COPY apps/respawner/package.json apps/respawner/
 COPY apps/web/package.json apps/web/
 COPY apps/site/package.json apps/site/
 COPY packages/cli/package.json packages/cli/
@@ -15,7 +16,7 @@ RUN bun install --frozen-lockfile --ignore-scripts
 # so its source must be present before the web build)
 COPY packages/contract/ packages/contract/
 COPY apps/web/ apps/web/
-COPY tsconfig.json .
+COPY tsconfig.base.json .
 RUN cd apps/web && bun run build
 
 # Production stage
@@ -38,6 +39,7 @@ RUN apt-get update \
 
 COPY package.json bun.lock* ./
 COPY apps/api/package.json apps/api/
+COPY apps/respawner/package.json apps/respawner/
 COPY apps/web/package.json apps/web/
 COPY apps/site/package.json apps/site/
 COPY packages/cli/package.json packages/cli/

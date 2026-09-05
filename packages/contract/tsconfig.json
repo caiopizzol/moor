@@ -1,7 +1,7 @@
 {
-  "extends": "../../tsconfig.json",
+  "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "types": ["bun"]
-  },
-  "include": ["src/**/*"]
+    "types": ["bun"],
+    "skipLibCheck": true
+  }
 }

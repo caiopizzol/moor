@@ -16,7 +16,7 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
       - run: bunx biome check packages/mcp
-      - run: cd packages/mcp && bunx tsc --noEmit
+      - run: bun run --cwd packages/mcp typecheck
       - name: MCP pack smoke test
         run: |
           cd packages/mcp && npm pack --pack-destination /tmp

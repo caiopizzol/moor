@@ -16,7 +16,7 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
       - run: bunx biome check packages/cli
-      - run: cd packages/cli && bunx tsc --noEmit
+      - run: bun run --cwd packages/cli typecheck
       - name: CLI pack smoke test
         run: |
           cd packages/cli && npm pack --pack-destination /tmp

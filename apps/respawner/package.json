@@ -1,7 +1,6 @@
 {
-  "name": "@moor/api",
+  "name": "@moor/respawner",
   "private": true,
-  "version": "0.1.0",
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json"
   }

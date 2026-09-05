@@ -30,6 +30,7 @@
     "dev": "bun run src/index.ts",
     "build": "bun build src/index.ts --compile --outfile moor",
     "build:package": "bun build src/index.ts --target bun --outfile dist/index.js",
-    "prepack": "bun run build:package"
+    "prepack": "bun run build:package",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
   }
 }
