@@ -4,15 +4,20 @@
 // "DELETE there preserves Docker data" contract introduced in #35.
 
 import { executeCleanup, planCleanup, validateExecuteCandidates, validateScope } from "../cleanup";
-import { errorResponse } from "../http";
+import { errorResponse, readJsonObject } from "../http";
 
-export async function handleCleanup(req: Request, url: URL): Promise<Response | null> {
+export async function handleCleanup(
+  req: Request,
+  url: URL,
+  operations = { plan: planCleanup, execute: executeCleanup },
+): Promise<Response | null> {
   if (url.pathname === "/api/server/cleanup/plan" && req.method === "POST") {
-    const body = await req.json().catch(() => ({}));
-    const scope = validateScope((body as { scope?: unknown }).scope);
+    const body = req.body === null ? { ok: true as const, value: {} } : await readJsonObject(req);
+    if (!body.ok) return body.response;
+    const scope = validateScope((body.value as Record<string, unknown>).scope);
     if (!scope.ok) return errorResponse(scope.error, 400);
     try {
-      return Response.json(await planCleanup(scope.value));
+      return Response.json(await operations.plan(scope.value));
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Unknown error";
       return errorResponse(msg, 500);
@@ -20,11 +25,14 @@ export async function handleCleanup(req: Request, url: URL): Promise<Response | 
   }
 
   if (url.pathname === "/api/server/cleanup/execute" && req.method === "POST") {
-    const body = (await req.json().catch(() => ({}))) as { candidates?: unknown };
-    const candidates = validateExecuteCandidates(body.candidates);
+    const body = req.body === null ? { ok: true as const, value: {} } : await readJsonObject(req);
+    if (!body.ok) return body.response;
+    const candidates = validateExecuteCandidates(
+      (body.value as Record<string, unknown>).candidates,
+    );
     if (!candidates.ok) return errorResponse(candidates.error, 400);
     try {
-      return Response.json(await executeCleanup(candidates.value));
+      return Response.json(await operations.execute(candidates.value));
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Unknown error";
       return errorResponse(msg, 500);
