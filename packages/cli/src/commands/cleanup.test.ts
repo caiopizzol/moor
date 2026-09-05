@@ -249,3 +249,37 @@ test("cleanup help wins over invalid arguments and warns about irreversible scop
   expect(result.stdout).toContain("not a fixed set or byte limit");
   expect(requests).toEqual([]);
 });
+
+test("cleanup rejects malformed category-specific plan candidates", async () => {
+  for (const candidate of [
+    {},
+    { ...candidates[0], category: "volume" },
+    { ...candidates[0], reclaimable_bytes: -1 },
+    { ...candidates[0], label: "safe" },
+    { ...candidates[1], id: "" },
+    { ...candidates[1], repo_tags: [1] },
+    { ...candidates[1], label: "caution" },
+  ]) {
+    response = () =>
+      Response.json({
+        candidates: [candidate],
+        total_reclaimable_bytes: "reclaimable_bytes" in candidate ? candidate.reclaimable_bytes : 0,
+      });
+    const result = await run(["cleanup", "plan", "--json"]);
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(JSON.parse(result.stderr).error).toContain("Invalid cleanup plan response");
+  }
+});
+
+test("cleanup rejects inconsistent totals before printing success", async () => {
+  response = () => Response.json({ ...success, total_reclaimed_bytes: 999 });
+  const execute = await run(["cleanup", "execute", "--file", "-", "--json"], JSON.stringify(plan));
+  expect(execute.exitCode).toBe(1);
+  expect(execute.stdout).toBe("");
+  expect(JSON.parse(execute.stderr).error).toContain("Partial deletion may have occurred");
+  response = () => Response.json({ ...plan, total_reclaimable_bytes: 999 });
+  const planned = await run(["cleanup", "plan", "--json"]);
+  expect(planned.exitCode).toBe(1);
+  expect(planned.stdout).toBe("");
+});

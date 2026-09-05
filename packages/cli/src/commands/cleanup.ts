@@ -24,6 +24,19 @@ function isBytes(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value) && value >= 0;
 }
 
+function isPlanCandidate(value: unknown): boolean {
+  if (!isRecord(value) || !isBytes(value.reclaimable_bytes)) return false;
+  if (value.category === "build_cache") return value.label === "caution";
+  return (
+    value.category === "dangling_image" &&
+    typeof value.id === "string" &&
+    value.id.trim().length > 0 &&
+    value.label === "safe" &&
+    Array.isArray(value.repo_tags) &&
+    value.repo_tags.every((tag: unknown) => typeof tag === "string")
+  );
+}
+
 export async function cleanupCommand(
   args: string[],
   output: CommandOutput = defaultCommandOutput,
@@ -100,8 +113,14 @@ export async function cleanupCommand(
     if (
       !isRecord(value) ||
       !Array.isArray(value.candidates) ||
-      !value.candidates.every(isRecord) ||
-      !isBytes(value.total_reclaimable_bytes)
+      !value.candidates.every(isPlanCandidate) ||
+      !isBytes(value.total_reclaimable_bytes) ||
+      value.total_reclaimable_bytes !==
+        value.candidates.reduce(
+          (sum: number, candidate: Record<string, unknown>) =>
+            sum + (candidate.reclaimable_bytes as number),
+          0,
+        )
     )
       return fail("Invalid cleanup plan response");
     output.stdout(`${JSON.stringify(value, null, json ? undefined : 2)}\n`);
@@ -126,7 +145,12 @@ export async function cleanupCommand(
         isBytes(result.reclaimed_bytes) &&
         (result.error === null || typeof result.error === "string")
       );
-    })
+    }) ||
+    value.total_reclaimed_bytes !==
+      value.results.reduce(
+        (sum: number, result: Record<string, unknown>) => sum + (result.reclaimed_bytes as number),
+        0,
+      )
   ) {
     return fail(
       "Invalid cleanup execute response; outcome unknown. Partial deletion may have occurred. Inspect the server before retrying.",
