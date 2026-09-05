@@ -129,3 +129,89 @@ describe("cron timeout configuration", () => {
     expect((await res.json()) as { timeout_ms: number }).toMatchObject({ timeout_ms: 10_800_000 });
   });
 });
+
+describe("cron configuration safety", () => {
+  let projectId: number;
+  beforeEach(() => {
+    db.query("DELETE FROM runs").run();
+    db.query("DELETE FROM crons").run();
+    db.query("DELETE FROM projects").run();
+    projectId = (
+      db.query("INSERT INTO projects (name) VALUES ('cron-safety') RETURNING id").get() as {
+        id: number;
+      }
+    ).id;
+  });
+  const config = { name: "job", schedule: "* * * * *", command: "echo original" };
+  test("create honors disabled state atomically and keeps the enabled default", async () => {
+    for (const [patch, enabled] of [
+      [{ enabled: false }, 0],
+      [{ enabled: true }, 1],
+      [{ enabled: 0 }, 0],
+      [{ enabled: 1 }, 1],
+      [{}, 1],
+    ] as const) {
+      const response = await call("POST", `/api/projects/${projectId}/crons`, {
+        ...config,
+        ...patch,
+      });
+      expect(response.status).toBe(201);
+      const row = (await response.json()) as { id: number; enabled: number };
+      expect(row.enabled).toBe(enabled);
+      expect(db.query("SELECT enabled FROM crons WHERE id = ?").get(row.id)).toEqual({ enabled });
+      expect(db.query("SELECT id FROM crons WHERE id = ? AND enabled = 1").get(row.id)).toEqual(
+        enabled ? { id: row.id } : null,
+      );
+    }
+  });
+  test("invalid enabled values cannot create or alter a scheduled job", async () => {
+    const created = await call("POST", `/api/projects/${projectId}/crons`, config);
+    const original = (await created.json()) as { id: number };
+    for (const enabled of [null, "false", "yes", "1", 2, -1, 0.5, [], {}]) {
+      const create = await call("POST", `/api/projects/${projectId}/crons`, { ...config, enabled });
+      expect(create.status).toBe(400);
+      expect(await errorMessage(create)).toBe("enabled must be a boolean or 0 or 1");
+      const update = await call("PUT", `/api/crons/${original.id}`, {
+        enabled,
+        command: "changed",
+      });
+      expect(update.status).toBe(400);
+      expect(await errorMessage(update)).toBe("enabled must be a boolean or 0 or 1");
+      expect(db.query("SELECT * FROM crons WHERE id = ?").get(original.id)).toEqual(original);
+    }
+    expect(db.query("SELECT COUNT(*) AS n FROM crons").get()).toEqual({ n: 1 });
+  });
+  test("update rejects blank or non-string names and commands without partial writes", async () => {
+    const response = await call("POST", `/api/projects/${projectId}/crons`, config);
+    const original = (await response.json()) as { id: number };
+    for (const field of ["name", "command"]) {
+      for (const value of ["", " ", 42, false, null, [], {}]) {
+        const result = await call("PUT", `/api/crons/${original.id}`, {
+          enabled: false,
+          [field]: value,
+        });
+        expect(result.status).toBe(400);
+        expect(await errorMessage(result)).toBe(`${field} must be a non-empty string`);
+        expect(db.query("SELECT * FROM crons WHERE id = ?").get(original.id)).toEqual(original);
+      }
+    }
+  });
+  test("update accepts boolean and numeric state changes while preserving command bytes", async () => {
+    const response = await call("POST", `/api/projects/${projectId}/crons`, config);
+    const original = (await response.json()) as { id: number };
+    const command = 'printf "%s" "$VALUE"';
+    for (const enabled of [false, true, 0, 1]) {
+      const result = await call("PUT", `/api/crons/${original.id}`, {
+        enabled,
+        command,
+        name: "renamed",
+      });
+      expect(result.status).toBe(200);
+      expect(await result.json()).toMatchObject({
+        enabled: Number(enabled),
+        command,
+        name: "renamed",
+      });
+    }
+  });
+});
