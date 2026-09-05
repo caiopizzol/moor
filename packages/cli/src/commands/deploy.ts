@@ -19,6 +19,7 @@ Options:
   --domain-port <port>     Container port for the public domain
   --source-credential-id <id> Select a stored credential for a private repository
   --env-file <path|->      Merge env from a JSON object; - reads stdin
+  --volume <name>:<target> Add a named volume at an absolute container path (repeatable)
   --update-existing        Update a project with the same name
   --no-run                 Save configuration without building or starting
   --json                   Emit one {event,data} JSON object per line`;
@@ -73,6 +74,7 @@ export function parseDeployArgs(args: string[]): ParsedDeployArgs {
         "--domain-port",
         "--source-credential-id",
         "--env-file",
+        "--volume",
       ].includes(arg)
     ) {
       return { json, error: `Unknown option: ${arg}` };
@@ -83,6 +85,21 @@ export function parseDeployArgs(args: string[]): ParsedDeployArgs {
     }
     index += 1;
     switch (arg) {
+      case "--volume": {
+        const separator = value.indexOf(":");
+        if (separator <= 0 || !value.slice(separator + 1).startsWith("/")) {
+          return { json, error: "--volume requires <name>:<absolute-container-path>" };
+        }
+        if (value.indexOf(":", separator + 1) !== -1) {
+          return { json, error: "--volume does not support mount modes or colons in targets" };
+        }
+        input.volumes ??= [];
+        input.volumes.push({
+          name: value.slice(0, separator),
+          target: value.slice(separator + 1),
+        });
+        break;
+      }
       case "--github-url":
         input.github_url = value;
         break;
