@@ -2,6 +2,7 @@ import { apiGet, apiPost } from "../client";
 import { type CommandOutput, defaultCommandOutput, requestJson, writeError } from "../protocol";
 
 const USAGE = `Usage:
+  moor server backup [--json]
   moor server drain status [--json]
   moor server drain enable [--reason <text>] [--ttl-minutes N] [--json]
   moor server drain disable [--json]
@@ -9,6 +10,8 @@ const USAGE = `Usage:
 Drain refuses new work; it does not kill existing work. Status includes active-work counts.
 TTL must be finite and positive. The server defaults to 30 minutes and clamps to 0.05–10080.
 Enabling again replaces the reason and resets expiry. Disabling does not restart work.
+Backup creates a server-local SQLite snapshot and prunes older snapshots (keeps seven).
+It does not back up volumes, download files, or provide an offsite backup. No automatic retries.
 Success emits one JSON document with --json (formatted JSON otherwise); failures use stderr and exit 1.
 `;
 
@@ -52,12 +55,29 @@ export async function serverCommand(
     else positional.push(arg);
   }
   const [group, action] = positional;
+  if (group === "backup") {
+    if (positional.length !== 1 || seen.size > 0) {
+      return fail("Usage: moor server backup [--json]");
+    }
+    const result = await requestJson<unknown>(
+      () => apiPost("/api/server/backup", {}),
+      json,
+      "Failed to back up database",
+      output,
+    );
+    if (!result.ok) return 1;
+    if (!isBackupResult(result.value)) {
+      return fail("Invalid backup response; outcome unknown. Inspect the server before retrying.");
+    }
+    output.stdout(`${JSON.stringify(result.value, null, json ? undefined : 2)}\n`);
+    return 0;
+  }
   if (
     positional.length !== 2 ||
     group !== "drain" ||
     (action !== "status" && action !== "enable" && action !== "disable")
   ) {
-    return fail("Expected server drain status, enable, or disable; see --help");
+    return fail("Expected server backup or server drain status, enable, or disable; see --help");
   }
   if (action !== "enable" && seen.size > 0) {
     return fail("--reason and --ttl-minutes are only supported by drain enable");
@@ -74,4 +94,19 @@ export async function serverCommand(
   if (!result.ok) return 1;
   output.stdout(`${JSON.stringify(result.value, null, json ? undefined : 2)}\n`);
   return 0;
+}
+
+function isBackupResult(value: unknown): boolean {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const fields = value as Record<string, unknown>;
+  return (
+    typeof fields.path === "string" &&
+    fields.path.trim().length > 0 &&
+    typeof fields.sizeBytes === "number" &&
+    Number.isFinite(fields.sizeBytes) &&
+    fields.sizeBytes >= 0 &&
+    typeof fields.durationMs === "number" &&
+    Number.isFinite(fields.durationMs) &&
+    fields.durationMs >= 0
+  );
 }

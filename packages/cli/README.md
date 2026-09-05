@@ -292,6 +292,12 @@ The update object accepts `username`, `secret`, `label`, and `expires_at`. Omitt
 
 These commands emit one JSON document with `--json`. Failures use stderr and exit 1. Human list/create output shows ID, hostname, label, and state; human check output shows the response as formatted JSON.
 
+## Server database backup
+
+`moor server backup --json` creates a SQLite snapshot next to the database on the server. The server prunes older snapshots, keeping the seven most recent. This is not a volume or full-server backup, an offsite copy, or a download to your computer.
+
+The command makes one request without retries, drain changes, or updates. Success returns `path` (on the server), `sizeBytes`, and `durationMs` as one JSON document; without `--json`, it prints formatted JSON. Errors use stderr and exit 1. A lost or invalid response does not prove that no snapshot was created: inspect the server before retrying, because another backup also applies retention.
+
 ## Server drain
 
 ```bash

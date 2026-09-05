@@ -211,3 +211,110 @@ test("drain invalid JSON responses fail without success output", async () => {
   expect(typeof JSON.parse(result.stderr).error).toBe("string");
   expect(requests).toHaveLength(1);
 });
+
+test("backup makes one authenticated POST and preserves server metadata in both modes", async () => {
+  const payload = {
+    path: "/data/moor.db.backup-123",
+    sizeBytes: 4096,
+    durationMs: 0,
+    extra: "kept",
+  };
+  response = () => Response.json(payload);
+  for (const args of [["backup"], ["--json", "backup"], ["backup", "--json", "--json"]]) {
+    const json = args.includes("--json");
+    expect(await run(args)).toEqual({
+      exitCode: 0,
+      stdout: `${JSON.stringify(payload, null, json ? undefined : 2)}\n`,
+      stderr: "",
+    });
+  }
+  expect(requests).toEqual(
+    Array(3).fill({
+      path: "/api/server/backup",
+      method: "POST",
+      auth: "Bearer test-key",
+      body: "{}",
+    }),
+  );
+});
+
+test("backup rejects extra arguments and drain options before any request", async () => {
+  for (const args of [
+    ["extra"],
+    ["--reason", "maintenance"],
+    ["--ttl-minutes", "5"],
+    ["--output", "/tmp/snapshot"],
+    ["--unknown"],
+  ]) {
+    const result = await run(["backup", ...args, "--json"]);
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(typeof JSON.parse(result.stderr).error).toBe("string");
+  }
+  expect(requests).toEqual([]);
+});
+
+test("backup help explains server-local retention without requests", async () => {
+  const result = await run(["backup", "--unknown", "--help"]);
+  expect(result.exitCode).toBe(0);
+  expect(result.stderr).toBe("");
+  expect(result.stdout).toContain("server-local SQLite snapshot");
+  expect(result.stdout).toContain("keeps seven");
+  expect(requests).toEqual([]);
+});
+
+test("backup HTTP failure preserves details with no automatic retry", async () => {
+  response = () => Response.json({ error: "disk full", code: "ENOSPC" }, { status: 500 });
+  for (const json of [true, false]) {
+    const result = await run(["backup", ...(json ? ["--json"] : [])]);
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe("");
+    if (json)
+      expect(JSON.parse(result.stderr)).toEqual({
+        error: "disk full",
+        code: "ENOSPC",
+        status: 500,
+      });
+    else expect(result.stderr).toContain("disk full");
+  }
+  expect(requests).toHaveLength(2);
+});
+
+test("backup rejects malformed success metadata instead of claiming a snapshot", async () => {
+  const valid = { path: "/data/snapshot", sizeBytes: 1, durationMs: 1 };
+  const invalid = [
+    null,
+    [],
+    {},
+    { ...valid, path: " " },
+    { ...valid, path: 2 },
+    { ...valid, sizeBytes: -1 },
+    { ...valid, sizeBytes: "1" },
+    { ...valid, sizeBytes: null },
+    { ...valid, durationMs: -1 },
+    { ...valid, durationMs: "1" },
+    { ...valid, durationMs: null },
+  ];
+  for (const payload of invalid) {
+    response = () => Response.json(payload);
+    const result = await run(["backup", "--json"]);
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(JSON.parse(result.stderr).error).toContain("outcome unknown");
+  }
+  expect(requests).toHaveLength(invalid.length);
+  response = () => Response.json(null);
+  const human = await run(["backup"]);
+  expect(human.exitCode).toBe(1);
+  expect(human.stdout).toBe("");
+  expect(human.stderr).toContain("Inspect the server before retrying");
+});
+
+test("backup invalid JSON fails without output or retry", async () => {
+  response = () => new Response("not JSON");
+  const result = await run(["backup", "--json"]);
+  expect(result.exitCode).toBe(1);
+  expect(result.stdout).toBe("");
+  expect(typeof JSON.parse(result.stderr).error).toBe("string");
+  expect(requests).toHaveLength(1);
+});
