@@ -48,7 +48,7 @@ Commands:
   project list [--json]           List projects
   project get <name|id> [--json]  Get one project
   project deploy <name> [options] Create or update and optionally run a project
-  credential source <verb>        List, create, or check private-source credentials
+  credential source <verb>        List, create, update, or check private-source credentials
   mcp config --client <name>      Generate MCP client config snippet
 
 Environment:

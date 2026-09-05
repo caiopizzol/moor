@@ -207,7 +207,16 @@ moor credential source check --github-url https://github.com/acme/app --source-c
 moor project deploy app --github-url https://github.com/acme/app --source-credential-id 8 --json
 ```
 
-The creation object has `hostname`, `label`, `username`, `secret`, and optional `expires_at` fields. Responses contain metadata, not the stored secret. The server validates credential fields. Rotation and deletion are not exposed in this CLI slice.
+The creation object has `hostname`, `label`, `username`, `secret`, and optional `expires_at` fields. Responses contain metadata, not the stored secret. The server validates credential fields. Deletion is not exposed in the CLI.
+
+To rotate a secret or edit metadata, put only the changed fields in a protected JSON file (or use stdin with `--file -`):
+
+```bash
+moor credential source update --source-credential-id 8 --file rotation.json --json
+moor credential source check --github-url https://github.com/acme/app --source-credential-id 8 --json
+```
+
+The update object accepts `username`, `secret`, `label`, and `expires_at`. Omitted fields stay unchanged; `expires_at: null` clears the expiry. Hostname and state cannot be patched. Update makes one storage request: it does not verify access, restart projects, or restore a failed credential to active. Run an explicit `check` afterward; a successful check restores active state.
 
 `check` contacts the repository and may update the credential's stored state and last-check result. It is not a read-only operation. Add `--branch` to check a specific branch. Without an explicit ID, a successful check may return `auto_selected_credential_id`; pass that ID explicitly when deploying. Deploy does not automatically select a credential. If selection is ambiguous, JSON stderr preserves the server's `candidates` list and exits 1.
 
