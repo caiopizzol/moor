@@ -1,6 +1,6 @@
-import type { Project } from "../../../contract/src/index";
-import { apiGet, apiPost, findProject } from "../client";
+import { apiPost, findProject } from "../client";
 import { parseProjectArguments } from "../project-arguments";
+import { requestProjects } from "../project-response";
 import { type CommandOutput, defaultCommandOutput, requestJson, writeError } from "../protocol";
 
 const USAGE = `Usage: moor exec <project> [--json] -- <shell command>
@@ -31,26 +31,8 @@ export async function execCommand(
     writeError(output, "Command is required", json);
     return 1;
   }
-  const projects = await requestJson<Project[]>(
-    () => apiGet("/api/projects"),
-    json,
-    "Failed to list projects",
-    output,
-  );
+  const projects = await requestProjects(json, output);
   if (!projects.ok) return 1;
-  if (
-    !Array.isArray(projects.value) ||
-    projects.value.some(
-      (candidate) =>
-        !candidate ||
-        !Number.isSafeInteger(candidate.id) ||
-        candidate.id <= 0 ||
-        typeof candidate.name !== "string",
-    )
-  ) {
-    writeError(output, "Invalid project response", json);
-    return 1;
-  }
   const project = findProject(projects.value, parsed.selector);
   if (!project) {
     writeError(output, `Project "${parsed.selector}" not found`, json);

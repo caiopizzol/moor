@@ -1,6 +1,7 @@
 import type { Project } from "../../../contract/src/index";
-import { apiGet, findProject } from "../client";
-import { type CommandOutput, defaultCommandOutput, requestJson, writeError } from "../protocol";
+import { findProject } from "../client";
+import { requestProjects } from "../project-response";
+import { type CommandOutput, defaultCommandOutput, writeError } from "../protocol";
 
 export const PROJECT_USAGE = `Usage:
   moor project list [--json]
@@ -23,12 +24,7 @@ export async function projectListCommand(
   const parsed = parseJsonArgs(args);
   if (parsed.error) return argumentError(parsed.error, parsed.json, output);
 
-  const result = await requestJson<Project[]>(
-    () => apiGet("/api/projects"),
-    parsed.json,
-    "Failed to list projects",
-    output,
-  );
+  const result = await requestProjects(parsed.json, output);
   if (!result.ok) return 1;
 
   if (parsed.json) output.stdout(`${JSON.stringify(result.value)}\n`);
@@ -49,12 +45,7 @@ export async function projectGetCommand(
   if (!parsed.project)
     return argumentError(parsed.error ?? "Project is required", parsed.json, output);
 
-  const result = await requestJson<Project[]>(
-    () => apiGet("/api/projects"),
-    parsed.json,
-    "Failed to list projects",
-    output,
-  );
+  const result = await requestProjects(parsed.json, output);
   if (!result.ok) return 1;
   const project = findProject(result.value, parsed.project);
   if (!project) {

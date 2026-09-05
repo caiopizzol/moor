@@ -6,6 +6,7 @@ import type {
   Project,
 } from "../../../contract/src/index";
 import { apiGet, apiPost, findProject } from "../client";
+import { requestProjects } from "../project-response";
 import { type CommandOutput, defaultCommandOutput, requestJson, writeError } from "../protocol";
 
 export const ENV_USAGE = `Usage:
@@ -248,26 +249,8 @@ async function getProject(
   json: boolean,
   output: EnvOutput,
 ): Promise<Project | undefined> {
-  const projects = await requestJson<Project[]>(
-    () => apiGet("/api/projects"),
-    json,
-    "Failed to list projects",
-    output,
-  );
+  const projects = await requestProjects(json, output);
   if (!projects.ok) return;
-  if (
-    !Array.isArray(projects.value) ||
-    projects.value.some(
-      (candidate) =>
-        !candidate ||
-        !Number.isSafeInteger(candidate.id) ||
-        candidate.id <= 0 ||
-        typeof candidate.name !== "string",
-    )
-  ) {
-    writeError(output, "Invalid project response", json);
-    return;
-  }
   const project = findProject(projects.value, selector);
   if (!project) writeError(output, `Project "${selector}" not found`, json);
   return project;
