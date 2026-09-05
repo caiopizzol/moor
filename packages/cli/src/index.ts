@@ -14,6 +14,7 @@ import { PROJECT_USAGE, projectGetCommand, projectListCommand } from "./commands
 import { rebuildCommand } from "./commands/rebuild";
 import { restartCommand } from "./commands/restart";
 import { runCommand } from "./commands/run";
+import { serverCommand } from "./commands/server";
 import { statsCommand } from "./commands/stats";
 import { statusCommand } from "./commands/status";
 import { stopCommand } from "./commands/stop";
@@ -44,6 +45,7 @@ Commands:
   env set <project> [options]     Set environment variables
   env delete <project> <keys...> [--json] Remove environment variables
   stats [--json]                  Show server resource usage
+  server drain <verb> [--json]    Inspect, enable, or disable server drain (see --help)
   history <project> [--hours N] [--json] Stored resource history + events (default 24h)
   run list <project> [--page N] [--json] List run summaries
   run get <id> [--tail-bytes N] [--json] Inspect a run and its stored output
@@ -65,6 +67,9 @@ const args = process.argv.slice(2);
 const command = args[0];
 
 switch (command) {
+  case "server":
+    process.exitCode = await serverCommand(args.slice(1));
+    break;
   case "job":
     process.exitCode = await jobCommand(args.slice(1));
     break;

@@ -292,6 +292,20 @@ The update object accepts `username`, `secret`, `label`, and `expires_at`. Omitt
 
 These commands emit one JSON document with `--json`. Failures use stderr and exit 1. Human list/create output shows ID, hostname, label, and state; human check output shows the response as formatted JSON.
 
+## Server drain
+
+```bash
+moor server drain status --json
+moor server drain enable --reason "maintenance" --ttl-minutes 30 --json
+moor server drain disable --json
+```
+
+Drain refuses new work without killing work already running. Status returns the server's `state` and `active_work` counts; enable and disable return `state`. These commands make one request and do not wait, poll, or retry. Reads remain available during drain.
+
+TTL must be finite and positive. Omit it for the server's 30-minute default; the server clamps supplied values to 0.05–10080 minutes. Enabling again replaces the reason and resets expiry from now. Disabling does not restart or resume work. Scheduled cron executions during drain are recorded as skipped.
+
+Success emits one JSON document with `--json`, or formatted JSON for humans. Request failures use stderr and exit 1. The updater-specific `clear_after_version` option is not exposed.
+
 ## `moor mcp config`
 
 Generates a ready-to-paste config snippet for an MCP-compatible AI client. Removes the "open a doc, copy a JSON block, fill in the blanks" step from MCP setup.
