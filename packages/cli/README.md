@@ -88,7 +88,7 @@ Success prints the API response as one JSON document with `logs`, `lastTimestamp
 
 Put Moor options before `--`; everything after it belongs to the container command. Arguments are joined with spaces into a shell command, not passed as an argv array. Quote shell expressions to prevent your local shell from expanding them. Do not put secrets in command arguments.
 
-Existing human calls such as `moor exec api ls -la` still work and print the container's stdout and stderr directly. JSON mode requires the separator. This command runs synchronously; asynchronous exec is not included in this slice.
+Existing human calls such as `moor exec api ls -la` still work and print the container's stdout and stderr directly. One compatibility exception: a standalone `--json` token anywhere without a separator is rejected to avoid confusing Moor output options with remote options. For a remote JSON option, use `moor exec api -- gh pr list --json state`; Moor still prints human-mode output. This command runs synchronously; asynchronous exec is not included in this slice.
 
 ## Restart
 

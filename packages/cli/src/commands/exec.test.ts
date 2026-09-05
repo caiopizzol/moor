@@ -127,6 +127,7 @@ for (const projects of [{}, null, [null], [{ id: "8", name: "7" }]]) {
 for (const [args, error] of [
   [["7", "--json", "echo"], "--json requires -- before the command"],
   [["7", "ls", "--json"], "--json requires -- before the command"],
+  [["7", "gh", "pr", "list", "--json", "state"], "--json requires -- before the command"],
   [["--json", "--", "echo"], "Project is required"],
   [["7", "--json", "--"], "Command is required"],
   [["7", "--json", "extra", "--", "echo"], "Unexpected argument: extra"],
@@ -143,6 +144,17 @@ for (const [args, error] of [
     });
   });
 }
+
+test("exec forwards a remote JSON option after an explicit separator in human mode", async () => {
+  await fixture(async (run, requests) => {
+    expect(await run(["7", "--", "gh", "pr", "list", "--json", "state"])).toEqual({
+      exitCode: 0,
+      stdout: "hello\n",
+      stderr: "warning\n",
+    });
+    expect(requests.at(-1)?.body).toEqual({ command: "gh pr list --json state" });
+  });
+});
 
 test("exec help does not execute a command", async () => {
   await fixture(async (run, requests) => {
