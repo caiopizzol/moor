@@ -197,6 +197,19 @@ Agents should pass `--json`. Each streamed API event is emitted as one JSON obje
 
 Failures return a non-zero exit status. Pre-stream errors are written to stderr and, in JSON mode, preserve the API's structured fields plus the HTTP `status`. Errors received after streaming begins remain ordered with the other JSONL events on stdout.
 
+### Worker command and entrypoint
+
+Use JSON argv arrays to override the image's command or entrypoint. This example assumes your image contains Node and `/app/worker.js`; replace the image reference with your own:
+
+```bash
+moor project deploy worker --docker-image ghcr.io/acme/worker:latest --entrypoint '["node"]' --command '["/app/worker.js"]' --json
+moor project deploy worker --update-existing --command null --entrypoint null --json
+```
+
+Arguments are passed as array elements, not split or expanded by the CLI. Quote the JSON to prevent your local shell from expanding it. Use environment variables or injected files for secrets, not command arguments. These options configure container startup; they do not execute a command inside an existing container.
+
+Omitted options preserve existing overrides on updates. `null` restores image defaults; the server treats `[]` the same way, not as “run nothing.” The API validates array entries. Overrides take effect on container recreation; `--no-run` saves them until a later restart or rebuild. `--json` controls output independently of the JSON input arrays.
+
 ## Private-image registry credentials
 
 Store credentials from a protected JSON file, or pipe the object through stdin with `--file -`. Never put secrets in command-line arguments.
