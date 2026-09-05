@@ -33,7 +33,8 @@
     "docs": "bun run scripts/generate-tool-docs.ts",
     "build": "bun build src/index.ts --compile --outfile moor-mcp",
     "build:package": "bun build src/index.ts --target bun --outfile dist/index.js --external @cfworker/json-schema --external @modelcontextprotocol/server --external zod",
-    "prepack": "bun run build:package"
+    "prepack": "bun run build:package",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
     "@cfworker/json-schema": "^4.1.1",

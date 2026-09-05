@@ -24,7 +24,7 @@
     "src/"
   ],
   "scripts": {
-    "typecheck": "bunx tsc --noEmit -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "bun test src"
   }
 }
