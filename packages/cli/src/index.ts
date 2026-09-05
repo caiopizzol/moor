@@ -7,6 +7,7 @@ import { deployCommand } from "./commands/deploy";
 import { envCommand } from "./commands/env";
 import { execCommand } from "./commands/exec";
 import { historyCommand } from "./commands/history";
+import { jobCommand } from "./commands/job";
 import { logsCommand } from "./commands/logs";
 import { mcpCommand } from "./commands/mcp";
 import { PROJECT_USAGE, projectGetCommand, projectListCommand } from "./commands/project";
@@ -51,6 +52,7 @@ Commands:
   project deploy <name> [options] Create or update and optionally run a project
   credential <kind> <verb>        Manage source or registry credentials (see --help)
   cron <verb>                     List, create, or update scheduled jobs
+  job <verb>                      Start, inspect, or stop an async shell job
   mcp config --client <name>      Generate MCP client config snippet
 
 Environment:
@@ -62,6 +64,9 @@ const args = process.argv.slice(2);
 const command = args[0];
 
 switch (command) {
+  case "job":
+    process.exitCode = await jobCommand(args.slice(1));
+    break;
   case "cron":
     process.exitCode = await cronCommand(args.slice(1));
     break;

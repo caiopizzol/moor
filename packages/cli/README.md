@@ -210,6 +210,20 @@ Arguments are passed as array elements, not split or expanded by the CLI. Quote 
 
 Omitted options preserve existing overrides on updates. `null` restores image defaults; the server treats `[]` the same way, not as “run nothing.” The API validates array entries. Overrides take effect on container recreation; `--no-run` saves them until a later restart or rebuild. `--json` controls output independently of the JSON input arrays.
 
+## Asynchronous shell jobs
+
+```bash
+moor job start worker --file job.json --json
+moor job status 12 --json
+moor job stop 12 --json
+```
+
+Start reads `{"command":"node /app/task.js","timeout_ms":3600000}` from a file or stdin (`--file -`). The API validates the shell command and timeout, which defaults to 24 hours and ranges from 60,000 to 86,400,000 milliseconds. Keep secrets in environment variables or injected files rather than command text, which the server stores and logs.
+
+Start returns `run_id` when accepted, without waiting for completion. Use that ID only with `job status/stop`: async jobs have a separate ID space from build/cron `run` records. Existing `moor exec` remains the synchronous command. Status returns live output tails while running, final output afterward, byte totals, and execution state. Empty initial output is normal; status exit 0 means retrieval succeeded even if the job failed.
+
+Stop attempts cancellation once. Inspect `ok`, `state`, `live_remaining`, and `message`: an error can mean processes are still running. Do not retry blindly; the server cannot reliably repeat a failed kill attempt. The CLI does not poll or retry start/stop. An HTTP-success stop outcome is printed to stdout and exits 1 if `ok` is false; HTTP request failures go to stderr and exit 1. A successful start or status request exits 0, not the command's eventual exit code. Human output is indented JSON; `--json` emits one compact document.
+
 ## Scheduled jobs
 
 ```bash
