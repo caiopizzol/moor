@@ -1,7 +1,83 @@
 import { expect, test } from "bun:test";
 import { join } from "node:path";
 
-type Call = { method: string; path: string; auth: string | null };
+type Call = { method: string; path: string; auth: string | null; body?: unknown };
+test("run stop uses one direct request and preserves cancellation outcomes in both modes", async () => {
+  for (const json of [false, true]) {
+    for (const ok of [true, false]) {
+      const payload = {
+        ok,
+        result: ok ? "cancelled_cron" : "cron_kill_incomplete",
+        live_remaining: ok ? 0 : 2,
+      };
+      await fixture(async (run, calls) => {
+        expect(await run(["stop", ...(json ? ["--json"] : []), "11"])).toEqual({
+          exitCode: ok ? 0 : 1,
+          stdout: `${JSON.stringify(payload, null, json ? undefined : 2)}\n`,
+          stderr: "",
+        });
+        expect(calls).toEqual([
+          { method: "POST", path: "/api/runs/11/stop", auth: "Bearer test-key", body: {} },
+        ]);
+      }, payload);
+    }
+  }
+});
+test("run stop rejects read options, extra arguments, and invalid IDs before requests", async () => {
+  await fixture(async (run, calls) => {
+    for (const args of [
+      [],
+      ["11", "extra"],
+      ["11", "--page", "1"],
+      ["11", "--tail-bytes", "0"],
+      ...["0", "-1", "1.5", "9007199254740992", "bad"].map((id) => [id]),
+    ]) {
+      const result = await run(["stop", ...args, "--json"]);
+      expect(result.exitCode).toBe(1);
+      expect(result.stdout).toBe("");
+      expect(typeof JSON.parse(result.stderr).error).toBe("string");
+    }
+    expect(calls).toEqual([]);
+  });
+});
+test("run stop preserves HTTP failure details on stderr without retrying", async () => {
+  for (const status of [404, 409, 500]) {
+    const payload = {
+      ok: false,
+      result: "cron_kill_incomplete",
+      message: "survivors",
+      live_remaining: 2,
+    };
+    await fixture(
+      async (run, calls) => {
+        const result = await run(["stop", "11", "--json"]);
+        expect(result.exitCode).toBe(1);
+        expect(result.stdout).toBe("");
+        expect(JSON.parse(result.stderr)).toMatchObject({ ...payload, status });
+        expect(calls).toHaveLength(1);
+      },
+      payload,
+      status,
+    );
+  }
+});
+test("run stop rejects malformed success without retrying an uncertain cancellation", async () => {
+  for (const payload of [
+    null,
+    [],
+    {},
+    { ok: "true", result: "cancelled" },
+    { ok: true, result: " " },
+  ]) {
+    await fixture(async (run, calls) => {
+      const result = await run(["stop", "11", "--json"]);
+      expect(result.exitCode).toBe(1);
+      expect(result.stdout).toBe("");
+      expect(JSON.parse(result.stderr).error).toContain("cancellation outcome is unknown");
+      expect(calls).toHaveLength(1);
+    }, payload);
+  }
+});
 async function fixture(
   check: (
     run: (args: string[]) => Promise<{ exitCode: number; stdout: string; stderr: string }>,
@@ -14,12 +90,13 @@ async function fixture(
   const server = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
-    fetch(req) {
+    async fetch(req) {
       const url = new URL(req.url);
       calls.push({
         method: req.method,
         path: url.pathname + url.search,
         auth: req.headers.get("Authorization"),
+        ...(req.method === "POST" ? { body: await req.json() } : {}),
       });
       if (url.pathname === "/api/projects")
         return Response.json([

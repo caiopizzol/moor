@@ -47,6 +47,7 @@ Commands:
   history <project> [--hours N] [--json] Stored resource history + events (default 24h)
   run list <project> [--page N] [--json] List run summaries
   run get <id> [--tail-bytes N] [--json] Inspect a run and its stored output
+  run stop <id> [--json]          Attempt cron/build run cancellation
   project list [--json]           List projects
   project get <name|id> [--json]  Get one project
   project deploy <name> [options] Create or update and optionally run a project

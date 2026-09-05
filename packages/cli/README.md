@@ -93,13 +93,17 @@ Success prints the API response as one JSON document with `logs`, `lastTimestamp
 
 Errors go to stderr and exit 1. Unknown arguments, duplicate `--hours`, and invalid durations are rejected before requests. Exit 0 means history was retrieved, not that the workload is healthy.
 
-## Run inspection
+## Run inspection and cancellation
 
 `moor run list api --page 1 --json` returns `{runs,total}` with 20 summaries per page and no stdout/stderr bodies. `moor run get 11 --json` returns the run metadata and the last 8192 bytes of each output stream. Use `--tail-bytes 0` for metadata only, or up to 65536 bytes per stream.
 
 Detail output includes `stdout_truncated` and `stderr_truncated` flags and preserves total byte counts. UTF-8 characters are not split. The CLI limits displayed output after fetching the stored run; it does not limit the API download. Server-side retention may already have removed older output.
 
-Exit 0 means the read succeeded, even if the recorded run has a nonzero `exit_code`. Argument and request failures exit 1 and put errors on stderr. Without `--json`, list shows summary lines and get shows indented JSON. These commands do not stop or retry runs.
+For list/get, exit 0 means the read succeeded, even if the recorded run has a nonzero `exit_code`. Argument and request failures exit 1 and put errors on stderr. Without `--json`, list shows summary lines and get shows indented JSON.
+
+`moor run stop 11 --json` attempts cron/build cancellation once. Use an ID from `cron run` or `run list`, never from `job start`. Build cancellation is available only during the build/pull phase. Successful cancellation outcomes go to stdout and exit 0; HTTP errors (including 409 outcomes such as `cron_kill_incomplete`) go to stderr and exit 1, preserving server details. An HTTP-success body with `ok:false` also exits 1, on stdout. Human mode prints indented outcome JSON.
+
+Inspect `result`, `message`, and `live_remaining` when present. Incomplete cancellation can leave processes running, and the kill attempt can remove the tracking pidfile: do not retry blindly. There is no automatic retry or polling. Use `run get` to inspect the recorded outcome.
 
 ## Exec
 
