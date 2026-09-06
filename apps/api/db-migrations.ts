@@ -260,10 +260,9 @@ export const schemaMigrations: readonly Migration[] = [
   // #111: projects opt into a stored source credential. NULL = today's path
   // (anonymous public clone, or legacy URL-embedded credentials in
   // github_url). When set, the build path resolves the credential and
-  // uses it for Docker's daemon-side `remote=` build (#112 wires the
-  // in-memory URL synthesis). FK uses ON DELETE RESTRICT semantics via
-  // the route layer (deleteCredential refuses when projects reference
-  // it); SQLite's RESTRICT is the default for REFERENCES.
+  // uses it for Docker's daemon-side `remote=` build. deleteCredential
+  // refuses deletion while projects reference the credential; the FK's
+  // default ON DELETE action is NO ACTION.
   {
     version: 17,
     up(db) {

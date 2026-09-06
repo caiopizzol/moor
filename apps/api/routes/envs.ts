@@ -216,7 +216,7 @@ export function replaceProjectEnvs(
   projectId: number,
   vars: Array<{ key: string; value: string }>,
 ): Array<{ id: number; project_id: number; key: string; value: string }> {
-  // Use db.transaction for safe concurrent access
+  // Replace the full set atomically so a failed insert preserves the old values.
   const updateEnvs = db.transaction(() => {
     db.query("DELETE FROM env_vars WHERE project_id = ?").run(projectId);
     const insert = db.query("INSERT INTO env_vars (project_id, key, value) VALUES (?, ?, ?)");

@@ -18,15 +18,11 @@
 #                   does NOT trigger rollback (moor was never replaced).
 #   --help          usage.
 #
-# Security posture (also on the image LABEL):
-# - Transient. moor launches a respawner for a single update window
-#   and removes it after the marker is written. There is no daemon.
-# - Requires /var/run/docker.sock mounted in. No other privileged
-#   access. No open ports. No long-running loop.
-# - No code execution from external input. This script is the only
-#   code path. JSON context is parsed via per-field jq invocations;
-#   docker compose argv is built via `set --` so config_files entries
-#   with spaces never get re-split.
+# The respawner runs for one update window with Docker socket access and
+# operator-controlled Compose files and mounts. These inputs are trusted;
+# Docker socket access grants authority over the host's containers.
+# JSON fields are parsed with jq and passed as argv without eval. This
+# preserves argument boundaries, including config paths containing spaces.
 
 set -eu
 

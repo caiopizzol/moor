@@ -1,7 +1,5 @@
-// #80 PR #1: discover the Compose context moor is running under, so a
-// future moor_update_apply can launch a respawner with the right
-// project/service/working_dir/config_files + the right data mount +
-// attached to the right network.
+// Discover the Compose project, service, working directory, config files,
+// data mount, and network that update-apply.ts needs to launch a respawner.
 //
 // Two layers:
 //   - PURE parsers + validators (label parsing, mount-record extraction,
@@ -10,10 +8,8 @@
 //     over the Docker socket (same pattern as update-status.ts) and
 //     feeds the response into the pure layer.
 //
-// Scope intentionally stops at discovery. Actual respawner launch is
-// PR #3-onwards. This PR does NOT verify that the discovered paths
-// are bind-mountable — that requires a real container launch and
-// belongs in moor_update_apply.
+// Discovery does not prove the paths can be bind-mounted. update-apply.ts
+// launches the respawner using this context; mount failures surface there.
 
 import { isAbsolute, relative as relativePath, resolve as resolvePath } from "node:path";
 

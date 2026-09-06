@@ -1,6 +1,6 @@
-// Tests for parseLsRemoteOutput. Pure function - no spawn, no git
-// invocation. The runner itself (runGitLsRemote) is exercised
-// indirectly through source-check.test.ts with an injected fake.
+// Parser tests use synthetic result shapes, without spawning git.
+// source-check.test.ts tests orchestration with a replacement runner;
+// neither suite exercises the real runGitLsRemote subprocess path.
 
 import { describe, expect, test } from "bun:test";
 import { type LsRemoteRunResult, parseLsRemoteOutput } from "./git-ls-remote";

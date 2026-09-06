@@ -98,7 +98,7 @@ export function stopCleanupScheduler(): void {
 }
 
 /** Test-only: lets a test simulate "previous cycle still running" without
- *  actually running one. Not exported beyond the test file. */
+ *  actually running one. Exported for tests; test-only use is a convention. */
 export function _setCycleRunningForTest(value: boolean): void {
   cycleRunning = value;
 }

@@ -15,8 +15,8 @@ import db from "./db";
 export type EventSource = "docker_event" | "poll" | "moor_action";
 
 export type ProjectEventInput = {
-  // Nullable because a Docker event can arrive before we've correlated its
-  // container back to a project; the consumer backfills project_id when it can.
+  // Null identifies host-wide events such as docker_event_gap markers.
+  // Uncorrelated container events are dropped by the Docker event consumer.
   projectId: number | null;
   containerId: string | null;
   source: EventSource;

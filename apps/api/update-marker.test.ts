@@ -377,11 +377,9 @@ describe("#80 PR #2 boot order: ingest BEFORE sweep", () => {
   afterEach(resetAll);
 
   test("a stale-but-valid marker that arrived during downtime wins against the sweep", () => {
-    // Simulate: an audit row was inserted >30 min ago and a respawner
-    // wrote a 'success' marker during that downtime. If sweep runs first
-    // the row becomes 'crashed' and the marker can no longer ingest. The
-    // documented boot order in index.ts is ingest → sweep, which this
-    // test enforces in code.
+    // A success marker written during downtime must be ingested before the
+    // stale-row sweep, or the sweep marks the row crashed first. This tests
+    // the component order below, not the startup wiring in index.ts.
     const auditId = insertAuditInProgress({
       from_digest: null,
       to_digest: null,
@@ -405,8 +403,8 @@ describe("#80 PR #2 boot order: ingest BEFORE sweep", () => {
   });
 
   test("wrong order (sweep first) loses the race — codifies why index.ts must ingest first", () => {
-    // This test exists to document the failure mode if anyone re-orders
-    // the boot steps in index.ts. It must stay.
+    // Demonstrates the failure mode by calling the components in reverse
+    // order. This does not exercise the startup wiring in index.ts.
     const auditId = insertAuditInProgress({
       from_digest: null,
       to_digest: null,

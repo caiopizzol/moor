@@ -19,7 +19,7 @@
 // - Drain clears ONLY on `success`. After `rolled_back` moor is back on
 //   the previous version and the original update didn't land — drain
 //   stays so the operator notices.
-// - Boot order (enforced in index.ts): ingest markers BEFORE sweep, so a
+// - Boot order in index.ts: ingest markers BEFORE sweep, so a
 //   valid marker that landed during downtime can't lose a race with the
 //   grace-window sweep.
 
@@ -132,7 +132,8 @@ function quarantine(filePath: string, reason: string): string {
 }
 
 /** Ingest a single marker file: read, validate, transition audit row,
- *  delete-or-quarantine. Never throws — returns a discriminated result. */
+ *  delete-or-quarantine. File/payload errors return a discriminated result;
+ *  database errors can propagate. */
 export function ingestMarker(filePath: string): IngestResult {
   const name = basename(filePath);
   const filenameId = parseMarkerFilename(name);

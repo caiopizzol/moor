@@ -25,10 +25,9 @@ export async function handleAuth(req: Request, url: URL): Promise<Response | nul
 
   if (url.pathname === "/api/auth/login" && req.method === "POST") {
     if (!isSetupComplete()) {
-      // Should not be reachable: the 503 guard in index.ts blocks /api/* when no admin exists.
+      // Should not be reachable: the 503 guard in request-handler.ts blocks /api/* when no admin exists.
       return Response.json({ error: "Admin password not configured" }, { status: 503 });
     }
-    // Rate limiting
     const now = Date.now();
     if (now < loginAttempts.lockedUntil) {
       const retryAfter = Math.ceil((loginAttempts.lockedUntil - now) / 1000);

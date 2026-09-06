@@ -55,7 +55,6 @@ export function BuildOutput({ projectId, streamingLines, isImageProject }: Props
     }
   }, [run, streamingLines]);
 
-  // Streaming mode
   if (streamingLines !== undefined) {
     return <XTermPanel handle={xtermRef} />;
   }

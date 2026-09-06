@@ -70,9 +70,6 @@ describe("#134 startOrCleanup — orphan cleanup on failed start", () => {
   });
 });
 
-// The 4th scenario from #134 — "Docker create fails → no cleanup attempt" — is
-// structural, not re-tested here: createAndStartContainer throws at the create
-// step (createRes not ok) BEFORE an Id exists, so startOrCleanup is never
-// reached and there is no container to remove. Exercising it would require
-// mocking the global Docker socket fetch, which this codebase doesn't do for
-// createAndStartContainer.
+// Create failure is outside this helper suite: createAndStartContainer
+// throws before an Id exists and before startOrCleanup is reached.
+// Its injectable DockerFetch supports testing that path separately.

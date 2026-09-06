@@ -1,8 +1,7 @@
-// #98: sweep stale .update-{context,override,rollback}-<id>.{json,yml}
-// files from /app/data once their matching audit row reaches a
-// terminal state. moor's apply path writes these to coordinate with
-// the respawner; nothing cleans them up after the update finishes,
-// so /app/data accumulates them across releases.
+// Sweep update artifacts once their matching audit row is terminal.
+// The current apply path writes .update-context-<id>.json; legacy
+// .update-override-<id>.yml and .update-rollback-<id>.yml files are also
+// cleanup inputs. Startup and post-ingestion sweeps remove these files.
 //
 // Two trigger points:
 //   - One-shot sweep at startup (after marker ingestion + stale-audit

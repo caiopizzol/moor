@@ -209,9 +209,9 @@ async function handleExec(req: Request, project: Project): Promise<Response> {
         {
           error: "timeout",
           timeout_ms: e.timeout_ms,
-          // `killed` is the strict success signal: a target was located AND no
-          // descendants survived in a live state. Zombies are excluded from
-          // `live_remaining` since the container's PID 1 may not reap them.
+          // A target was located and no processes in the captured PID set
+          // remain live. Children forked after the scan can escape; zombies
+          // are excluded because the container's PID 1 may not reap them.
           killed: e.killSentTo !== null && e.liveAfterKill === 0,
           killed_pid: e.killSentTo,
           live_remaining: e.liveAfterKill,
