@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.56.0](https://github.com/caiopizzol/moor/compare/v0.55.0...v0.56.0) (2026-09-06)
+
+
+### Features
+
+* **auth:** add saved CLI login sessions ([#207](https://github.com/caiopizzol/moor/issues/207)) ([c5a282b](https://github.com/caiopizzol/moor/commit/c5a282bcd18c38c445d9da3eca584e454a031d31))
+
 ## [0.55.0](https://github.com/caiopizzol/moor/compare/v0.54.1...v0.55.0) (2026-09-06)
 
 
