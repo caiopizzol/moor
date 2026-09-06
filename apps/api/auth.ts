@@ -15,10 +15,10 @@ export async function verifyPassword(password: string): Promise<boolean> {
   return Bun.password.verify(password, row.password_hash);
 }
 
-export function createSession(): string {
+export function createSession(durationHours = SESSION_DURATION_HOURS): string {
   const token = crypto.randomUUID();
   const now = new Date();
-  const expires = new Date(now.getTime() + SESSION_DURATION_HOURS * 60 * 60 * 1000);
+  const expires = new Date(now.getTime() + durationHours * 60 * 60 * 1000);
   db.query("INSERT INTO sessions (token, created_at, expires_at) VALUES (?, ?, ?)").run(
     token,
     now.toISOString(),
@@ -29,7 +29,9 @@ export function createSession(): string {
 
 export function validateSession(token: string): boolean {
   const row = db
-    .query("SELECT token FROM sessions WHERE token = ? AND expires_at > datetime('now')")
+    .query(
+      "SELECT token FROM sessions WHERE token = ? AND julianday(expires_at) > julianday('now')",
+    )
     .get(token);
   return row !== null;
 }
@@ -39,7 +41,7 @@ export function deleteSession(token: string): void {
 }
 
 export function cleanExpiredSessions(): void {
-  db.query("DELETE FROM sessions WHERE expires_at <= datetime('now')").run();
+  db.query("DELETE FROM sessions WHERE julianday(expires_at) <= julianday('now')").run();
 }
 
 export function getSessionFromCookie(req: Request): string | null {
@@ -68,18 +70,21 @@ export function buildClearCookie(): string {
   return "moor_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0";
 }
 
+export function getBearerToken(req: Request): string | null {
+  const header = req.headers.get("authorization");
+  return header?.match(/^Bearer +(.+)$/i)?.[1] ?? null;
+}
+
 export function validateBearerToken(req: Request): boolean {
+  const token = getBearerToken(req);
+  if (!token) return false;
   const apiKey = process.env.MOOR_API_KEY;
-  if (!apiKey) return false;
-
-  const authHeader = req.headers.get("authorization");
-  if (!authHeader?.startsWith("Bearer ")) return false;
-
-  const token = authHeader.slice(7);
-  if (token.length !== apiKey.length) return false;
-
-  const encoder = new TextEncoder();
-  return timingSafeEqual(encoder.encode(token), encoder.encode(apiKey));
+  if (apiKey) {
+    const actual = Buffer.from(token);
+    const expected = Buffer.from(apiKey);
+    if (actual.length === expected.length && timingSafeEqual(actual, expected)) return true;
+  }
+  return validateSession(token);
 }
 
 /** Process MOOR_INITIAL_PASSWORD on startup. Create-only: warns and skips if an admin

@@ -32,6 +32,8 @@ Don't set both `MOOR_INITIAL_PASSWORD` and `MOOR_RESET_PASSWORD` at the same tim
 
 By default the admin is bound to `127.0.0.1:3000` on the host and is NOT served through Caddy. Caddy on 80/443 serves only the project domains you add through the UI.
 
+Keep port 3000 private. For public admin access, terminate HTTPS at a trusted reverse proxy as described below. Moor serves HTTP behind that proxy; password login endpoints do not independently enforce TLS. An admin password does not make a public plaintext HTTP connection safe.
+
 Open an SSH tunnel from your laptop:
 
 ```bash
@@ -75,7 +77,7 @@ The `:80 { respond 421 }` block is the default rejection for any unmatched host.
 
 ## API keys
 
-`MOOR_API_KEY` enables bearer-token access for the CLI, MCP, and any external tooling. The web UI is unaffected; it uses session cookies. **A valid `MOOR_API_KEY` grants the same authority as the admin password** - treat it like SSH access.
+`MOOR_API_KEY` enables a static bearer token for the CLI, MCP, and external tooling. The CLI can also use [`moor login`](../packages/cli/README.md#log-in) to save a 30-day session without configuring an API key. The web UI is unaffected; it uses session cookies. **A valid `MOOR_API_KEY` grants the same authority as the admin password** - treat it like SSH access.
 
 The shipped `docker-compose.yml` already references `MOOR_API_KEY` from `.env`, so enabling it is a `.env` edit, not a compose change.
 
@@ -114,7 +116,7 @@ Old key stops working immediately on container restart. Update any CLI / MCP / e
 
 ### Disable
 
-Remove the `MOOR_API_KEY=` line from `.env` and `docker compose up -d`. Bearer auth disables; the web UI keeps working through session cookies.
+Remove the `MOOR_API_KEY=` line from `.env` and `docker compose up -d`. The static key stops working. Browser and CLI login sessions remain valid; resetting the admin password revokes those sessions.
 
 ## Project ports
 
@@ -133,7 +135,7 @@ Your network firewall should keep direct project port ranges closed regardless. 
 
 When a project's `docker_image` references a private registry (GHCR, Docker Hub, ECR, a self-hosted Harbor), moor needs credentials to pull. Add one row per registry hostname. The pull path looks up by the hostname extracted from the image ref and attaches `X-Registry-Auth` on `/images/create`. Anonymous pulls keep working for public images: a missing credential means no header, same as today.
 
-The HTTP API requires `MOOR_API_KEY` (see [API keys](#api-keys) above).
+These HTTP API examples use `MOOR_API_KEY` (see [API keys](#api-keys) above).
 
 ### Add a credential
 
@@ -183,7 +185,7 @@ For projects whose `github_url` points at a private repo, moor stores an HTTPS P
 
 v1 supports HTTPS PATs only. For GitHub: a fine-grained PAT with `Contents: read` (username `x-access-token`) is the recommended path; classic PATs with `repo` scope also work.
 
-The HTTP API requires `MOOR_API_KEY` (see [API keys](#api-keys) above).
+These HTTP API examples use `MOOR_API_KEY` (see [API keys](#api-keys) above).
 
 ### Add a credential
 
@@ -281,7 +283,7 @@ A project volume is a named Docker volume mounted into a project's container at 
 
 Mounts apply on the next container recreate (`moor_rebuild` / `moor_restart` / `moor_deploy` / a `moor_project` run). An already-running container keeps its existing mounts until it is recreated.
 
-Volumes are API and MCP only. The HTTP API requires `MOOR_API_KEY` (see [API keys](#api-keys) above) and takes a numeric project id; the MCP tools accept a project name or id.
+Volumes are API and MCP only. These HTTP API examples use `MOOR_API_KEY` (see [API keys](#api-keys) above) and take a numeric project id; the MCP tools accept a project name or id.
 
 ### List, add, remove
 

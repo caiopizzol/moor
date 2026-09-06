@@ -4,6 +4,7 @@ import {
   createSession,
   deleteSession,
   getSessionFromCookie,
+  getBearerToken,
   isSetupComplete,
   validateSession,
   verifyPassword,
@@ -23,7 +24,8 @@ export async function handleAuth(req: Request, url: URL): Promise<Response | nul
     return Response.json({ authenticated });
   }
 
-  if (url.pathname === "/api/auth/login" && req.method === "POST") {
+  const cliLogin = url.pathname === "/api/auth/token";
+  if ((url.pathname === "/api/auth/login" || cliLogin) && req.method === "POST") {
     if (!isSetupComplete()) {
       // Should not be reachable: the 503 guard in request-handler.ts blocks /api/* when no admin exists.
       return Response.json({ error: "Admin password not configured" }, { status: 503 });
@@ -36,8 +38,14 @@ export async function handleAuth(req: Request, url: URL): Promise<Response | nul
         { status: 429, headers: { "Retry-After": String(retryAfter) } },
       );
     }
-    const body = (await req.json()) as { password?: string };
-    if (!body.password) {
+    const body: unknown = await req.json().catch(() => null);
+    if (
+      !body ||
+      typeof body !== "object" ||
+      !("password" in body) ||
+      typeof body.password !== "string" ||
+      !body.password
+    ) {
       return Response.json({ error: "Password required" }, { status: 400 });
     }
     const valid = await verifyPassword(body.password);
@@ -51,7 +59,9 @@ export async function handleAuth(req: Request, url: URL): Promise<Response | nul
       return Response.json({ error: "Invalid password" }, { status: 401 });
     }
     loginAttempts.count = 0;
-    const token = createSession();
+    loginAttempts.lockedUntil = 0;
+    const token = createSession(cliLogin ? 30 * 24 : undefined);
+    if (cliLogin) return Response.json({ token }, { headers: { "Cache-Control": "no-store" } });
     return new Response(JSON.stringify({ ok: true }), {
       status: 200,
       headers: {
@@ -62,7 +72,7 @@ export async function handleAuth(req: Request, url: URL): Promise<Response | nul
   }
 
   if (url.pathname === "/api/auth/logout" && req.method === "POST") {
-    const token = getSessionFromCookie(req);
+    const token = getBearerToken(req) ?? getSessionFromCookie(req);
     if (token) deleteSession(token);
     return new Response(JSON.stringify({ ok: true }), {
       status: 200,
