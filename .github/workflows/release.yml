@@ -1,0 +1,95 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      moor_released: ${{ steps.release.outputs.release_created }}
+      moor_version: ${{ steps.release.outputs.version }}
+      moor_sha: ${{ steps.release.outputs.sha }}
+      cli_released: ${{ steps.release.outputs['packages/cli--release_created'] }}
+      cli_sha: ${{ steps.release.outputs['packages/cli--sha'] }}
+      mcp_released: ${{ steps.release.outputs['packages/mcp--release_created'] }}
+      mcp_sha: ${{ steps.release.outputs['packages/mcp--sha'] }}
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: release
+        with:
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+
+  publish-moor:
+    needs: release
+    if: needs.release.outputs.moor_released == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release.outputs.moor_sha }}
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build & push moor
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/caiopizzol/moor:latest
+            ghcr.io/caiopizzol/moor:${{ needs.release.outputs.moor_version }}
+          cache-from: type=gha,scope=moor
+          cache-to: type=gha,mode=max,scope=moor
+      # The server launches the respawner matching its own version.
+      - name: Build & push moor-respawner
+        uses: docker/build-push-action@v6
+        with:
+          context: apps/respawner
+          push: true
+          tags: |
+            ghcr.io/caiopizzol/moor-respawner:latest
+            ghcr.io/caiopizzol/moor-respawner:${{ needs.release.outputs.moor_version }}
+          cache-from: type=gha,scope=respawner
+          cache-to: type=gha,mode=max,scope=respawner
+
+  publish-cli:
+    needs: release
+    if: needs.release.outputs.cli_released == 'true'
+    uses: ./.github/workflows/release-npm.yml
+    permissions:
+      contents: read
+      id-token: write
+    with:
+      package: cli
+      sha: ${{ needs.release.outputs.cli_sha }}
+    secrets:
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  publish-mcp:
+    needs: release
+    if: needs.release.outputs.mcp_released == 'true'
+    uses: ./.github/workflows/release-npm.yml
+    permissions:
+      contents: read
+      id-token: write
+    with:
+      package: mcp
+      sha: ${{ needs.release.outputs.mcp_sha }}
+    secrets:
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}

@@ -2,7 +2,8 @@ import { defineConfig } from "vite-plus";
 
 export default defineConfig({
   defaultPackage: "apps/web",
-  fmt: {},
+  // Release-please owns changelog formatting.
+  fmt: { ignorePatterns: ["**/CHANGELOG.md"] },
   staged: {
     "*": ["vp check --fix", () => "bun run typecheck"],
   },

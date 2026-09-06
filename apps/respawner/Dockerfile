@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 #
 # #80: moor-respawner image. Tagged together with moor itself by the
-# existing release-moor.yml so the respawner version always matches
+# release.yml so the respawner version always matches
 # the moor version that launched it (the contract is between them).
 #
 # Entrypoint modes (see entrypoint.sh for details):
