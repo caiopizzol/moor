@@ -9,9 +9,6 @@ on:
       sha:
         required: true
         type: string
-    secrets:
-      NPM_TOKEN:
-        required: true
 
 jobs:
   publish:
@@ -25,11 +22,10 @@ jobs:
           ref: ${{ inputs.sha }}
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           registry-url: https://registry.npmjs.org
+      - run: npm install --global npm@11
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
       - run: npm publish --access public --provenance
         working-directory: packages/${{ inputs.package }}
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
