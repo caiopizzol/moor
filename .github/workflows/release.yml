@@ -78,8 +78,6 @@ jobs:
     with:
       package: cli
       sha: ${{ needs.release.outputs.cli_sha }}
-    secrets:
-      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
 
   publish-mcp:
     needs: release
@@ -91,5 +89,3 @@ jobs:
     with:
       package: mcp
       sha: ${{ needs.release.outputs.mcp_sha }}
-    secrets:
-      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
