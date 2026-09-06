@@ -1,6 +1,6 @@
 {
   "name": "@moor-sh/mcp",
-  "version": "0.0.0-development",
+  "version": "0.28.0",
   "description": "MCP server for moor - lets AI agents (Claude Code, Cursor, etc.) manage your moor projects via the moor HTTP API.",
   "keywords": [
     "ai-agent",
@@ -40,5 +40,8 @@
     "@cfworker/json-schema": "^4.1.1",
     "@modelcontextprotocol/server": "2.0.0-alpha.2",
     "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@moor-sh/contract": "workspace:*"
   }
 }

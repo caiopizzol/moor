@@ -125,7 +125,7 @@ export function buildUnsafeReasons(input: {
 
 /** Read moor's release version from the root package.json shipped in
  *  the image. The root package.json (not apps/api/package.json) is the
- *  one bumped by semantic-release and tracks the published image tag.
+ *  one bumped by release-please and tracks the published image tag.
  *  Falls back to "unknown" on any failure — don't block on this. */
 export function readPackageVersion(): string {
   try {

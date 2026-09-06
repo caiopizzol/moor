@@ -230,7 +230,7 @@ describe("#78 buildUpdateStatus integration with injected GhcrFetcher", () => {
 });
 
 describe("#78 readPackageVersion", () => {
-  test("matches the root package.json version (the one semantic-release bumps), not apps/api/package.json", async () => {
+  test("matches the root package.json version (the one release-please bumps), not apps/api/package.json", async () => {
     const { readFileSync } = await import("node:fs");
     const { join } = await import("node:path");
     const rootPath = join(import.meta.dir, "..", "..", "package.json");

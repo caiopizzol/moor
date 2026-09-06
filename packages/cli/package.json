@@ -1,6 +1,6 @@
 {
   "name": "@moor-sh/cli",
-  "version": "0.0.0-development",
+  "version": "0.6.0",
   "description": "Command-line interface for moor - manage your moor server's projects, logs, env vars, and container lifecycle.",
   "keywords": [
     "cli",
@@ -32,5 +32,8 @@
     "build:package": "bun build src/index.ts --target bun --outfile dist/index.js",
     "prepack": "bun run build:package",
     "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@moor-sh/contract": "workspace:*"
   }
 }

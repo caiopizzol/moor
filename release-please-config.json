@@ -1,0 +1,22 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "release-type": "node",
+  "plugins": ["node-workspace"],
+  "packages": {
+    ".": {
+      "include-component-in-tag": false,
+      "exclude-paths": ["packages/cli", "packages/mcp", "apps/site", "docs", ".github"],
+      "package-name": ""
+    },
+    "packages/cli": {
+      "component": "cli"
+    },
+    "packages/mcp": {
+      "component": "mcp"
+    },
+    "packages/contract": {
+      "component": "contract"
+    }
+  },
+  "bootstrap-sha": "fbccc031d69ca8966a3f80a1593bea56d514466a"
+}
