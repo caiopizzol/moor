@@ -164,3 +164,28 @@ test("preserves structured upstream authentication failures instead of claiming 
   expect(result.stderr).toContain("source_credential_required");
   expect(result.stderr).not.toContain("expired");
 });
+
+test("concurrent login keeps one credential and revokes the losing session", async () => {
+  let issued = 0;
+  const revoked: string[] = [];
+  const bothArrived = Promise.withResolvers<void>();
+  const url = startServer(async (req) => {
+    if (new URL(req.url).pathname === "/api/auth/token") {
+      const token = `session-${++issued}`;
+      if (issued === 2) bothArrived.resolve();
+      await bothArrived.promise;
+      return Response.json({ token });
+    }
+    revoked.push(req.headers.get("authorization")!);
+    return Response.json({ ok: true });
+  });
+  const results = await Promise.all([
+    cli(["login", url, "--password-stdin"], "test-password\n"),
+    cli(["login", url, "--password-stdin"], "test-password\n"),
+  ]);
+  expect(results.map((result) => result.exitCode).sort((a, b) => a - b)).toEqual([0, 1]);
+  const saved = JSON.parse(readFileSync(configFile(), "utf8")) as { apiKey: string };
+  expect(revoked).toHaveLength(1);
+  expect(revoked[0]).not.toBe(`Bearer ${saved.apiKey}`);
+  expect(["session-1", "session-2"]).toContain(saved.apiKey);
+});

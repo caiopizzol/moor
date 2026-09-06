@@ -4,7 +4,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
-  renameSync,
+  linkSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -59,7 +59,7 @@ export function saveLogin(config: LoginConfig): void {
   try {
     const path = join(temporary, "config.json");
     writeFileSync(path, JSON.stringify(config) + "\n", { mode: 0o600 });
-    renameSync(path, configPath());
+    linkSync(path, configPath());
   } finally {
     rmSync(temporary, { recursive: true, force: true });
   }

@@ -72,7 +72,7 @@ export function buildClearCookie(): string {
 
 export function getBearerToken(req: Request): string | null {
   const header = req.headers.get("authorization");
-  return header?.startsWith("Bearer ") ? header.slice(7) : null;
+  return header?.match(/^Bearer +(.+)$/i)?.[1] ?? null;
 }
 
 export function validateBearerToken(req: Request): boolean {

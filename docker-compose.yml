@@ -6,7 +6,7 @@ services:
       - "3000"
     # Admin UI bound to loopback. Reach it via SSH tunnel:
     #   ssh -L 8080:127.0.0.1:3000 your-server
-    # Change to "3000:3000" to expose publicly (not recommended without auth).
+    # Keep this HTTP port private; use a TLS reverse proxy for public access.
     ports:
       - "127.0.0.1:3000:3000"
     volumes:

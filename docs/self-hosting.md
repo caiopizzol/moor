@@ -32,6 +32,8 @@ Don't set both `MOOR_INITIAL_PASSWORD` and `MOOR_RESET_PASSWORD` at the same tim
 
 By default the admin is bound to `127.0.0.1:3000` on the host and is NOT served through Caddy. Caddy on 80/443 serves only the project domains you add through the UI.
 
+Keep port 3000 private. For public admin access, terminate HTTPS at a trusted reverse proxy as described below. Moor serves HTTP behind that proxy; password login endpoints do not independently enforce TLS. An admin password does not make a public plaintext HTTP connection safe.
+
 Open an SSH tunnel from your laptop:
 
 ```bash

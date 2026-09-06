@@ -128,6 +128,13 @@ describe("CLI password sessions", () => {
     resetAuthState();
     const hash = await Bun.password.hash("login-test-password", { algorithm: "argon2id" });
     db.query("INSERT INTO auth (id, password_hash) VALUES (1, ?)").run(hash);
+    const clock = spyOn(Date, "now").mockReturnValue(Date.now() + 31_000);
+    try {
+      expect((await login())?.status).toBe(200);
+    } finally {
+      clock.mockRestore();
+    }
+    db.query("DELETE FROM sessions").run();
   });
   afterEach(resetAuthState);
 
@@ -151,7 +158,7 @@ describe("CLI password sessions", () => {
     expect(Date.parse(row.expires_at) - Date.parse(row.created_at)).toBe(30 * 24 * 3600_000);
     const other = await login();
     const otherToken = ((await other!.json()) as { token: string }).token;
-    const headers = { Authorization: `Bearer ${token}` };
+    const headers = { Authorization: `bEaReR ${token}` };
     expect((await request("/api/server/drain", { headers }))?.status).toBe(200);
     expect((await request("/api/auth/logout", { method: "POST", headers }))?.status).toBe(200);
     expect((await request("/api/server/drain", { headers }))?.status).toBe(401);
