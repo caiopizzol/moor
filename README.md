@@ -1,31 +1,29 @@
 # <img src="https://github.com/user-attachments/assets/a042df26-2839-415a-b38b-f0e969f4068c" width="32" height="32" alt="moor" /> moor
 
-[![GitHub release](https://img.shields.io/github/v/release/caiopizzol/moor?label=version)](https://github.com/caiopizzol/moor/releases)
+[![Moor release](https://img.shields.io/github/v/release/caiopizzol/moor?filter=v*&label=moor)](https://github.com/caiopizzol/moor/releases)
+[![@moor-sh/cli on npm](https://img.shields.io/npm/v/@moor-sh/cli?label=CLI)](https://www.npmjs.com/package/@moor-sh/cli)
+[![@moor-sh/mcp on npm](https://img.shields.io/npm/v/@moor-sh/mcp?label=MCP)](https://www.npmjs.com/package/@moor-sh/mcp)
 
-Self-hosted Docker control panel for a single server. Build, deploy, and manage containers with cron, logs, and a web terminal.
+Self-hosted Docker control panel for a single server. Build, deploy, and manage containers from a web UI, CLI, or AI agent.
 
-<img width="1063" height="698" alt="image" src="https://github.com/user-attachments/assets/4b47d9ba-817f-47a4-bee5-ce35a45ea410" />
+<img width="1063" height="698" alt="Moor web interface" src="https://github.com/user-attachments/assets/4b47d9ba-817f-47a4-bee5-ce35a45ea410" />
 
 ## What it does
 
 - Build Docker images from GitHub repos, public or private
 - Deploy from private registries (GHCR, Docker Hub, self-hosted)
 - Start, stop, restart, and rebuild containers
-- Stream build output and container logs in real time
-- Web terminal into running containers
+- Stream build output and container logs; open a web terminal
 - Schedule cron jobs inside containers
 - Manage environment variables, persistent volumes, and injected files per project
 - Override a container's command and entrypoint without a Dockerfile
 - Route custom domains to containers with HTTPS
-- Container stats and stored run history for after-the-fact debugging
-- Drain mode, self-update, DB backups, and image cleanup for host upkeep
-- CLI and MCP server for AI agent integration
-
-## Prerequisites
-
-Docker Engine 25.0+ with the Compose v2 plugin. Install from <https://docs.docker.com/engine/install/>.
+- Inspect container stats and stored run history
+- Maintain the host with drain mode, self-update, database backups, and image cleanup
 
 ## Quick start
+
+Install [Docker Engine 25.0+](https://docs.docker.com/engine/install/) with the Compose v2 plugin, then run on your server:
 
 ```bash
 mkdir -p moor && cd moor
@@ -33,11 +31,11 @@ curl -fsSL moor.sh/install | sh
 docker compose up -d
 ```
 
-The installer writes `docker-compose.yml` and a random `MOOR_INITIAL_PASSWORD` in `.env` into the current directory. The password is printed at the end of the install output - save it for the first login.
+The installer creates `docker-compose.yml` and `.env` in the current directory. It saves a random `MOOR_INITIAL_PASSWORD` in `.env` and prints it for your first login.
 
 ## First login
 
-Moor's admin is bound to `127.0.0.1:3000` by default (Caddy on 80/443 serves only project domains you add later). Open an SSH tunnel from your laptop:
+The admin UI listens on `127.0.0.1:3000` by default. Caddy on ports 80/443 serves only project domains you add later. To reach the admin UI, open an SSH tunnel from your laptop:
 
 ```bash
 ssh -L 8080:127.0.0.1:3000 your-server
@@ -45,30 +43,28 @@ ssh -L 8080:127.0.0.1:3000 your-server
 
 Then open `http://localhost:8080` and log in with the password from `.env`.
 
-> **Trust boundary.** Moor mounts `/var/run/docker.sock`. Anyone with moor admin access or a valid `MOOR_API_KEY` effectively controls the host. Treat both like SSH access.
+> **Host access:** Moor mounts `/var/run/docker.sock`. Anyone with admin access or a valid `MOOR_API_KEY` effectively controls the host. Treat both like SSH access.
 
-## Docs
+See the [self-hosting guide](docs/self-hosting.md) for admin domains, API keys, project ports, and private repositories and registries.
 
-- [Self-hosting guide](docs/self-hosting.md) - first boot, admin domain, API keys, project ports, private registry images, private GitHub repos, Docker socket
-- [`@moor-sh/cli`](packages/cli) - command-line interface
-- [`@moor-sh/mcp`](packages/mcp) - MCP server for AI agents
+## CLI and MCP
 
-## CLI
+Both packages require [Bun](https://bun.sh) on the machine running them.
+
+For the [CLI](packages/cli/README.md), set `MOOR_URL` and `MOOR_API_KEY` in your environment, then run:
 
 ```bash
 bunx @moor-sh/cli status   # one-shot
 bun add -g @moor-sh/cli    # or install globally; then `moor status`
 ```
 
-Reads `MOOR_URL` and `MOOR_API_KEY` from the environment. See [`packages/cli/README.md`](packages/cli/README.md) for the full command list.
-
-## MCP server
+To connect an AI agent, generate a config snippet for the [MCP server](packages/mcp/README.md):
 
 ```bash
-bunx @moor-sh/cli mcp config --client claude   # or --client claude-code / --client codex
+bunx @moor-sh/cli mcp config --client claude-code   # or --client codex
 ```
 
-Prints a ready-to-paste config snippet for Claude Code or Codex that wires `@moor-sh/mcp` into the client. See [`packages/mcp/README.md`](packages/mcp/README.md) for the full setup walkthrough.
+The generator reads `MOOR_API_KEY` from your environment or `.env` and defaults to the SSH tunnel at `http://127.0.0.1:8080`. Pass `--url` for another server address. Paste the output into your client's config file; see the package guides above for details.
 
 ## Development
 
@@ -78,10 +74,8 @@ bun run dev:api   # API with hot reload
 bun run dev:web   # Vite+ dev server
 ```
 
-Static checks use Vite+ 0.3.0 (`bun run vp check`); `bun run check` also runs the
-workspace TypeScript checks and Bun tests. Keep Bun for `bun:test`, SQLite tests,
-and the CLI/MCP executable bundles. `vp test` is the Vitest runner and does not
-run these Bun suites.
+Run `bun run check` for Vite+ format/lint checks, workspace typechecks, and Bun tests.
+Tests (including SQLite tests) and CLI/MCP bundles require Bun; `vp test` runs Vitest and does not run these suites.
 
 `bun install` enables Vite+ commit hooks. They run staged format/lint checks and
 typechecking; installs without development dependencies skip hook setup.
