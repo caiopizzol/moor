@@ -32,8 +32,15 @@ release. Normal releases then use each component's latest tag.
 Add the repository Actions secret `RELEASE_PLEASE_TOKEN`: a fine-grained GitHub PAT
 scoped to `caiopizzol/moor` with **Contents: read and write** and **Pull requests:
 read and write**. This lets release PRs trigger the required CI and review checks.
-The default `GITHUB_TOKEN` suppresses those workflow triggers. Keep the existing
-`NPM_TOKEN` for npm publishing; image publishing uses `GITHUB_TOKEN`.
+The default `GITHUB_TOKEN` suppresses those workflow triggers. Image publishing
+uses `GITHUB_TOKEN`.
+
+Both npm packages use trusted publishing through GitHub Actions OIDC, without an
+npm token. Configure each package for owner `caiopizzol`, repository `moor`, workflow
+filename `release.yml`, no environment, and allow direct `npm publish`. npm validates
+the calling workflow even though the publish step lives in `release-npm.yml`. Both
+workflows grant `id-token: write`; the publisher installs npm 11 on Node 24 to meet
+the OIDC client requirements.
 
 ## Failed publishing
 
