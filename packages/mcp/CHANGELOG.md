@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.32.0](https://github.com/caiopizzol/moor/compare/mcp-v0.31.0...mcp-v0.32.0) (2026-09-06)
+
+
+### Features
+
+* **env:** centralize environment deletion and restart ([656d2cb](https://github.com/caiopizzol/moor/commit/656d2cbad50c9ff821e637f4ab35c040ef162f2a))
+
 ## [0.31.0](https://github.com/caiopizzol/moor/compare/mcp-v0.30.0...mcp-v0.31.0) (2026-09-06)
 
 

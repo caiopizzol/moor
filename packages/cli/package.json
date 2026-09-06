@@ -1,6 +1,6 @@
 {
   "name": "@moor-sh/cli",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "description": "Command-line interface for moor - manage your moor server's projects, logs, env vars, and container lifecycle.",
   "keywords": [
     "cli",
