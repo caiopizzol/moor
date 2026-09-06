@@ -51,14 +51,17 @@ See the [self-hosting guide](docs/self-hosting.md) for admin domains, API keys, 
 
 Both packages require [Bun](https://bun.sh) on the machine running them.
 
-For the [CLI](packages/cli/README.md), set `MOOR_URL` and `MOOR_API_KEY` in your environment, then run:
+For the [CLI](packages/cli/README.md), log in with your admin password:
 
 ```bash
-bunx @moor-sh/cli status   # one-shot
-bun add -g @moor-sh/cli    # or install globally; then `moor status`
+bunx @moor-sh/cli login http://127.0.0.1:8080   # through the SSH tunnel above
+bunx @moor-sh/cli status
+# Or install globally: bun add -g @moor-sh/cli
 ```
 
-To connect an AI agent, generate a config snippet for the [MCP server](packages/mcp/README.md):
+CLI logins last 30 days. Existing `MOOR_URL` and `MOOR_API_KEY` pairs remain supported for automation.
+
+To connect an AI agent over MCP, configure an API key and generate a config snippet for the [MCP server](packages/mcp/README.md):
 
 ```bash
 bunx @moor-sh/cli mcp config --client claude-code   # or --client codex

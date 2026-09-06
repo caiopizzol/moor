@@ -7,7 +7,7 @@ description: Operate an existing Moor server through the moor CLI to deploy, ins
 
 Use the installed `moor` CLI to operate an existing Moor server. Do not use the Moor MCP server or call its HTTP API directly.
 
-- Confirm `moor --version` works. The environment must already contain `MOOR_URL` and `MOOR_API_KEY`; never print the key or put it in command arguments.
+- Confirm `moor --version` works. Use the saved CLI login, or `MOOR_URL` and `MOOR_API_KEY` together for automation. If authentication is missing or expired, ask the user to run `moor login <server-url>` in their terminal (log out first if a login is already saved). Never ask for their password in chat, read the saved credential file, print credentials, or put them in command arguments.
 - Use only command paths shown by `moor --help`, then inspect the relevant command's `--help`. Do not infer commands from MCP tool names.
 - Use `--json` only when the command's help lists it; otherwise expect human-readable output. Check both the exit code and response. Finite JSON commands return one document on stdout; deploy and rebuild stream one `{ "event", "data" }` object per line.
 - Retrieval success does not mean the workload is healthy. `exec` propagates the remote command's exit code; start/trigger/update acceptance does not mean execution completed. Inspect the returned state or ID. `job stop` and `run stop` can return `ok:false` on stdout with exit 1.

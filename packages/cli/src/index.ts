@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { loginCommand, logoutCommand } from "./commands/login";
 import { credentialCommand } from "./commands/credential";
 import { cronCommand } from "./commands/cron";
 import { deployCommand } from "./commands/deploy";
@@ -34,6 +35,8 @@ function printHelp() {
 Usage: moor <command> [options]
 
 Commands:
+  login <server-url>             Save a 30-day login using your admin password
+  logout                         Revoke and remove the saved login
   status                          List all projects (human-readable alias)
   logs <project> [-f] [-n <lines>] [--json] View container logs
   rebuild <project> [--no-cache] [--json] Rebuild and restart from source
@@ -60,7 +63,7 @@ Commands:
   job <verb>                      Start, inspect, or stop an async shell job
   mcp config --client <name>      Generate MCP client config snippet
 
-Environment:
+Environment (override saved login; set both):
   MOOR_URL      Server URL (e.g. https://moor.example.com)
   MOOR_API_KEY  API key for authentication`);
 }
@@ -69,6 +72,12 @@ const args = process.argv.slice(2);
 const command = args[0];
 
 switch (command) {
+  case "login":
+    process.exitCode = await loginCommand(args.slice(1));
+    break;
+  case "logout":
+    process.exitCode = await logoutCommand(args.slice(1));
+    break;
   case "server":
     process.exitCode = await serverCommand(args.slice(1));
     break;

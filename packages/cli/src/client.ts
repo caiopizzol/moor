@@ -6,32 +6,64 @@ import {
   parseErrorMessage,
 } from "../../contract/src/index";
 
+import { resolveConfig } from "./config";
+
 export function clientConfigError(): string | undefined {
-  if (!process.env.MOOR_URL) return "MOOR_URL is not set";
-  if (!process.env.MOOR_API_KEY) return "MOOR_API_KEY is not set";
+  try {
+    resolveConfig();
+  } catch (error) {
+    return error instanceof Error ? error.message : "Invalid client configuration";
+  }
 }
 
-function getConfig(): { baseUrl: string; apiKey: string } {
-  const baseUrl = process.env.MOOR_URL;
-  const apiKey = process.env.MOOR_API_KEY;
-  const error = clientConfigError();
-  if (error || !baseUrl || !apiKey) {
-    console.error(`Error: ${error ?? "Moor client configuration is invalid"}`);
+function getConfig() {
+  try {
+    return resolveConfig();
+  } catch (error) {
+    console.error(
+      `Error: ${error instanceof Error ? error.message : "Invalid client configuration"}`,
+    );
     process.exit(1);
   }
-  return { baseUrl: baseUrl.replace(/\/$/, ""), apiKey };
 }
 
 async function rawResponseRequest(
   callClient: (client: MoorApiClient) => Promise<unknown>,
 ): Promise<Response> {
+  const config = getConfig();
   let rawResponse: Response | undefined;
   const fetchRawResponse: FetchLike = async (input, init) => {
-    rawResponse = await globalThis.fetch(input, init);
+    rawResponse = await globalThis.fetch(
+      input,
+      config.saved ? { ...init, redirect: "error" } : init,
+    );
+    const body: unknown =
+      config.saved && rawResponse.status === 401
+        ? await rawResponse
+            .clone()
+            .json()
+            .catch(() => null)
+        : null;
+    if (
+      body &&
+      typeof body === "object" &&
+      "error" in body &&
+      body.error === "Unauthorized" &&
+      Object.keys(body).length === 1
+    ) {
+      await rawResponse.body?.cancel();
+      rawResponse = Response.json(
+        {
+          error:
+            "Saved login expired or was revoked. Run moor logout, then moor login <server-url>.",
+        },
+        { status: 401 },
+      );
+    }
     return new Response(null, { status: 204 });
   };
   const client = createMoorApiClient({
-    ...getConfig(),
+    ...config,
     fetch: fetchRawResponse,
   });
 

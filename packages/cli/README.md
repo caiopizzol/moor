@@ -21,21 +21,40 @@ moor status
 
 Don't use `bunx moor` (without the scope) - `moor` on npm is an unrelated package.
 
-## Configure
+## Log in
 
 ```bash
-export MOOR_URL=https://moor.example.com   # or http://127.0.0.1:8080 via SSH tunnel
-export MOOR_API_KEY=your-api-key
+moor login https://moor.example.com
+moor status
+moor logout
 ```
 
-`MOOR_API_KEY` grants admin-equivalent control of the moor host. See the [self-hosting guide](https://github.com/caiopizzol/moor/blob/main/docs/self-hosting.md#api-keys) for how to generate and rotate it.
+Enter your admin password at the hidden prompt. Moor saves a separate 30-day session for this machine in `~/.config/moor/config.json` (or `$XDG_CONFIG_HOME/moor/config.json`), readable only by your user. The password is never saved. This credential grants full admin access to the Moor host; keep it outside synced folders.
 
-For a remote moor with private admin (the default), open an SSH tunnel from your laptop before running CLI commands:
+For a server with private admin access (the default), open an SSH tunnel first:
 
 ```bash
 ssh -L 8080:127.0.0.1:3000 your-server
-export MOOR_URL=http://127.0.0.1:8080
+# In another terminal:
+moor login http://127.0.0.1:8080
 ```
+
+Login requires HTTPS, except for loopback HTTP through a tunnel or on the server itself. For piped input, use `moor login <server-url> --password-stdin`; never put the password in arguments.
+
+One server login is saved per machine. Run `moor logout` before logging in again or changing servers. Logout revokes that session and removes the local file; if the server is unreachable, it keeps the file so you can retry revocation. Resetting the server's admin password revokes all sessions, including CLI logins. There is no automatic session renewal.
+
+### Automation
+
+Existing API keys still work. Set **both** variables to override the saved login:
+
+```bash
+export MOOR_URL=https://moor.example.com
+export MOOR_API_KEY=your-api-key
+```
+
+Setting only one fails instead of combining it with saved credentials. Unset both to use the saved login. `moor logout` does not revoke environment API keys. See the [self-hosting guide](https://github.com/caiopizzol/moor/blob/main/docs/self-hosting.md#api-keys) for key setup and rotation.
+
+The MCP server and `moor mcp config` continue to use their existing API-key configuration; they do not read the saved CLI login.
 
 ## Commands
 
