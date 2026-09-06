@@ -29,10 +29,6 @@ export function renderDrainState(s: DrainState): string[] {
   return lines;
 }
 
-// A runs row can be a cron run, a build/manual run, OR a cron run whose cron
-// was deleted (cron_id was SET NULL by the FK). The list alone can't tell the
-// latter two apart, so labels are honest about ambiguity instead of confidently
-// calling NULL cron_id "build."
 export function deriveRunStatus(row: {
   finished_at: string | null;
   exit_code: number | null;
@@ -41,6 +37,10 @@ export function deriveRunStatus(row: {
   return row.exit_code === 0 ? "success" : "failed";
 }
 
+// A runs row can be a cron run, a build/manual run, OR a cron run whose cron
+// was deleted (cron_id was SET NULL by the FK). The list alone can't tell the
+// latter two apart, so labels are honest about ambiguity instead of confidently
+// calling NULL cron_id "build."
 export function deriveRunType(row: { cron_id: number | null; cron_name: string | null }): string {
   if (row.cron_name) return `cron(${row.cron_name})`;
   // cron_id IS NULL — could be a genuine build/manual run, or a cron run

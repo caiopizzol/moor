@@ -19,10 +19,9 @@ import { statsCommand } from "./commands/stats";
 import { statusCommand } from "./commands/status";
 import { stopCommand } from "./commands/stop";
 
-// Read version from package.json at runtime so the binary always reports the
-// real shipped version. import.meta.dir resolves to packages/cli/src in this
-// repo and to <install-root>/src in a published install; ../package.json is
-// the package root in both cases.
+// Read the shipped package version at runtime. import.meta.dir is src/
+// in the repository and dist/ in the published JS install, so
+// ../package.json resolves to the package root in both cases.
 const VERSION = (
   JSON.parse(readFileSync(join(import.meta.dir, "..", "package.json"), "utf8")) as {
     version: string;

@@ -1,20 +1,20 @@
 // DB layer for source_credentials. Two type shapes:
 //
 //   - StoredCredential: the raw row including the secret. Used by the
-//     build path to authenticate to git. NEVER returned from an
+//     source clone/check path to authenticate to git. NEVER returned from an
 //     API/MCP read.
 //
 //   - CredentialMetadata: includes `secret: { configured, kind }`
 //     derived at read time. The shape all read paths return.
 //
 // Multiple rows can share a hostname (`UNIQUE(hostname, label)`).
-// Build-time resolution either takes an explicit `source_credential_id`
-// from the project row or resolves by hostname with explicit ambiguity
-// errors when more than one row matches. No silent guessing.
+// Builds use the project's explicit `source_credential_id`; without one,
+// stored credentials are not selected. Hostname discovery and ambiguity
+// handling belong to the source check path.
 //
 // State machine:
 //   active  ready for use
-//   failed  last check rejected; rotation needed
+//   failed  last check rejected; a successful recheck can reactivate it
 //
 // v1 is HTTPS PAT only.
 
@@ -149,7 +149,7 @@ export function getCredentialById(id: number): CredentialMetadata | null {
   return row ? toMetadata(row) : null;
 }
 
-/** Internal-only: returns the raw secret. Used by the pull path to
+/** Internal-only: returns the raw secret. Used by the source clone/check path to
  *  authenticate. Never expose from an API or MCP response. */
 export function getStoredCredentialById(id: number): StoredCredential | null {
   const row = db
@@ -196,7 +196,7 @@ export function createCredential(input: {
 /** Rotate fields on an existing credential. Returns updated metadata,
  *  or null if the row doesn't exist. Hostname is intentionally NOT
  *  patchable: changing the lookup key on an existing row would silently
- *  break the pull path for in-flight refs. To change hostname, delete
+ *  break the source clone/check path for in-flight refs. To change hostname, delete
  *  and recreate. */
 export function updateCredential(
   id: number,

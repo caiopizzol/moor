@@ -1,6 +1,5 @@
-// Tests for #71 status reconciler. The realInspect Docker round-trip
-// is covered by live smoke; here we exercise the pure parser and the
-// reconciler logic via an injectable Inspector mock.
+// Tests for the status parser and reconciler with an injected Inspector.
+// These do not exercise realInspect against Docker.
 
 process.env.MOOR_DB_PATH = ":memory:";
 

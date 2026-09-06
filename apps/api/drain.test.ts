@@ -145,8 +145,8 @@ describe("#79 enable/disable/get round-trip", () => {
   });
 
   test("getDrainState lazily clears an expired row", () => {
-    // 50ms expiry — wait past it and re-read.
-    enableDrain({ ttl_minutes: 50 / 60_000 }); // 0.05 / 1200 ≈ 50ms in min units... safer to just write past expires_at directly.
+    // Backdate expires_at directly to test lazy expiry without waiting.
+    enableDrain({ ttl_minutes: 50 / 60_000 });
     db.query("UPDATE drain_state SET expires_at = ? WHERE id = 1").run(
       new Date(Date.now() - 1000).toISOString(),
     );

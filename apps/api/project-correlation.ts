@@ -1,9 +1,9 @@
 // #131: map a Docker container back to its moor project. Two paths, label
 // preferred:
 //   - labels: a moor-created container carries sh.moor.project_id (#131). The
-//     Docker /events consumer reads it from the event's Actor.Attributes — no
-//     DB round-trip and no create/start timing gap (the label is set at create
-//     time, before container_id is ever written back to the projects row).
+//     Docker /events consumer reads it from the event's Actor.Attributes,
+//     avoiding a container_id lookup and its create/start timing gap. The
+//     label is set before container_id is written back to the project row.
 //   - fallback: containers created before labels shipped have none, so match
 //     on projects.container_id.
 // Returns null when neither resolves: an event for a non-moor container, or a

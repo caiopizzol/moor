@@ -4,11 +4,9 @@
 // would copy mid-checkpoint state and produce a corrupt-looking file.
 //
 // Conventions:
-// - Backups live next to the main DB in the same directory. Cross-host
-//   destinations and pre-update auto-backup are deliberately out of scope
-//   for #90 — the transient updater in #80 will layer those on top of
-//   this module. Filename is `moor.db.backup-<epoch-ms>` so ordering is
-//   trivial and collisions impossible.
+// - The directory is a caller-supplied parameter. The route, scheduler,
+//   and updater currently use the main DB directory.
+//   Filenames use `moor.db.backup-<epoch-ms>`; an existing name causes an error.
 // - Retention is N most recent; older snapshots are pruned each cycle.
 //   N defaults to DEFAULT_KEEP_BACKUPS (7).
 // - Scheduler is off by default, opt-in via MOOR_DB_BACKUP_INTERVAL_HOURS
@@ -105,12 +103,11 @@ export type BackupResult = { path: string; sizeBytes: number; durationMs: number
 /** Take a snapshot of the live DB into `dir`. Uses VACUUM INTO which
  *  is atomic at the SQLite layer (a single transaction is reflected
  *  in the snapshot; WAL state is checkpointed in). The filename
- *  embeds Date.now() so two backups can't collide and ordering is
- *  monotonic.
+ *  uses Date.now() for naming; clock changes can affect ordering and
+ *  two calls within the same millisecond can collide.
  *
- *  Throws if the target file already exists (Date.now() collision is
- *  impossible in practice) or if SQLite refuses the VACUUM. The caller
- *  decides whether to log and continue (scheduler) or surface (route). */
+ *  Throws if the target file already exists or SQLite refuses the VACUUM.
+ *  The caller decides whether to log and continue (scheduler) or surface (route). */
 export function runBackup(opts: { dir: string; keep?: number }): BackupResult {
   const start = Date.now();
   const filename = backupFilename(start);

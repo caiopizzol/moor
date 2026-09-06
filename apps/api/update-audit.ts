@@ -135,7 +135,7 @@ export function listAudit(limit = 20): UpdateAuditRow[] {
 // the MCP tool already reimplements its own (and that's the one
 // operators see), so the renderer lives next to its consumer.
 
-/** Startup-and-periodic sweep. Marks any in_progress row whose
+/** Startup sweep. Marks any in_progress row whose
  *  started_at_ms is older than the grace window as 'crashed'. The
  *  grace exists because a respawner is mid-flight at the moment moor
  *  restarts — the sweep must not race the marker-ingest path and

@@ -1,10 +1,5 @@
-// Tests for #78 update-status. Pure helpers are unit-tested
-// directly. The integration test for buildUpdateStatus injects a
-// GhcrFetcher mock — no real registry round-trip in tests, no
-// dependency on local Docker for the GHCR side. (The Docker-side
-// helpers — getCurrentImageInfo — are exercised via live smoke
-// since mocking the unix-socket fetch is more setup than payoff
-// for this PR.)
+// Tests for update-status helpers and buildUpdateStatus with a mocked
+// GhcrFetcher. These do not exercise the registry or Docker round-trips.
 
 process.env.MOOR_DB_PATH = ":memory:";
 

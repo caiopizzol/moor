@@ -176,9 +176,9 @@ export async function buildImageStreaming(
   console.log(
     `[buildImageStreaming] remote=${redactCredentials(remote) ?? remote} tag=${tag} dockerfile=${dockerfile} nocache=${noCache}`,
   );
-  // #68: signal lets BuildRun.cancel() tear down the daemon-side build.
-  // Live test confirmed closing the /v1.44/build connection aborts the
-  // build immediately (classic builder; BuildKit untested).
+  // BuildRun.cancel() aborts this request. Historical manual testing
+  // reported daemon-side cancellation with the classic builder; that
+  // observation does not establish BuildKit behavior or automated coverage.
   const res = await fetchImpl(`/v1.44/build?${params}`, {
     method: "POST",
     timeout: BUILD_TIMEOUT,

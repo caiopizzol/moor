@@ -16,7 +16,7 @@ const CADDY_CONFIG_PATH = resolve(DATA_DIR, "Caddyfile");
 
 // Default Caddyfile shipped on first boot. The admin UI is intentionally NOT
 // reverse-proxied here. Public exposure of the admin requires an explicit
-// admin domain (added by editing this file or via project routes). Until then,
+// admin domain configured in the data-volume Caddyfile. Until then,
 // admin is reachable on the host's loopback-bound moor:3000 via SSH tunnel.
 // Unmatched hosts on :80 get a 421 (Misdirected Request).
 const DEFAULT_CADDYFILE = `\

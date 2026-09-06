@@ -205,12 +205,9 @@ export function stopStatusReconciler(): void {
  *  current truth — a stale "running" snapshot can approve an exec
  *  against a dead container.
  *
- *  Also explicitly distinguishes "Docker unreachable" (docker_error,
- *  caller should return 503) from "container not running" (the
- *  current code can't tell those apart and rejects everything
- *  identically with 400). Surfacing the difference matters for
- *  operator debugging — "my exec failed" vs "moor can't reach
- *  Docker" are very different problems.
+ *  Distinguishes Docker unreachable (docker_error, mapped to 503) from
+ *  container not running (mapped to 409), so operators can tell a
+ *  daemon connection failure from a stopped workload.
  *
  *  Opportunistically writes the live_* columns from the fresh
  *  inspect; the next reconciler tick would have done it anyway and

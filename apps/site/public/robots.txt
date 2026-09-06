@@ -1,7 +1,7 @@
 User-agent: *
 Allow: /
 
-# Block AI training crawlers
+# Request exclusion for the following crawlers
 User-agent: GPTBot
 Disallow: /
 

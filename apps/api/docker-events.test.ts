@@ -1,6 +1,5 @@
-// Tests for #131 subsystem 5: Docker /events normalization, correlation, and
-// the gap decision. The streaming/reconnect loop is the imperative shell
-// (smoke-covered); these exercise the pure + db-backed pieces.
+// Tests for Docker event normalization, correlation, and gap decisions.
+// These exercise pure and database-backed pieces, not streaming/reconnect.
 
 process.env.MOOR_DB_PATH = ":memory:";
 

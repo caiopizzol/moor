@@ -1,6 +1,5 @@
-// Unit tests for #54 pure helpers. The Docker fetch / execute glue is
-// exercised via live smoke after deploy; mocking the engine round-trip
-// here would test the test setup more than the cleanup contract.
+// Pure-helper and database tests. The Docker fetch/execute path is not
+// exercised here; these tests do not establish daemon behavior.
 
 process.env.MOOR_DB_PATH = ":memory:";
 

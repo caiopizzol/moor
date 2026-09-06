@@ -65,7 +65,8 @@ export async function handleRequest(
         return Response.json({ error: "Unauthorized" }, { status: 401 });
       }
 
-      // WebSocket terminal upgrades — verify Origin header to prevent CSRF.
+      // Terminal upgrades use a substring Origin check; this does not establish
+      // exact origin equality and accepts lookalike hosts.
       if (
         url.pathname.match(/^\/api\/projects\/\d+\/terminal$/) ||
         url.pathname === "/api/terminal"

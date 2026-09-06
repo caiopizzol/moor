@@ -6,16 +6,14 @@
 #
 # Entrypoint modes (see entrypoint.sh for details):
 # - --self-test : verify docker + compose + jq (CI / smoke check).
-# - apply       : PR #4 happy path — pull + up + health-poll + marker.
-#                 NO rollback in PR #4; PR #5 adds it.
+# - apply       : pull + up + health-poll + marker; attempt rollback
+#                 after up/wait/health failure.
 #
-# Security posture (also documented in the entrypoint script):
-# - Transient: launched by moor for a single update window, removed
-#   after the marker is written.
-# - Requires /var/run/docker.sock mounted in. No other privileged
-#   access. No daemon. No open ports. No long-running loop.
-# - No code execution from external input. The entrypoint is the
-#   only code path.
+# The respawner runs for one update window with Docker socket access and
+# operator-controlled Compose files and mounts. These inputs are trusted;
+# Docker socket access grants authority over the host's containers.
+# JSON fields are parsed with jq and passed as argv without eval. This
+# preserves argument boundaries, including config paths containing spaces.
 
 FROM alpine:3.20
 

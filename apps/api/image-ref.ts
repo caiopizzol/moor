@@ -4,9 +4,8 @@
 // port-bearing registries with untagged refs (e.g. `localhost:5000/img`
 // parsed as image=`localhost`, tag=`5000/img`).
 //
-// Output shape covers what callers need today (pulling images) and what
-// they will need next (looking up registry credentials and building the
-// X-Registry-Auth header).
+// Callers use the parsed fields to pull images, look up registry
+// credentials, and build the X-Registry-Auth header.
 
 const DOCKER_HUB_HOST = "docker.io";
 const DOCKER_HUB_SERVER_ADDRESS = "https://index.docker.io/v1/";

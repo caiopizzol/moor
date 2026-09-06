@@ -44,7 +44,8 @@ maybeAutoClearForBoot();
 // valid success/rolled_back marker for a row >30min old must beat the
 // sweep, otherwise the sweep would mark it 'crashed' first and the
 // marker would then no-op (finalizeAudit's WHERE state='in_progress'
-// guard). The boot-order test in update-marker.test.ts codifies this.
+// guard). update-marker.test.ts demonstrates the component-order semantics;
+// it does not exercise this startup wiring.
 {
   const dir = defaultMarkerDir();
   if (dir !== "") {
@@ -173,9 +174,7 @@ startMarkerPoller();
 // fetch aborts can propagate before the process dies. 5s hard cap so
 // a stuck cleanup can't block SIGTERM indefinitely.
 //
-// Async exec is deliberately out of scope here (see ticket #77's
-// scope-correction comment) — exec-async.ts keeps active state private
-// and needs a separate interrupt API.
+// Active builds, cron runs, and async execs are interrupted before exit.
 const SHUTDOWN_HARD_TIMEOUT_MS = 5_000;
 let shuttingDown = false;
 const shutdown = async () => {
@@ -223,10 +222,8 @@ const shutdown = async () => {
       "[moor shutting down; build/pull aborted]",
     );
     interruptActiveRuns();
-    // #82: async exec wasn't covered by #77 because exec-async kept active
-    // state private and needed a Docker kill round-trip per row. Each kill
-    // is bounded to 1s; allSettled means a slow daemon can't stall the
-    // whole shutdown. The 5s shutdown hard cap is still the outer guard.
+    // Each async-exec kill has a 3s timeout. The 5s shutdown hard cap
+    // bounds the overall shutdown, including these Docker round-trips.
     const interruptedExecIds = await interruptActiveExecRuns("[moor shutting down; exec killed]");
     clearAllSessions();
     if (interruptedProjectIds.length > 0) {

@@ -26,11 +26,9 @@ export async function handleServer(_req: Request, url: URL): Promise<Response | 
   if (url.pathname === "/api/server/stats" && _req.method === "GET") {
     return handleStats();
   }
-  // #78
   if (url.pathname === "/api/server/update-status" && _req.method === "GET") {
     return handleUpdateStatus();
   }
-  // #79
   if (url.pathname === "/api/server/drain" && _req.method === "GET") {
     return handleDrainStatus();
   }
@@ -40,15 +38,12 @@ export async function handleServer(_req: Request, url: URL): Promise<Response | 
   if (url.pathname === "/api/server/drain/disable" && _req.method === "POST") {
     return handleDrainDisable();
   }
-  // #90
   if (url.pathname === "/api/server/backup" && _req.method === "POST") {
     return handleDbBackup();
   }
-  // #80 PR #4
   if (url.pathname === "/api/server/update/apply" && _req.method === "POST") {
     return handleUpdateApply(_req);
   }
-  // #80 PR #6
   if (url.pathname === "/api/server/update/audit" && _req.method === "GET") {
     return handleUpdateAudit(url);
   }

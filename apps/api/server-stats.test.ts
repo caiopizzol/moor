@@ -1,6 +1,5 @@
-// Unit tests for #53 pure helpers. The route itself is exercised via smoke
-// (the execSync + docker-socket bits aren't worth mocking just to assert
-// glue code).
+// Pure-helper tests. These do not exercise the route's subprocess or
+// Docker socket calls.
 
 import { describe, expect, test } from "bun:test";
 import {

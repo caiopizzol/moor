@@ -26,7 +26,7 @@ export function parseHistoryArgs(args: string[]): {
       seenHours = true;
     }
     if (a === "--hours") {
-      const n = Number(args[++i]); // consume the next token as the value
+      const n = Number(args[++i]);
       if (!Number.isFinite(n * 3_600_000) || n <= 0)
         return { hours, error: "--hours must be a positive number" };
       hours = n;

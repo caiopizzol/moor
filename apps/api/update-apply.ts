@@ -1,9 +1,6 @@
-// #80 PR #4: moor_update_apply happy path. Orchestrates preflight,
-// drain, audit row insertion, fresh backup, override/context file
-// writes, and respawner launch. NO ROLLBACK — that lands in PR #5.
-// A failed up/wait/health in this PR writes a `failed` marker; the
-// compose state is left as Compose left it, and recovery is manual
-// (`docker compose up`) or the 30-min stale-in_progress sweep.
+// Orchestrates update preflight, drain, audit insertion, fresh backup,
+// JSON context writes, and respawner launch. The respawner applies the
+// update, polls health, and attempts rollback after up/wait/health failure.
 //
 // The orchestration is split from the side effects so tests can
 // inject the launcher / backup / file writer without spinning up
@@ -33,8 +30,7 @@ import {
 // ---- Pure helpers ----------------------------------------------------
 
 /** Defense-in-depth: target digest must be exactly `sha256:<64 hex>`.
- *  Catches typos and prevents shell/YAML injection via a crafted
- *  digest string. */
+ *  Rejects malformed digest strings before passing them to the respawner. */
 export const TARGET_DIGEST_RE = /^sha256:[0-9a-f]{64}$/;
 
 /** Unsafe-reason classifiers. Each pattern matches the substrings
@@ -56,9 +52,8 @@ export function isValidDigest(s: string | null | undefined): s is string {
   return typeof s === "string" && TARGET_DIGEST_RE.test(s);
 }
 
-/** Defense-in-depth: Compose service names from labels SHOULD be safe,
- *  but we're about to interpolate one into YAML — assert the shape we
- *  expect (alphanumeric + underscore + hyphen). */
+/** Validate label-derived service names before passing them through JSON
+ *  context to the respawner's Compose argv. */
 export const SERVICE_NAME_RE = /^[a-zA-Z0-9_-]+$/;
 export function isValidServiceName(s: string): boolean {
   return SERVICE_NAME_RE.test(s);
@@ -240,10 +235,9 @@ export async function applyUpdate(
     };
   }
 
-  // Target digest: explicit input wins; otherwise use the registry's
-  // latest. If still null (no input + unreachable registry), we either
-  // bypassed unknown_digest above (refuse to write a YAML override with
-  // an empty image) or we wouldn't have gotten here.
+  // Target digest: explicit input wins; otherwise use the registry's latest.
+  // Bypassing unknown_digest without an explicit target can leave this null;
+  // refuse rather than write an empty digest into the respawner context.
   const candidateDigest = input.target_digest ?? status.available.latest_digest;
   if (!isValidDigest(candidateDigest)) {
     return {

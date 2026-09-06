@@ -35,7 +35,7 @@ export const hostTerminalHandlers = {
     const shell = process.env.SHELL || "/bin/bash";
 
     // Use `script` to allocate a PTY on Linux without native deps.
-    // Filter sensitive env vars before passing to shell
+    // Omit the one-time admin password reset value from the shell environment.
     const safeEnv = { ...process.env };
     delete safeEnv.MOOR_RESET_PASSWORD;
 

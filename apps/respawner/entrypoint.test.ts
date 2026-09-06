@@ -362,10 +362,8 @@ describe("respawner entrypoint apply: health failure → rollback", () => {
     const dir = newTestDir();
     const stubs = newTestDir();
     writeContext(dir, 4);
-    // Health curl returns 1 (failing) for apply, but the rollback
-    // poll should also see it failing... wait — both polls use the
-    // same curl stub. To make rollback's health pass we need to
-    // count invocations. Use a counter file.
+    // Both health polls share the curl stub. Count calls so apply health
+    // fails and the later rollback health poll succeeds.
     const counter = join(dir, ".curl-count");
     writeFileSync(counter, "0");
     writeStubs(stubs, {
