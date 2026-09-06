@@ -1,6 +1,6 @@
 {
-  ".": "0.54.1",
-  "packages/cli": "0.6.0",
-  "packages/mcp": "0.28.0",
-  "packages/contract": "0.1.0"
+  ".": "0.55.0",
+  "packages/cli": "0.7.0",
+  "packages/mcp": "0.29.0",
+  "packages/contract": "0.2.0"
 }
