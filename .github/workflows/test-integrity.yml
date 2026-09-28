@@ -6,8 +6,12 @@ on:
   pull_request_target:
     types: [opened, synchronize, reopened, edited, labeled, unlabeled]
 
+# `actions: read` and `checks: read` let a title edit or an unrelated label keep the verdict
+# already on this commit.
 permissions:
   contents: read
+  actions: read
+  checks: read
 
 # A run started by a label change can finish before an older run on the same commit. Only the
 # latest run for a pull request counts, so an older result never overwrites a newer one.
@@ -21,4 +25,4 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: caiopizzol/skills/.github/actions/test-integrity@5f82500d62691626f1a2e3a01733d29cbe66f14c
+      - uses: caiopizzol/skills/.github/actions/test-integrity@a0bcd3de3d94d705dac478db80148ede2cd9239d
