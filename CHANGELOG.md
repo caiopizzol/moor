@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.56.1](https://github.com/caiopizzol/moor/compare/v0.56.0...v0.56.1) (2026-10-02)
+
+
+### Bug Fixes
+
+* **api:** give injected files to the container's user ([#213](https://github.com/caiopizzol/moor/issues/213)) ([745441c](https://github.com/caiopizzol/moor/commit/745441c67833bcd801301dff50ed9afd95eecc6e))
+
 ## [0.56.0](https://github.com/caiopizzol/moor/compare/v0.55.0...v0.56.0) (2026-09-06)
 
 
