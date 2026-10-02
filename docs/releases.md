@@ -2,14 +2,14 @@
 
 Release-please opens one release PR with independently versioned Moor, CLI, and MCP
 changes. Merge it after CI passes to create tags and publish the affected artifacts.
-Conventional `fix:` and `feat:` commits determine version bumps and changelogs.
-Generated changelogs are excluded from formatting checks; release-please owns their format.
+Conventional `fix:` and `feat:` commits determine version bumps and release notes.
+Release notes live only in GitHub releases; release-please writes no changelog files.
 
 - Moor keeps `v*` tags and publishes the server and respawner images at the same SHA
   and version.
 - CLI keeps `cli-v*` tags and publishes `@moor-sh/cli`.
 - MCP keeps `mcp-v*` tags and publishes `@moor-sh/mcp`.
-- The private contract has internal `contract-v*` tags and changelogs, but no npm
+- The private contract has internal `contract-v*` tags and releases, but no npm
   release. The built-in `node-workspace` plugin uses the clients' development
   dependencies to patch-bump them when the bundled contract changes.
 
