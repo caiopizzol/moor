@@ -453,7 +453,9 @@ export function buildContainerCreateBody(opts: {
  *  match the stored specs. We PUT to path=/ with each entry's absolute path
  *  (leading slash stripped) as the tar member name; Docker creates intermediate
  *  directories during extraction. The mode in each tar header is honored, so a
- *  TLS key can land as 0600. fetchImpl is injectable for tests. */
+ *  TLS key can land as 0600, and copyUIDGID gives each file to the container's
+ *  user, so an image that runs as non-root can read it. fetchImpl is
+ *  injectable for tests. */
 export async function putContainerArchive(
   containerId: string,
   files: ResolvedFile[],
@@ -462,7 +464,7 @@ export async function putContainerArchive(
   const tar = buildTar(
     files.map((f) => ({ name: f.path.replace(/^\/+/, ""), content: f.content, mode: f.mode })),
   );
-  const res = await fetchImpl(`/v1.44/containers/${containerId}/archive?path=/`, {
+  const res = await fetchImpl(`/v1.44/containers/${containerId}/archive?path=/&copyUIDGID=1`, {
     method: "PUT",
     headers: { "Content-Type": "application/x-tar" },
     // Uint8Array is a valid fetch body at runtime (Bun/Node); the TS lib's
