@@ -312,7 +312,7 @@ MCP equivalents: `moor_volume_list`, `moor_volume_add`, `moor_volume_remove`.
 
 ## File injection
 
-A project can declare files to write into its container without a Dockerfile or SSH access. Moor writes each file through a tar archive `PUT` right before the container starts, on every recreate, honoring an octal mode. This is the path for a config file or a TLS cert that a stock image expects on disk.
+A project can declare files to write into its container without a Dockerfile or SSH access. Moor writes each file through a tar archive `PUT` right before the container starts, on every recreate, honoring an octal mode. Each file belongs to the user the image runs as, so a non-root image can read its own `0600` key. This is the path for a config file or a TLS cert that a stock image expects on disk.
 
 Each file is identified by its destination path. Setting the same path again updates its content or mode rather than adding a duplicate. Provide exactly one of `content` (inline) or `env_ref` (the name of a project env var to source the content from at create time, so a secret stays in the env store instead of plaintext in the file config). Inline content is capped at 1 MiB.
 

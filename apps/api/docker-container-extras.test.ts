@@ -124,6 +124,12 @@ describe("createAndStartContainer — file injection ordering and mode", () => {
     expect(createIdx).toBeLessThan(archiveIdx);
     expect(archiveIdx).toBeLessThan(startIdx);
 
+    // Docker gives the files to the container's user, so an image that runs as
+    // non-root (USER bun) can read its own 0600 key.
+    expect(new URL(calls[archiveIdx].path, "http://docker").searchParams.get("copyUIDGID")).toBe(
+      "1",
+    );
+
     // The PUT body is the tar; first header block carries name + mode.
     const tar = calls[archiveIdx].body as Uint8Array;
     expect(tar).toBeInstanceOf(Uint8Array);
