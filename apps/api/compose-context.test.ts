@@ -3,9 +3,13 @@
 // buildContextFromInspect) are unit-tested directly. discoverComposeContext
 // is exercised with an injected SelfInspector — no Docker required.
 
+// MOOR_DB_PATH must be set before ../db.ts evaluates (compose-context.ts
+// reaches it through docker.ts).
+process.env.MOOR_DB_PATH = ":memory:";
+
 import { describe, expect, test } from "bun:test";
 
-import {
+const {
   buildContextFromInspect,
   discoverComposeContext,
   findDataMount,
@@ -13,7 +17,7 @@ import {
   parseConfigFiles,
   parseLabels,
   REQUIRED_COMPOSE_LABELS,
-} from "./compose-context";
+} = await import("./compose-context");
 
 describe("#80 PR #1 parseConfigFiles", () => {
   test("absolute paths pass through unchanged", () => {
