@@ -1,0 +1,14 @@
+# This project's keys for keypin (https://github.com/caiopizzol/keypin). Names and places, never values.
+# `bunx bun@1.4.4 x keypin@0.5.0 publish CLOUDFLARE_API_TOKEN` writes the deploy workflow's secret.
+[1password]
+account = "my.1password.com"
+
+[keys.CLOUDFLARE_API_TOKEN]
+rotate_every = "365d"
+
+[keys.CLOUDFLARE_API_TOKEN.prod]
+from = "op://App Secrets/moor cloudflare deploy token/password"
+
+[[keys.CLOUDFLARE_API_TOKEN.prod.publish]]
+to = "github-actions"
+repo = "caiopizzol/moor"
